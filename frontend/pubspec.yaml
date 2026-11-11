@@ -1,0 +1,30 @@
+
+name: daily_chess_puzzle
+description: "Daily Chess Puzzle Mobile App"
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  dio: ^5.11.1
+  shared_preferences: ^2.5.6
+  uuid: ^4.6.0
+  chessground: ^11.1.0
+  dartchess: ^0.15.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

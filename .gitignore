@@ -1,0 +1,89 @@
+
+# ==========================================
+# VISUAL STUDIO
+# ==========================================
+
+.vs/
+*.user
+*.suo
+*.rsuser
+*.sln.docstates
+
+# ==========================================
+# .NET / ASP.NET CORE
+# ==========================================
+
+**/bin/
+**/obj/
+**/TestResults/
+**/packages/
+*.nupkg
+*.snupkg
+
+# Logs
+*.log
+logs/
+
+# ==========================================
+# SECRETS / ENVIRONMENT
+# ==========================================
+
+.env
+.env.*
+!.env.example
+secrets.json
+
+# ==========================================
+# FLUTTER / DART
+# ==========================================
+
+**/.dart_tool/
+**/build/
+**/coverage/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+
+# ==========================================
+# ANDROID
+# ==========================================
+
+**/.gradle/
+**/local.properties
+**/key.properties
+**/*.jks
+**/*.keystore
+
+# ==========================================
+# IOS / MACOS
+# ==========================================
+
+**/Pods/
+**/.symlinks/
+**/Flutter/Generated.xcconfig
+**/Flutter/flutter_export_environment.sh
+**/Runner/GeneratedPluginRegistrant.*
+
+# ==========================================
+# IDE
+# ==========================================
+
+.idea/
+.vscode/
+*.iml
+
+# ==========================================
+# OPERATING SYSTEM
+# ==========================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================================
+# DATABASE / BACKUP
+# ==========================================
+
+*.bak
+*.dump
+*.backup
