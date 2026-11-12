@@ -1,4 +1,5 @@
 ﻿
+using System.Security.Claims;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Responses;
 using Microsoft.AspNetCore.Mvc;
@@ -31,10 +32,31 @@ namespace DailyChessPuzzleApi.Controllers
             [FromQuery] DateOnly? endDate = null,
             CancellationToken cancellationToken = default)
         {
+            int? userId = null;
+
+            // Kullanıcı giriş yapmışsa ID bilgisini JWT üzerinden al.
+            if (User.Identity?.IsAuthenticated == true)
+            {
+                string? userIdClaim =
+                    User.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? User.FindFirstValue("sub");
+
+                if (!int.TryParse(userIdClaim, out int parsedUserId))
+                {
+                    _logger.LogWarning(
+                        "Authenticated user has an invalid UserId claim.");
+
+                    return Unauthorized();
+                }
+
+                userId = parsedUserId;
+            }
+
             _logger.LogInformation(
-                "GET leaderboard request received. Country: {Country}, ClientId: {ClientId}, Limit: {Limit}, StartDate: {StartDate}, EndDate: {EndDate}",
+                "GET leaderboard request received. Country: {Country}, ClientId: {ClientId}, UserId: {UserId}, Limit: {Limit}, StartDate: {StartDate}, EndDate: {EndDate}",
                 country ?? "Global",
                 clientId,
+                userId,
                 limit,
                 startDate,
                 endDate
@@ -44,6 +66,7 @@ namespace DailyChessPuzzleApi.Controllers
             var response = await _leaderboardService.GetLeaderboardAsync(
                 country,
                 clientId,
+                userId,
                 limit,
                 startDate,
                 endDate,

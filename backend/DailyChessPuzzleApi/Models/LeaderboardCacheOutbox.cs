@@ -5,16 +5,15 @@ namespace DailyChessPuzzleApi.Models
     {
         public int Id { get; set; }
 
-        // Bu olayın hangi PuzzleAttempt sonucunda oluştuğu.
-        public int PuzzleAttemptId { get; set; }
+        // Normal bulmaca işlemlerinde ilgili deneme kaydı.
+        // Hesap birleştirme gibi toplu işlemlerde null olabilir.
+        public int? PuzzleAttemptId { get; set; }
 
-        // Puan değişikliğinin gerçekleştiği kullanıcı.
         public string ClientId { get; set; } = string.Empty;
 
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
-        // Bu olaya bağlı bağımsız Redis teslimatları.
-        public ICollection<LeaderboardCacheOutboxDelivery> Deliveries
-        { get; set; } = new List<LeaderboardCacheOutboxDelivery>();
+        public ICollection<LeaderboardCacheOutboxDelivery> Deliveries { get; set; }
+            = new List<LeaderboardCacheOutboxDelivery>();
     }
 }

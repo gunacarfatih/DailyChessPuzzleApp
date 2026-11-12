@@ -1,5 +1,4 @@
-﻿
-using System.Globalization;
+﻿using System.Globalization;
 using DailyChessPuzzleApi.Services.Interfaces;
 using StackExchange.Redis;
 
@@ -36,6 +35,33 @@ namespace DailyChessPuzzleApi.Services
             return 1
             """;
 
+        // Bir kullanıcıyı leaderboard'dan revision kontrolüyle atomik olarak siler.
+        // Revision kaydı tombstone olarak tutulur; böylece eski Outbox güncellemeleri
+        // aynı veya daha düşük revision ile kullanıcıyı tekrar ekleyemez.
+        private const string RemoveScoreScript = """
+            local currentRevision = redis.call('HGET', KEYS[3], ARGV[1])
+            local incomingRevision = tonumber(ARGV[2])
+
+            if currentRevision and incomingRevision <= tonumber(currentRevision) then
+                return 0
+            end
+
+            local oldMember = redis.call('HGET', KEYS[2], ARGV[1])
+
+            if oldMember then
+                redis.call('ZREM', KEYS[1], oldMember)
+            end
+
+            redis.call('HDEL', KEYS[2], ARGV[1])
+            redis.call('HSET', KEYS[3], ARGV[1], ARGV[2])
+
+            if #KEYS >= 4 then
+                redis.call('INCR', KEYS[4])
+            end
+
+            return 1
+            """;
+
         // Cache değiştirilirken mevcut cache'teki daha yeni revision'ları
         // korur. Böylece rebuild sırasında gelen güncellemeler kaybolmaz.
         private const string ReplaceCacheScript = """
@@ -63,9 +89,20 @@ namespace DailyChessPuzzleApi.Services
 
                             redis.call('ZADD', KEYS[4], liveScore, liveMember)
                             redis.call('HSET', KEYS[5], clientId, liveMember)
-                            redis.call('HSET', KEYS[6], clientId, liveRevision)
+                        end
+                    else
+                        -- Canlı revision var ancak üye yoksa bu bir tombstone'dur.
+                        -- Silme bilgisini rebuild cache'ine taşı ki eski üye geri gelmesin.
+                        local oldTempMember = redis.call('HGET', KEYS[5], clientId)
+
+                        if oldTempMember then
+                            redis.call('ZREM', KEYS[4], oldTempMember)
+                            redis.call('HDEL', KEYS[5], clientId)
                         end
                     end
+
+                    -- Üye bulunsun veya bulunmasın en yeni revision korunur.
+                    redis.call('HSET', KEYS[6], clientId, liveRevision)
                 end
             end
 
@@ -134,6 +171,86 @@ namespace DailyChessPuzzleApi.Services
                 totalScore,
                 solvedCount,
                 revision);
+        }
+
+        public Task RemoveScoreAsync(
+            string key,
+            string clientId,
+            long revision)
+        {
+            return ExecuteScoreRemovalAsync(
+                key,
+                null,
+                clientId,
+                revision);
+        }
+
+        public Task RemoveDailyScoreAsync(
+            string key,
+            string versionKey,
+            string clientId,
+            long revision)
+        {
+            return ExecuteScoreRemovalAsync(
+                key,
+                versionKey,
+                clientId,
+                revision);
+        }
+
+        private async Task ExecuteScoreRemovalAsync(
+            string key,
+            string? versionKey,
+            string clientId,
+            long revision)
+        {
+            if (string.IsNullOrWhiteSpace(clientId))
+            {
+                throw new ArgumentException(
+                    "ClientId cannot be empty.",
+                    nameof(clientId));
+            }
+
+            if (revision < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(revision));
+            }
+
+            string membersKey = GetMemberKey(key);
+            string revisionsKey = GetRevisionKey(key);
+
+            RedisKey[] keys;
+
+            if (versionKey == null)
+            {
+                keys =
+                [
+                    key,
+                    membersKey,
+                    revisionsKey
+                ];
+            }
+            else
+            {
+                keys =
+                [
+                    key,
+                    membersKey,
+                    revisionsKey,
+                    versionKey
+                ];
+            }
+
+            RedisValue[] values =
+            [
+                clientId,
+                revision
+            ];
+
+            await _database.ScriptEvaluateAsync(
+                RemoveScoreScript,
+                keys,
+                values);
         }
 
         private async Task ExecuteScoreUpdateAsync(

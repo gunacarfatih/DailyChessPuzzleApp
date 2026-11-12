@@ -1,29 +1,103 @@
 
-using ReusableCaching.Extensions;
-using DailyChessPuzzleApi.Services;
-using DailyChessPuzzleApi.Services.Interfaces;
+using System.Runtime.InteropServices;
+using System.Text;
+
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.Middlewares;
+using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Responses;
+using DailyChessPuzzleApi.Services;
+using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
 
-using StackExchange.Redis;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 
+using ReusableCaching.Extensions;
 using Serilog;
-using System.Runtime.InteropServices;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Leaderboard ayarlarını appsettings.json üzerinden yükle.
+// --------------------------------------------------
+// LEADERBOARD AYARLARI
+// --------------------------------------------------
+
 builder.Services.Configure<LeaderboardSettings>(
     builder.Configuration.GetSection("LeaderboardSettings"));
 
-// Redis veya Memory cache altyapısını yapılandırır.
+// --------------------------------------------------
+// JWT AYARLARI
+// --------------------------------------------------
+
+var jwtSettings = builder.Configuration
+    .GetSection("JwtSettings")
+    .Get<JwtSettings>()
+    ?? throw new InvalidOperationException(
+        "JwtSettings yapılandırması bulunamadı.");
+
+if (string.IsNullOrWhiteSpace(jwtSettings.Secret) ||
+    Encoding.UTF8.GetByteCount(jwtSettings.Secret) < 32)
+{
+    throw new InvalidOperationException(
+        "JWT Secret en az 32 byte uzunluğunda olmalıdır.");
+}
+
+if (string.IsNullOrWhiteSpace(jwtSettings.Issuer) ||
+    string.IsNullOrWhiteSpace(jwtSettings.Audience) ||
+    jwtSettings.ExpirationMinutes <= 0)
+{
+    throw new InvalidOperationException(
+        "JWT yapılandırmasındaki Issuer, Audience ve ExpirationMinutes değerlerini kontrol edin.");
+}
+
+builder.Services.Configure<JwtSettings>(
+    builder.Configuration.GetSection("JwtSettings"));
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwtSettings.Issuer,
+
+            ValidateAudience = true,
+            ValidAudience = jwtSettings.Audience,
+
+            ValidateLifetime = true,
+
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(jwtSettings.Secret)),
+
+            ClockSkew = TimeSpan.FromSeconds(30)
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+// --------------------------------------------------
+// AUTH SERVİSLERİ
+// --------------------------------------------------
+
+builder.Services.AddScoped<
+    IPasswordHasher<User>,
+    PasswordHasher<User>>();
+
+builder.Services.AddScoped<IAuthService, AuthService>();
+
+// --------------------------------------------------
+// CACHE
+// --------------------------------------------------
+
 builder.Services.AddReusableCaching(builder.Configuration);
 
-// Redis bağlantısını uygulama boyunca tek bir instance olarak kullanır.
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
     var redisConnection = builder.Configuration
@@ -35,33 +109,30 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
             "Redis connection string bulunamadı.");
     }
 
-    // Redis bağlantı ayarlarını oluştur.
     var redisOptions = ConfigurationOptions.Parse(redisConnection);
 
     // Redis kapalı olsa bile uygulamanın açılmasına izin ver.
-    // Bağlantı kesilirse ConnectionMultiplexer yeniden bağlanmayı dener.
     redisOptions.AbortOnConnectFail = false;
 
     return ConnectionMultiplexer.Connect(redisOptions);
 });
 
-// Leaderboard cache servisini DI sistemine kaydeder.
 builder.Services.AddSingleton<
     ILeaderboardCacheService,
     LeaderboardCacheService>();
 
-// İşletim sistemine göre log dosyalarının tutulacağı klasörü belirle.
+// --------------------------------------------------
+// SERILOG
+// --------------------------------------------------
+
 var logDirectory = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
     ? "C:/DailyChess/logs"
     : "/var/log/dailychess";
 
-// Log klasörü mevcut değilse oluştur.
 Directory.CreateDirectory(logDirectory);
 
-// Log dosyasının yolunu belirle.
 var logFilePath = Path.Combine(logDirectory, "log-.txt");
 
-// Serilog yapılandırması.
 builder.Host.UseSerilog((context, configuration) =>
 {
     configuration
@@ -75,17 +146,22 @@ builder.Host.UseSerilog((context, configuration) =>
         );
 });
 
-// PostgreSQL bağlantısını ApplicationDbContext üzerinden yapılandır.
+// --------------------------------------------------
+// DATABASE
+// --------------------------------------------------
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection")
     )
 );
 
-// API Controller servislerini kaydet.
+// --------------------------------------------------
+// CONTROLLERS VE VALIDATION
+// --------------------------------------------------
+
 builder.Services.AddControllers();
 
-// Model doğrulama hatalarını BaseResponse formatında döndür.
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
@@ -108,55 +184,87 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
     };
 });
 
-// PuzzleService kaydı.
+// --------------------------------------------------
+// APPLICATION SERVICES
+// --------------------------------------------------
+
 builder.Services.AddScoped<IPuzzleService, PuzzleService>();
 
-// LeaderboardService kaydı.
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
 
-// Leaderboard Outbox servisi.
 builder.Services.AddScoped<
     ILeaderboardOutboxService,
     LeaderboardOutboxService>();
 
-// Günlük puzzle atama servisi.
 builder.Services.AddScoped<IDailyPuzzleService, DailyPuzzleService>();
 
-// Günlük puzzle atama arka plan servisi.
+// --------------------------------------------------
+// BACKGROUND SERVICES
+// --------------------------------------------------
+
 builder.Services.AddHostedService<DailyPuzzleBackgroundService>();
 
-// Leaderboard Outbox arka plan servisi.
 builder.Services.AddHostedService<LeaderboardOutboxBackgroundService>();
 
-// Swagger servisleri.
+// --------------------------------------------------
+// SWAGGER
+// --------------------------------------------------
+
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
+builder.Services.AddSwaggerGen(options =>
+{
+    // JWT Bearer Authentication tanımı.
+    options.AddSecurityDefinition(
+        JwtBearerDefaults.AuthenticationScheme,
+        new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "JWT token değerini girin."
+        });
+
+    // Swagger güvenlik gereksinimi.
+    options.AddSecurityRequirement(document =>
+        new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecuritySchemeReference(
+                    JwtBearerDefaults.AuthenticationScheme,
+                    document
+                ),
+                new List<string>()
+            }
+        });
+});
+
+// --------------------------------------------------
+// APPLICATION PIPELINE
+// --------------------------------------------------
 
 var app = builder.Build();
 
-// Her HTTP isteğine benzersiz Correlation ID atanır.
 app.UseMiddleware<CorrelationIdMiddleware>();
 
-// Beklenmeyen hataları yakalar.
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
-// HTTP isteklerini loglar.
 app.UseSerilogRequestLogging();
 
-// Swagger yalnızca Development ortamında etkinleştirilir.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// HTTPS yönlendirmesi.
-//app.UseHttpsRedirection();
+// app.UseHttpsRedirection();
 
-// Yetkilendirme middleware'i.
+app.UseAuthentication();
+
 app.UseAuthorization();
 
-// Controller endpointlerini eşleştir.
 app.MapControllers();
 
 app.Run();

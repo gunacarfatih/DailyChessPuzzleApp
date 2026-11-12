@@ -19,6 +19,7 @@ dependencies:
   uuid: ^4.6.0
   chessground: ^11.1.0
   dartchess: ^0.15.0
+  flutter_secure_storage: ^11.2.0
 
 dev_dependencies:
   flutter_test:

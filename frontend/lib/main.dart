@@ -29,15 +29,19 @@ class MainNavigationPage extends StatefulWidget {
   const MainNavigationPage({super.key});
 
   @override
-  State<MainNavigationPage> createState() => _MainNavigationPageState();
+  State<MainNavigationPage> createState() =>
+      _MainNavigationPageState();
 }
 
 class _MainNavigationPageState extends State<MainNavigationPage> {
   int _selectedIndex = 0;
 
-  // Ana sayfadan diğer sekmelere geçiş için callback'ler.
+  final GlobalKey<HomePageState> _homePageKey =
+  GlobalKey<HomePageState>();
+
   late final List<Widget> _pages = [
     HomePage(
+      key: _homePageKey,
       onOpenPuzzle: () => _navigateTo(1),
       onOpenLeaderboard: () => _navigateTo(2),
     ),
@@ -47,9 +51,15 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   ];
 
   void _navigateTo(int index) {
+    if (index == _selectedIndex) return;
+
     setState(() {
       _selectedIndex = index;
     });
+
+    if (index == 0) {
+      _homePageKey.currentState?.refreshStatistics();
+    }
   }
 
   @override

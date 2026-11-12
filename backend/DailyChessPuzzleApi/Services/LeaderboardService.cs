@@ -36,6 +36,7 @@ namespace DailyChessPuzzleApi.Services
         public async Task<LeaderboardResponse> GetLeaderboardAsync(
             string? country,
             string? clientId,
+            int? userId,
             int limit,
             DateOnly? startDate,
             DateOnly? endDate,
@@ -55,6 +56,18 @@ namespace DailyChessPuzzleApi.Services
 
             country = ValidateCountry(country);
 
+            clientId = string.IsNullOrWhiteSpace(clientId)
+                ? null
+                : clientId.Trim();
+
+            // Kayıtlı kullanıcı için hesap kimliği,
+            // misafir kullanıcı için cihaz kimliği kullanılır.
+            string? leaderboardIdentity = userId.HasValue
+                ? $"user:{userId.Value}"
+                : clientId;
+
+            // Misafir kullanıcı ClientId göndermediyse
+            // mevcut kullanıcının sıralama bilgisi gösterilmez.
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
             if (startDate.HasValue != endDate.HasValue)
@@ -78,20 +91,18 @@ namespace DailyChessPuzzleApi.Services
                 }
             }
 
-            clientId = string.IsNullOrWhiteSpace(clientId)
-                ? null
-                : clientId.Trim();
-
+            // Günlük leaderboard.
             var daily = await GetFixedPeriodAsync(
                 "daily",
                 today.ToString("yyyy-MM-dd"),
                 today,
                 today,
                 country,
-                clientId,
+                leaderboardIdentity,
                 limit,
                 cancellationToken);
 
+            // Haftalık leaderboard: Pazartesi başlangıçlı ISO hafta.
             int daysSinceMonday =
                 ((int)today.DayOfWeek + 6) % 7;
 
@@ -111,10 +122,11 @@ namespace DailyChessPuzzleApi.Services
                 weeklyStartDate,
                 today,
                 country,
-                clientId,
+                leaderboardIdentity,
                 limit,
                 cancellationToken);
 
+            // Aylık leaderboard.
             var monthlyStartDate = new DateOnly(
                 today.Year,
                 today.Month,
@@ -126,20 +138,22 @@ namespace DailyChessPuzzleApi.Services
                 monthlyStartDate,
                 today,
                 country,
-                clientId,
+                leaderboardIdentity,
                 limit,
                 cancellationToken);
 
+            // Tüm zamanlar leaderboard.
             var allTime = await GetFixedPeriodAsync(
                 "alltime",
                 "all",
                 null,
                 today,
                 country,
-                clientId,
+                leaderboardIdentity,
                 limit,
                 cancellationToken);
 
+            // İsteğe bağlı özel tarih aralığı.
             LeaderboardPeriodDto? customRange = null;
 
             if (startDate.HasValue && endDate.HasValue)
@@ -148,14 +162,18 @@ namespace DailyChessPuzzleApi.Services
                     startDate.Value,
                     endDate.Value,
                     country,
+                    leaderboardIdentity,
+                    userId,
                     clientId,
                     limit,
                     cancellationToken);
             }
 
             _logger.LogInformation(
-                "All leaderboards retrieved successfully. Country: {Country}, Limit: {Limit}",
+                "All leaderboards retrieved successfully. Country: {Country}, UserId: {UserId}, ClientId: {ClientId}, Limit: {Limit}",
                 country ?? "Global",
+                userId,
+                clientId,
                 limit);
 
             return new LeaderboardResponse
@@ -174,7 +192,7 @@ namespace DailyChessPuzzleApi.Services
             DateOnly? startDate,
             DateOnly? endDate,
             string? country,
-            string? clientId,
+            string? leaderboardIdentity,
             int limit,
             CancellationToken cancellationToken)
         {
@@ -235,25 +253,25 @@ namespace DailyChessPuzzleApi.Services
 
             LeaderboardEntryDto? currentUser = null;
 
-            if (clientId != null)
+            if (leaderboardIdentity != null)
             {
                 try
                 {
                     var userScore = await _cacheService.GetUserScoreAsync(
                         cacheKey,
-                        clientId);
+                        leaderboardIdentity);
 
                     if (userScore != null)
                     {
                         var userRank = await _cacheService.GetRankAsync(
                             cacheKey,
-                            clientId);
+                            leaderboardIdentity);
 
                         if (userRank.HasValue)
                         {
                             currentUser = new LeaderboardEntryDto
                             {
-                                ClientId = clientId,
+                                ClientId = leaderboardIdentity,
                                 TotalScore = userScore.Value.TotalScore,
                                 SolvedCount = userScore.Value.SolvedCount,
                                 Rank = (int)userRank.Value
@@ -266,8 +284,8 @@ namespace DailyChessPuzzleApi.Services
                 {
                     _logger.LogWarning(
                         ex,
-                        "Redis current user lookup failed. ClientId: {ClientId}",
-                        clientId);
+                        "Redis current user lookup failed. Identity: {Identity}",
+                        leaderboardIdentity);
                 }
 
                 if (currentUser == null)
@@ -276,7 +294,7 @@ namespace DailyChessPuzzleApi.Services
                         period,
                         periodKey,
                         country,
-                        clientId,
+                        leaderboardIdentity,
                         cancellationToken);
                 }
             }
@@ -295,6 +313,8 @@ namespace DailyChessPuzzleApi.Services
             DateOnly startDate,
             DateOnly endDate,
             string? country,
+            string? leaderboardIdentity,
+            int? userId,
             string? clientId,
             int limit,
             CancellationToken cancellationToken)
@@ -327,6 +347,9 @@ namespace DailyChessPuzzleApi.Services
                     versionKeys.Add(versionKey);
                 }
 
+                // Günlük cache sürümleri okunur.
+                // Böylece herhangi bir günlük skor değiştiğinde
+                // özel tarih aralığı cache anahtarı da değişir.
                 var versions = new List<long>();
 
                 foreach (var versionKey in versionKeys)
@@ -359,23 +382,23 @@ namespace DailyChessPuzzleApi.Services
                     rangeKey,
                     limit);
 
-                if (clientId != null)
+                if (leaderboardIdentity != null)
                 {
                     var userScore = await _cacheService.GetUserScoreAsync(
                         rangeKey,
-                        clientId);
+                        leaderboardIdentity);
 
                     if (userScore != null)
                     {
                         var userRank = await _cacheService.GetRankAsync(
                             rangeKey,
-                            clientId);
+                            leaderboardIdentity);
 
                         if (userRank.HasValue)
                         {
                             currentUser = new LeaderboardEntryDto
                             {
-                                ClientId = clientId,
+                                ClientId = leaderboardIdentity,
                                 TotalScore = userScore.Value.TotalScore,
                                 SolvedCount = userScore.Value.SolvedCount,
                                 Rank = (int)userRank.Value
@@ -400,23 +423,26 @@ namespace DailyChessPuzzleApi.Services
                     limit,
                     cancellationToken);
 
-                if (clientId != null)
+                if (leaderboardIdentity != null)
                 {
                     currentUser = await GetCustomRangeCurrentUserFromDatabaseAsync(
                         startDate,
                         endDate,
                         country,
+                        userId,
                         clientId,
                         cancellationToken);
                 }
             }
 
-            if (clientId != null && currentUser == null)
+            // Redis'te kullanıcı bulunamazsa PostgreSQL'den kontrol edilir.
+            if (leaderboardIdentity != null && currentUser == null)
             {
                 currentUser = await GetCustomRangeCurrentUserFromDatabaseAsync(
                     startDate,
                     endDate,
                     country,
+                    userId,
                     clientId,
                     cancellationToken);
             }
@@ -482,6 +508,8 @@ namespace DailyChessPuzzleApi.Services
                 cacheEntries.Count);
         }
 
+        // Özel tarih aralığında bütün denemeler hesap kimliğine
+        // veya misafir cihaz kimliğine göre gruplanır.
         private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
             GetCustomRangeTopFromDatabaseAsync(
                 DateOnly startDate,
@@ -502,7 +530,10 @@ namespace DailyChessPuzzleApi.Services
             }
 
             var entries = await query
-                .GroupBy(x => x.ClientId)
+                .GroupBy(x =>
+                    x.UserId.HasValue
+                        ? "user:" + x.UserId.Value
+                        : x.ClientId)
                 .Select(group => new
                 {
                     ClientId = group.Key,
@@ -523,13 +554,20 @@ namespace DailyChessPuzzleApi.Services
                 .ToList();
         }
 
+        // Özel tarih aralığında mevcut kullanıcının puanı ve sırası.
         private async Task<LeaderboardEntryDto?> GetCustomRangeCurrentUserFromDatabaseAsync(
             DateOnly startDate,
             DateOnly endDate,
             string? country,
-            string clientId,
+            int? userId,
+            string? clientId,
             CancellationToken cancellationToken)
         {
+            if (!userId.HasValue && string.IsNullOrWhiteSpace(clientId))
+            {
+                return null;
+            }
+
             var query = _context.PuzzleAttempts
                 .AsNoTracking()
                 .Where(x =>
@@ -541,9 +579,24 @@ namespace DailyChessPuzzleApi.Services
                 query = query.Where(x => x.CountryCode == country);
             }
 
+            // Kayıtlı kullanıcı sadece UserId üzerinden aranır.
+            // Misafir kullanıcı yalnızca kendi ClientId değeriyle aranır.
+            if (userId.HasValue)
+            {
+                query = query.Where(x => x.UserId == userId.Value);
+            }
+            else
+            {
+                query = query.Where(x =>
+                    x.UserId == null &&
+                    x.ClientId == clientId);
+            }
+
             var userEntry = await query
-                .Where(x => x.ClientId == clientId)
-                .GroupBy(x => x.ClientId)
+                .GroupBy(x =>
+                    x.UserId.HasValue
+                        ? "user:" + x.UserId.Value
+                        : x.ClientId)
                 .Select(group => new
                 {
                     ClientId = group.Key,
@@ -557,20 +610,37 @@ namespace DailyChessPuzzleApi.Services
                 return null;
             }
 
-            var usersAhead = await query
-                .GroupBy(x => x.ClientId)
+            var allEntries = _context.PuzzleAttempts
+                .AsNoTracking()
+                .Where(x =>
+                    x.PlayedOn >= startDate &&
+                    x.PlayedOn <= endDate);
+
+            if (country != null)
+            {
+                allEntries = allEntries.Where(
+                    x => x.CountryCode == country);
+            }
+
+            var groupedEntries = allEntries
+                .GroupBy(x =>
+                    x.UserId.HasValue
+                        ? "user:" + x.UserId.Value
+                        : x.ClientId)
                 .Select(group => new
                 {
                     TotalScore = group.Sum(x => x.Score),
                     SolvedCount = group.Count()
-                })
-                .CountAsync(x =>
+                });
+
+            int usersAhead = await groupedEntries.CountAsync(
+                x =>
                     x.TotalScore > userEntry.TotalScore ||
                     (
                         x.TotalScore == userEntry.TotalScore &&
                         x.SolvedCount > userEntry.SolvedCount
                     ),
-                    cancellationToken);
+                cancellationToken);
 
             return new LeaderboardEntryDto
             {
@@ -722,7 +792,7 @@ namespace DailyChessPuzzleApi.Services
             string period,
             string periodKey,
             string? country,
-            string clientId,
+            string leaderboardIdentity,
             CancellationToken cancellationToken)
         {
             var query = _context.LeaderboardScores
@@ -733,7 +803,7 @@ namespace DailyChessPuzzleApi.Services
                     x.CountryCode == country);
 
             var userEntry = await query
-                .Where(x => x.ClientId == clientId)
+                .Where(x => x.ClientId == leaderboardIdentity)
                 .Select(x => new
                 {
                     x.ClientId,

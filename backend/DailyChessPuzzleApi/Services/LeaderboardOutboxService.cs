@@ -61,91 +61,214 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
 
                 if (!lockAcquired)
-                {
                     continue;
-                }
 
-                var delivery = await _context.LeaderboardCacheOutboxDeliveries
-                    .AsNoTracking()
-                    .Include(x => x.Outbox)
-                    .FirstOrDefaultAsync(
-                        x => x.Id == deliveryId,
-                        cancellationToken);
-
-                if (delivery == null)
-                {
-                    continue;
-                }
+                int retryCount = 0;
 
                 try
                 {
-                    // Outbox ID, bu skor güncellemesinin revision değeridir.
+                    await using var transaction =
+                        await _context.Database.BeginTransactionAsync(
+                            cancellationToken);
+
+                    var delivery = await _context
+                        .LeaderboardCacheOutboxDeliveries
+                        .AsNoTracking()
+                        .Include(x => x.Outbox)
+                        .FirstOrDefaultAsync(
+                            x => x.Id == deliveryId,
+                            cancellationToken);
+
+                    if (delivery == null)
+                    {
+                        await transaction.CommitAsync(cancellationToken);
+                        continue;
+                    }
+
+                    retryCount = delivery.RetryCount + 1;
+
+                    if (delivery.Status !=
+                            LeaderboardCacheOutboxDeliveryStatus.Processing ||
+                        delivery.LockedBy != lockId)
+                    {
+                        await transaction.CommitAsync(cancellationToken);
+                        continue;
+                    }
+
+                    string targetClientId = delivery.TargetClientId;
+
+                    PuzzleAttempt? puzzleAttempt = null;
+
+                    // PuzzleAttemptId null ise bu bir toplu işlem
+                    // (hesap birleştirme gibi) Outbox kaydıdır.
+                    if (delivery.Outbox.PuzzleAttemptId.HasValue)
+                    {
+                        puzzleAttempt = await _context.PuzzleAttempts
+                            .FromSqlInterpolated(
+                                $"""
+                                SELECT *
+                                FROM "PuzzleAttempts"
+                                WHERE "Id" = {delivery.Outbox.PuzzleAttemptId.Value}
+                                FOR UPDATE
+                                """)
+                            .SingleOrDefaultAsync(cancellationToken);
+                    }
+
+                    // Normal puan güncellemesinde attempt hâlâ
+                    // aynı kullanıcıya ait olmalıdır.
+                    if (!delivery.IsRemoval)
+                    {
+                        if (delivery.Outbox.PuzzleAttemptId.HasValue &&
+                            (puzzleAttempt == null ||
+                             !IsIdentityCurrent(targetClientId, puzzleAttempt)))
+                        {
+                            await CompleteDeliveryAsync(
+                                deliveryId,
+                                lockId,
+                                cancellationToken);
+
+                            await transaction.CommitAsync(cancellationToken);
+
+                            _logger.LogInformation(
+                                "Obsolete leaderboard update skipped. " +
+                                "DeliveryId: {DeliveryId}, TargetClientId: {ClientId}",
+                                deliveryId,
+                                targetClientId);
+
+                            _context.ChangeTracker.Clear();
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        // Silme teslimatı ancak attempt artık eski
+                        // kimliğe ait değilse uygulanabilir.
+                        if (puzzleAttempt != null &&
+                            IsIdentityCurrent(targetClientId, puzzleAttempt))
+                        {
+                            await CompleteDeliveryAsync(
+                                deliveryId,
+                                lockId,
+                                cancellationToken);
+
+                            await transaction.CommitAsync(cancellationToken);
+
+                            _logger.LogInformation(
+                                "Obsolete leaderboard removal skipped. " +
+                                "DeliveryId: {DeliveryId}, TargetClientId: {ClientId}",
+                                deliveryId,
+                                targetClientId);
+
+                            _context.ChangeTracker.Clear();
+                            continue;
+                        }
+                    }
+
+                    // Mevcut revision sistemi korunuyor.
+                    // Her Outbox kaydının revision değeri kendi Id değeridir.
                     long incomingRevision = delivery.OutboxId;
 
-                    // Kullanıcının ilgili leaderboard kaydını atomik
-                    // revision kontrolüyle güncelle.
                     var existingScore = await _context.LeaderboardScores
                         .AsNoTracking()
                         .FirstOrDefaultAsync(x =>
-                            x.ClientId == delivery.Outbox.ClientId &&
+                            x.ClientId == targetClientId &&
                             x.Period == delivery.Period &&
                             x.PeriodKey == delivery.PeriodKey &&
                             x.CountryCode == delivery.CountryCode,
                             cancellationToken);
 
-                    if (existingScore == null)
+                    bool shouldRemoveFromRedis = false;
+
+                    if (delivery.IsRemoval)
                     {
-                        // İlk skor kaydı.
-                        var newScore = new LeaderboardScore
+                        if (existingScore == null)
                         {
-                            ClientId = delivery.Outbox.ClientId,
-                            Period = delivery.Period,
-                            PeriodKey = delivery.PeriodKey,
-                            CountryCode = delivery.CountryCode,
-                            TotalScore = delivery.TotalScore,
-                            SolvedCount = delivery.SolvedCount,
-                            Revision = incomingRevision,
-                            UpdatedAtUtc = DateTime.UtcNow
-                        };
+                            // Silme revision'ını PostgreSQL'de de tut.
+                            var tombstoneScore = new LeaderboardScore
+                            {
+                                ClientId = targetClientId,
+                                Period = delivery.Period,
+                                PeriodKey = delivery.PeriodKey,
+                                CountryCode = delivery.CountryCode,
+                                TotalScore = 0,
+                                SolvedCount = 0,
+                                Revision = incomingRevision,
+                                UpdatedAtUtc = DateTime.UtcNow
+                            };
 
-                        await _context.LeaderboardScores.AddAsync(
-                            newScore,
-                            cancellationToken);
-
-                        await _context.SaveChangesAsync(cancellationToken);
-                    }
-                    else if (incomingRevision > existingScore.Revision)
-                    {
-                        // Yalnızca gelen revision daha yeniyse güncelle.
-                        // ExecuteUpdateAsync işlemi PostgreSQL üzerinde
-                        // tek bir atomik UPDATE sorgusu çalıştırır.
-                        await _context.LeaderboardScores
-                            .Where(x =>
-                                x.Id == existingScore.Id &&
-                                x.Revision < incomingRevision)
-                            .ExecuteUpdateAsync(setters => setters
-                                .SetProperty(
-                                    x => x.TotalScore,
-                                    delivery.TotalScore)
-                                .SetProperty(
-                                    x => x.SolvedCount,
-                                    delivery.SolvedCount)
-                                .SetProperty(
-                                    x => x.Revision,
-                                    incomingRevision)
-                                .SetProperty(
-                                    x => x.UpdatedAtUtc,
-                                    DateTime.UtcNow),
+                            await _context.LeaderboardScores.AddAsync(
+                                tombstoneScore,
                                 cancellationToken);
+
+                            await _context.SaveChangesAsync(cancellationToken);
+
+                            shouldRemoveFromRedis = true;
+                        }
+                        else if (incomingRevision > existingScore.Revision)
+                        {
+                            await _context.LeaderboardScores
+                                .Where(x =>
+                                    x.Id == existingScore.Id &&
+                                    x.Revision < incomingRevision)
+                                .ExecuteUpdateAsync(setters => setters
+                                    .SetProperty(x => x.TotalScore, 0)
+                                    .SetProperty(x => x.SolvedCount, 0)
+                                    .SetProperty(x => x.Revision, incomingRevision)
+                                    .SetProperty(x => x.UpdatedAtUtc, DateTime.UtcNow),
+                                    cancellationToken);
+
+                            shouldRemoveFromRedis = true;
+                        }
+                    }
+                    else
+                    {
+                        if (existingScore == null)
+                        {
+                            var newScore = new LeaderboardScore
+                            {
+                                ClientId = targetClientId,
+                                Period = delivery.Period,
+                                PeriodKey = delivery.PeriodKey,
+                                CountryCode = delivery.CountryCode,
+                                TotalScore = delivery.TotalScore,
+                                SolvedCount = delivery.SolvedCount,
+                                Revision = incomingRevision,
+                                UpdatedAtUtc = DateTime.UtcNow
+                            };
+
+                            await _context.LeaderboardScores.AddAsync(
+                                newScore,
+                                cancellationToken);
+
+                            await _context.SaveChangesAsync(cancellationToken);
+                        }
+                        else if (incomingRevision > existingScore.Revision)
+                        {
+                            await _context.LeaderboardScores
+                                .Where(x =>
+                                    x.Id == existingScore.Id &&
+                                    x.Revision < incomingRevision)
+                                .ExecuteUpdateAsync(setters => setters
+                                    .SetProperty(
+                                        x => x.TotalScore,
+                                        delivery.TotalScore)
+                                    .SetProperty(
+                                        x => x.SolvedCount,
+                                        delivery.SolvedCount)
+                                    .SetProperty(
+                                        x => x.Revision,
+                                        incomingRevision)
+                                    .SetProperty(
+                                        x => x.UpdatedAtUtc,
+                                        DateTime.UtcNow),
+                                    cancellationToken);
+                        }
                     }
 
-                    // Yarış durumunda başka worker daha yeni bir revision
-                    // yazmış olabilir. Bu nedenle Redis'e doğrudan Delivery
-                    // verisini değil, PostgreSQL'deki güncel kaydı gönder.
                     var currentScore = await _context.LeaderboardScores
                         .AsNoTracking()
                         .FirstOrDefaultAsync(x =>
-                            x.ClientId == delivery.Outbox.ClientId &&
+                            x.ClientId == targetClientId &&
                             x.Period == delivery.Period &&
                             x.PeriodKey == delivery.PeriodKey &&
                             x.CountryCode == delivery.CountryCode,
@@ -157,75 +280,92 @@ namespace DailyChessPuzzleApi.Services
                             "Leaderboard score could not be loaded after update.");
                     }
 
-                    if (delivery.Period.Equals(
-                        "daily",
-                        StringComparison.OrdinalIgnoreCase))
+                    if (delivery.IsRemoval)
                     {
-                        string versionKey = $"{delivery.CacheKey}:version";
+                        // Daha yeni bir skor mevcutsa eski silme
+                        // teslimatı bu skoru kaldıramaz.
+                        if (shouldRemoveFromRedis)
+                        {
+                            if (delivery.Period.Equals(
+                                "daily",
+                                StringComparison.OrdinalIgnoreCase))
+                            {
+                                string versionKey =
+                                    $"{delivery.CacheKey}:version";
 
-                        await _cacheService.UpdateDailyScoreAsync(
-                            delivery.CacheKey,
-                            versionKey,
-                            delivery.Outbox.ClientId,
-                            currentScore.TotalScore,
-                            currentScore.SolvedCount,
-                            currentScore.Revision);
+                                await _cacheService.RemoveDailyScoreAsync(
+                                    delivery.CacheKey,
+                                    versionKey,
+                                    targetClientId,
+                                    incomingRevision);
+                            }
+                            else
+                            {
+                                await _cacheService.RemoveScoreAsync(
+                                    delivery.CacheKey,
+                                    targetClientId,
+                                    incomingRevision);
+                            }
+                        }
                     }
                     else
                     {
-                        await _cacheService.UpdateScoreAsync(
-                            delivery.CacheKey,
-                            delivery.Outbox.ClientId,
-                            currentScore.TotalScore,
-                            currentScore.SolvedCount,
-                            currentScore.Revision);
+                        if (delivery.Period.Equals(
+                            "daily",
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            string versionKey =
+                                $"{delivery.CacheKey}:version";
+
+                            await _cacheService.UpdateDailyScoreAsync(
+                                delivery.CacheKey,
+                                versionKey,
+                                targetClientId,
+                                currentScore.TotalScore,
+                                currentScore.SolvedCount,
+                                currentScore.Revision);
+                        }
+                        else
+                        {
+                            await _cacheService.UpdateScoreAsync(
+                                delivery.CacheKey,
+                                targetClientId,
+                                currentScore.TotalScore,
+                                currentScore.SolvedCount,
+                                currentScore.Revision);
+                        }
                     }
 
-                    var processedAt = DateTime.UtcNow;
-
-                    int completedRows = await _context
-                        .LeaderboardCacheOutboxDeliveries
-                        .Where(x =>
-                            x.Id == deliveryId &&
-                            x.Status == LeaderboardCacheOutboxDeliveryStatus.Processing &&
-                            x.LockedBy == lockId)
-                        .ExecuteUpdateAsync(setters => setters
-                            .SetProperty(
-                                x => x.Status,
-                                LeaderboardCacheOutboxDeliveryStatus.Completed)
-                            .SetProperty(
-                                x => x.ProcessedAtUtc,
-                                processedAt)
-                            .SetProperty(
-                                x => x.NextRetryAtUtc,
-                                (DateTime?)null)
-                            .SetProperty(
-                                x => x.LockedUntilUtc,
-                                (DateTime?)null)
-                            .SetProperty(
-                                x => x.LockedBy,
-                                (string?)null)
-                            .SetProperty(
-                                x => x.LastError,
-                                (string?)null),
-                            cancellationToken);
+                    int completedRows = await CompleteDeliveryAsync(
+                        deliveryId,
+                        lockId,
+                        cancellationToken);
 
                     if (completedRows == 0)
                     {
                         _logger.LogWarning(
-                            "Delivery completion skipped because the lock is no longer owned by this worker. DeliveryId: {DeliveryId}",
+                            "Delivery completion skipped because the lock " +
+                            "is no longer owned by this worker. DeliveryId: {DeliveryId}",
                             deliveryId);
 
+                        await transaction.RollbackAsync(cancellationToken);
                         continue;
                     }
 
+                    await transaction.CommitAsync(cancellationToken);
+
                     _logger.LogInformation(
-                        "Leaderboard Delivery completed. DeliveryId: {DeliveryId}, Period: {Period}, ClientId: {ClientId}, Country: {Country}, Revision: {Revision}",
+                        "Leaderboard Delivery completed. " +
+                        "DeliveryId: {DeliveryId}, Period: {Period}, " +
+                        "TargetClientId: {ClientId}, IsRemoval: {IsRemoval}, " +
+                        "Revision: {Revision}",
                         delivery.Id,
                         delivery.Period,
-                        delivery.Outbox.ClientId,
-                        delivery.CountryCode ?? "Global",
+                        targetClientId,
+                        delivery.IsRemoval,
                         currentScore.Revision);
+
+                    _context.ChangeTracker.Clear();
                 }
                 catch (OperationCanceledException)
                     when (cancellationToken.IsCancellationRequested)
@@ -234,14 +374,12 @@ namespace DailyChessPuzzleApi.Services
                 }
                 catch (Exception ex)
                 {
-                    // Başarısız insert gibi durumlarda EF ChangeTracker'da
-                    // hatalı Added kayıt kalmasını önle.
                     _context.ChangeTracker.Clear();
 
-                    int retryCount = delivery.RetryCount + 1;
+                    int actualRetryCount = Math.Max(1, retryCount);
 
                     int retryDelayMinutes = Math.Min(
-                        (int)Math.Pow(2, retryCount),
+                        (int)Math.Pow(2, actualRetryCount),
                         30);
 
                     string errorMessage = ex.Message.Length > 2000
@@ -257,7 +395,8 @@ namespace DailyChessPuzzleApi.Services
                             .LeaderboardCacheOutboxDeliveries
                             .Where(x =>
                                 x.Id == deliveryId &&
-                                x.Status == LeaderboardCacheOutboxDeliveryStatus.Processing &&
+                                x.Status ==
+                                    LeaderboardCacheOutboxDeliveryStatus.Processing &&
                                 x.LockedBy == lockId)
                             .ExecuteUpdateAsync(setters => setters
                                 .SetProperty(
@@ -265,7 +404,7 @@ namespace DailyChessPuzzleApi.Services
                                     LeaderboardCacheOutboxDeliveryStatus.Failed)
                                 .SetProperty(
                                     x => x.RetryCount,
-                                    retryCount)
+                                    actualRetryCount)
                                 .SetProperty(
                                     x => x.LastError,
                                     errorMessage)
@@ -284,20 +423,80 @@ namespace DailyChessPuzzleApi.Services
                     {
                         _logger.LogError(
                             saveException,
-                            "Delivery failure state could not be saved. DeliveryId: {DeliveryId}",
+                            "Delivery failure state could not be saved. " +
+                            "DeliveryId: {DeliveryId}",
                             deliveryId);
                     }
 
                     _logger.LogError(
                         ex,
-                        "Leaderboard Delivery failed. DeliveryId: {DeliveryId}, RetryCount: {RetryCount}",
+                        "Leaderboard Delivery failed. " +
+                        "DeliveryId: {DeliveryId}, RetryCount: {RetryCount}",
                         deliveryId,
-                        retryCount);
+                        actualRetryCount);
                 }
             }
         }
 
-        // PostgreSQL üzerinde atomik kilit alma işlemi.
+        private static bool IsIdentityCurrent(
+            string targetClientId,
+            PuzzleAttempt attempt)
+        {
+            if (targetClientId.StartsWith(
+                "user:",
+                StringComparison.Ordinal))
+            {
+                string userIdText =
+                    targetClientId["user:".Length..];
+
+                return int.TryParse(userIdText, out int userId) &&
+                       attempt.UserId == userId;
+            }
+
+            return attempt.UserId == null &&
+                   attempt.ClientId != null &&
+                   string.Equals(
+                       attempt.ClientId,
+                       targetClientId,
+                       StringComparison.Ordinal);
+        }
+
+        private async Task<int> CompleteDeliveryAsync(
+            int deliveryId,
+            string lockId,
+            CancellationToken cancellationToken)
+        {
+            var processedAt = DateTime.UtcNow;
+
+            return await _context
+                .LeaderboardCacheOutboxDeliveries
+                .Where(x =>
+                    x.Id == deliveryId &&
+                    x.Status ==
+                        LeaderboardCacheOutboxDeliveryStatus.Processing &&
+                    x.LockedBy == lockId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(
+                        x => x.Status,
+                        LeaderboardCacheOutboxDeliveryStatus.Completed)
+                    .SetProperty(
+                        x => x.ProcessedAtUtc,
+                        processedAt)
+                    .SetProperty(
+                        x => x.NextRetryAtUtc,
+                        (DateTime?)null)
+                    .SetProperty(
+                        x => x.LockedUntilUtc,
+                        (DateTime?)null)
+                    .SetProperty(
+                        x => x.LockedBy,
+                        (string?)null)
+                    .SetProperty(
+                        x => x.LastError,
+                        (string?)null),
+                    cancellationToken);
+        }
+
         private async Task<bool> TryAcquireLockAsync(
             int deliveryId,
             string lockId,
@@ -311,14 +510,17 @@ namespace DailyChessPuzzleApi.Services
                 .Where(x =>
                     x.Id == deliveryId &&
                     (
-                        x.Status == LeaderboardCacheOutboxDeliveryStatus.Pending ||
+                        x.Status ==
+                            LeaderboardCacheOutboxDeliveryStatus.Pending ||
                         (
-                            x.Status == LeaderboardCacheOutboxDeliveryStatus.Failed &&
+                            x.Status ==
+                                LeaderboardCacheOutboxDeliveryStatus.Failed &&
                             x.NextRetryAtUtc != null &&
                             x.NextRetryAtUtc <= now
                         ) ||
                         (
-                            x.Status == LeaderboardCacheOutboxDeliveryStatus.Processing &&
+                            x.Status ==
+                                LeaderboardCacheOutboxDeliveryStatus.Processing &&
                             x.LockedUntilUtc != null &&
                             x.LockedUntilUtc <= now
                         )

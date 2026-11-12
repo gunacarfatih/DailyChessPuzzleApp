@@ -1,11 +1,14 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿
+using System.ComponentModel.DataAnnotations;
 
 namespace DailyChessPuzzleApi.DTOs
 {
     public class PuzzleSubmitRequest
     {
-        [Required]
-        public string ClientId { get; set; } = string.Empty;
+        // Misafir kullanıcılar için gereklidir.
+        // Kayıtlı kullanıcılar ClientId göndermeyebilir.
+        [StringLength(100, MinimumLength = 1)]
+        public string? ClientId { get; set; }
 
         [Range(1, int.MaxValue)]
         public int PuzzleId { get; set; }

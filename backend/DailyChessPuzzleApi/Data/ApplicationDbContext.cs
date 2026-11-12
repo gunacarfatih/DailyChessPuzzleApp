@@ -11,171 +11,238 @@ namespace DailyChessPuzzleApi.Data
         {
         }
 
-        public DbSet<Puzzle> Puzzles { get; set; }
-        public DbSet<DailyPuzzle> DailyPuzzles { get; set; }
-        public DbSet<PuzzleAttempt> PuzzleAttempts { get; set; }
+        public DbSet<User> Users => Set<User>();
+        public DbSet<Puzzle> Puzzles => Set<Puzzle>();
+        public DbSet<DailyPuzzle> DailyPuzzles => Set<DailyPuzzle>();
+        public DbSet<PuzzleAttempt> PuzzleAttempts => Set<PuzzleAttempt>();
 
-        // Ana Outbox olayları.
-        public DbSet<LeaderboardCacheOutbox> LeaderboardCacheOutbox { get; set; }
+        public DbSet<LeaderboardCacheOutbox> LeaderboardCacheOutboxes
+            => Set<LeaderboardCacheOutbox>();
 
-        // Her Outbox olayına bağlı bağımsız teslimatlar.
-        public DbSet<LeaderboardCacheOutboxDelivery> LeaderboardCacheOutboxDeliveries { get; set; }
+        public DbSet<LeaderboardCacheOutboxDelivery> LeaderboardCacheOutboxDeliveries
+            => Set<LeaderboardCacheOutboxDelivery>();
 
-        // Kullanıcıların dönemsel leaderboard puan özetleri.
-        public DbSet<LeaderboardScore> LeaderboardScores { get; set; }
+        public DbSet<LeaderboardScore> LeaderboardScores
+            => Set<LeaderboardScore>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
 
-            modelBuilder.Entity<Puzzle>()
-                .HasIndex(x => x.LichessPuzzleId)
-                .IsUnique();
+            // USER
+            modelBuilder.Entity<User>(entity =>
+            {
+                entity.HasKey(x => x.Id);
 
-            modelBuilder.Entity<DailyPuzzle>()
-                .HasIndex(x => x.PuzzleDate)
-                .IsUnique();
+                entity.Property(x => x.Username)
+                    .HasMaxLength(50)
+                    .IsRequired();
 
-            modelBuilder.Entity<DailyPuzzle>()
-                .HasOne(x => x.Puzzle)
-                .WithMany(x => x.DailyPuzzles)
-                .HasForeignKey(x => x.PuzzleId)
-                .OnDelete(DeleteBehavior.Restrict);
+                entity.Property(x => x.Email)
+                    .HasMaxLength(254)
+                    .IsRequired();
 
-            modelBuilder.Entity<PuzzleAttempt>()
-                .HasOne(x => x.Puzzle)
-                .WithMany()
-                .HasForeignKey(x => x.PuzzleId);
+                entity.Property(x => x.PasswordHash)
+                    .IsRequired();
 
-            modelBuilder.Entity<PuzzleAttempt>()
-                .HasIndex(x => new { x.ClientId, x.PuzzleId })
-                .IsUnique();
+                entity.Property(x => x.CountryCode)
+                    .HasMaxLength(2);
 
-            modelBuilder.Entity<PuzzleAttempt>()
-                .HasIndex(x => x.PlayedOn);
+                entity.HasIndex(x => x.Username)
+                    .IsUnique();
 
-            modelBuilder.Entity<PuzzleAttempt>()
-                .HasIndex(x => new { x.CountryCode, x.PlayedOn });
+                entity.HasIndex(x => x.Email)
+                    .IsUnique();
+            });
 
-            // -----------------------------------------
-            // LEADERBOARD OUTBOX
-            // -----------------------------------------
+            // PUZZLE
+            modelBuilder.Entity<Puzzle>(entity =>
+            {
+                entity.HasKey(x => x.Id);
 
-            modelBuilder.Entity<LeaderboardCacheOutbox>()
-                .HasIndex(x => x.PuzzleAttemptId)
-                .IsUnique();
+                entity.HasIndex(x => x.LichessPuzzleId)
+                    .IsUnique();
+            });
 
-            modelBuilder.Entity<LeaderboardCacheOutbox>()
-                .HasIndex(x => x.CreatedAtUtc);
+            // DAILY PUZZLE
+            modelBuilder.Entity<DailyPuzzle>(entity =>
+            {
+                entity.HasKey(x => x.Id);
 
-            modelBuilder.Entity<LeaderboardCacheOutbox>()
-                .Property(x => x.ClientId)
-                .HasMaxLength(100)
-                .IsRequired();
+                entity.HasIndex(x => x.PuzzleDate)
+                    .IsUnique();
 
-            modelBuilder.Entity<LeaderboardCacheOutbox>()
-                .HasOne<PuzzleAttempt>()
-                .WithMany()
-                .HasForeignKey(x => x.PuzzleAttemptId)
-                .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(x => x.Puzzle)
+                    .WithMany(x => x.DailyPuzzles)
+                    .HasForeignKey(x => x.PuzzleId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
 
-            // -----------------------------------------
-            // LEADERBOARD OUTBOX DELIVERY
-            // -----------------------------------------
+            // PUZZLE ATTEMPT
+            modelBuilder.Entity<PuzzleAttempt>(entity =>
+            {
+                entity.HasKey(x => x.Id);
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .HasOne(x => x.Outbox)
-                .WithMany(x => x.Deliveries)
-                .HasForeignKey(x => x.OutboxId)
-                .OnDelete(DeleteBehavior.Cascade);
+                entity.Property(x => x.ClientId)
+                    .HasMaxLength(100);
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .Property(x => x.Period)
-                .HasMaxLength(10)
-                .IsRequired();
+                entity.HasOne(x => x.Puzzle)
+                    .WithMany()
+                    .HasForeignKey(x => x.PuzzleId);
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .Property(x => x.PeriodKey)
-                .HasMaxLength(20)
-                .IsRequired();
+                entity.HasOne(x => x.User)
+                    .WithMany(x => x.PuzzleAttempts)
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.SetNull);
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .Property(x => x.CountryCode)
-                .HasMaxLength(2);
+                // Misafir kullanıcıların aynı bulmacayı
+                // birden fazla kez çözmesini engeller.
+                entity.HasIndex(x => new
+                {
+                    x.ClientId,
+                    x.PuzzleId
+                })
+                .IsUnique()
+                .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL");
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .Property(x => x.CacheKey)
-                .HasMaxLength(300)
-                .IsRequired();
+                // Kayıtlı kullanıcıların aynı bulmacayı
+                // birden fazla kez çözmesini engeller.
+                entity.HasIndex(x => new
+                {
+                    x.UserId,
+                    x.PuzzleId
+                })
+                .IsUnique()
+                .HasFilter("\"UserId\" IS NOT NULL");
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .Property(x => x.LastError)
-                .HasMaxLength(2000);
+                entity.HasIndex(x => x.PlayedOn);
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .Property(x => x.LockedBy)
-                .HasMaxLength(100);
+                entity.HasIndex(x => new
+                {
+                    x.CountryCode,
+                    x.PlayedOn
+                });
+            });
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .HasIndex(x => new
+            // LEADERBOARD CACHE OUTBOX
+            modelBuilder.Entity<LeaderboardCacheOutbox>(entity =>
+            {
+                entity.HasKey(x => x.Id);
+
+                entity.Property(x => x.ClientId)
+                    .HasMaxLength(105)
+                    .IsRequired();
+
+                // Aynı PuzzleAttempt için birden fazla Outbox olayına izin verir.
+                entity.HasIndex(x => x.PuzzleAttemptId);
+
+                entity.HasIndex(x => x.CreatedAtUtc);
+
+                entity.HasOne<PuzzleAttempt>()
+                    .WithMany()
+                    .HasForeignKey(x => x.PuzzleAttemptId)
+                    .IsRequired(false)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // LEADERBOARD CACHE OUTBOX DELIVERY
+            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>(entity =>
+            {
+                entity.HasKey(x => x.Id);
+
+                entity.Property(x => x.TargetClientId)
+                    .HasMaxLength(105)
+                    .IsRequired();
+
+                entity.Property(x => x.IsRemoval)
+                    .HasDefaultValue(false)
+                    .IsRequired();
+
+                entity.Property(x => x.Period)
+                    .HasMaxLength(10)
+                    .IsRequired();
+
+                entity.Property(x => x.PeriodKey)
+                    .HasMaxLength(20)
+                    .IsRequired();
+
+                entity.Property(x => x.CountryCode)
+                    .HasMaxLength(2);
+
+                entity.Property(x => x.CacheKey)
+                    .HasMaxLength(300)
+                    .IsRequired();
+
+                entity.Property(x => x.LastError)
+                    .HasMaxLength(2000);
+
+                entity.Property(x => x.LockedBy)
+                    .HasMaxLength(100);
+
+                entity.HasOne(x => x.Outbox)
+                    .WithMany(x => x.Deliveries)
+                    .HasForeignKey(x => x.OutboxId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                entity.HasIndex(x => new
                 {
                     x.Status,
                     x.NextRetryAtUtc,
                     x.CreatedAtUtc
                 });
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .HasIndex(x => new
+                // CountryCode NULL olan kayıtlar.
+                entity.HasIndex(x => new
                 {
                     x.OutboxId,
+                    x.TargetClientId,
+                    x.IsRemoval,
                     x.Period,
                     x.PeriodKey
                 })
                 .IsUnique()
                 .HasFilter("\"CountryCode\" IS NULL");
 
-            modelBuilder.Entity<LeaderboardCacheOutboxDelivery>()
-                .HasIndex(x => new
+                // CountryCode dolu olan kayıtlar.
+                entity.HasIndex(x => new
                 {
                     x.OutboxId,
+                    x.TargetClientId,
+                    x.IsRemoval,
                     x.Period,
                     x.PeriodKey,
                     x.CountryCode
                 })
                 .IsUnique()
                 .HasFilter("\"CountryCode\" IS NOT NULL");
+            });
 
-            // -----------------------------------------
             // LEADERBOARD SCORE
-            // -----------------------------------------
+            modelBuilder.Entity<LeaderboardScore>(entity =>
+            {
+                entity.HasKey(x => x.Id);
 
-            modelBuilder.Entity<LeaderboardScore>()
-                .Property(x => x.ClientId)
-                .HasMaxLength(100)
-                .IsRequired();
+                entity.Property(x => x.ClientId)
+                    .HasMaxLength(105)
+                    .IsRequired();
 
-            modelBuilder.Entity<LeaderboardScore>()
-                .Property(x => x.Period)
-                .HasMaxLength(10)
-                .IsRequired();
+                entity.Property(x => x.Period)
+                    .HasMaxLength(10)
+                    .IsRequired();
 
-            modelBuilder.Entity<LeaderboardScore>()
-                .Property(x => x.PeriodKey)
-                .HasMaxLength(20)
-                .IsRequired();
+                entity.Property(x => x.PeriodKey)
+                    .HasMaxLength(20)
+                    .IsRequired();
 
-            modelBuilder.Entity<LeaderboardScore>()
-                .Property(x => x.CountryCode)
-                .HasMaxLength(2);
+                entity.Property(x => x.CountryCode)
+                    .HasMaxLength(2);
 
-            // Yeni Revision alanının varsayılan değeri.
-            modelBuilder.Entity<LeaderboardScore>()
-                .Property(x => x.Revision)
-                .HasDefaultValue(0L)
-                .IsRequired();
+                entity.Property(x => x.Revision)
+                    .HasDefaultValue(0L)
+                    .IsRequired();
 
-            modelBuilder.Entity<LeaderboardScore>()
-                .HasIndex(x => new
+                // Global leaderboard benzersizliği.
+                entity.HasIndex(x => new
                 {
                     x.ClientId,
                     x.Period,
@@ -184,8 +251,8 @@ namespace DailyChessPuzzleApi.Data
                 .IsUnique()
                 .HasFilter("\"CountryCode\" IS NULL");
 
-            modelBuilder.Entity<LeaderboardScore>()
-                .HasIndex(x => new
+                // Ülke leaderboard benzersizliği.
+                entity.HasIndex(x => new
                 {
                     x.ClientId,
                     x.Period,
@@ -195,8 +262,7 @@ namespace DailyChessPuzzleApi.Data
                 .IsUnique()
                 .HasFilter("\"CountryCode\" IS NOT NULL");
 
-            modelBuilder.Entity<LeaderboardScore>()
-                .HasIndex(x => new
+                entity.HasIndex(x => new
                 {
                     x.Period,
                     x.PeriodKey,
@@ -204,6 +270,7 @@ namespace DailyChessPuzzleApi.Data
                     x.TotalScore,
                     x.SolvedCount
                 });
+            });
         }
     }
 }

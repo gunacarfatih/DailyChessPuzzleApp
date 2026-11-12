@@ -1,9 +1,7 @@
-﻿
-namespace DailyChessPuzzleApi.Services.Interfaces
+﻿namespace DailyChessPuzzleApi.Services.Interfaces
 {
     public interface ILeaderboardCacheService
     {
-        // Kullanıcının leaderboard puanını revision kontrolüyle günceller.
         Task UpdateScoreAsync(
             string key,
             string clientId,
@@ -11,14 +9,23 @@ namespace DailyChessPuzzleApi.Services.Interfaces
             int solvedCount,
             long revision);
 
-        // Günlük leaderboard puanını ve cache versiyonunu
-        // revision kontrolüyle atomik olarak günceller.
         Task UpdateDailyScoreAsync(
             string key,
             string versionKey,
             string clientId,
             int totalScore,
             int solvedCount,
+            long revision);
+
+        Task RemoveScoreAsync(
+            string key,
+            string clientId,
+            long revision);
+
+        Task RemoveDailyScoreAsync(
+            string key,
+            string versionKey,
+            string clientId,
             long revision);
 
         Task<bool> IsDailyCacheReadyAsync(string key);
@@ -32,9 +39,7 @@ namespace DailyChessPuzzleApi.Services.Interfaces
             string clientId);
 
         Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
-            GetTopAsync(
-                string key,
-                int count);
+            GetTopAsync(string key, int count);
 
         Task<long?> GetRankAsync(
             string key,

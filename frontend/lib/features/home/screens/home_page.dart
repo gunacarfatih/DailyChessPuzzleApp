@@ -15,10 +15,10 @@ class HomePage extends StatefulWidget {
   });
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomePage> createState() => HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class HomePageState extends State<HomePage> {
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
   final LeaderboardApiService _leaderboardApiService =
   LeaderboardApiService();
@@ -35,7 +35,18 @@ class _HomePageState extends State<HomePage> {
     _loadStatistics();
   }
 
+  // Ana sayfaya dönüldüğünde dışarıdan çağrılır.
+  void refreshStatistics() {
+    _loadStatistics();
+  }
+
   Future<void> _loadStatistics() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoadingStats = true;
+    });
+
     try {
       final clientId = await _clientIdStorage.getClientId();
 
@@ -117,7 +128,7 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           IconButton(
-            onPressed: _refresh,
+            onPressed: _isLoadingStats ? null : _refresh,
             icon: const Icon(Icons.refresh),
             tooltip: 'İstatistikleri yenile',
           ),

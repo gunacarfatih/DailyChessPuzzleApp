@@ -56,23 +56,22 @@ namespace DailyChessPuzzleApi.Migrations
 
                     b.Property<string>("ClientId")
                         .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasMaxLength(105)
+                        .HasColumnType("character varying(105)");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("PuzzleAttemptId")
+                    b.Property<int?>("PuzzleAttemptId")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAtUtc");
 
-                    b.HasIndex("PuzzleAttemptId")
-                        .IsUnique();
+                    b.HasIndex("PuzzleAttemptId");
 
-                    b.ToTable("LeaderboardCacheOutbox");
+                    b.ToTable("LeaderboardCacheOutboxes");
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.LeaderboardCacheOutboxDelivery", b =>
@@ -94,6 +93,11 @@ namespace DailyChessPuzzleApi.Migrations
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsRemoval")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("LastError")
                         .HasMaxLength(2000)
@@ -134,19 +138,25 @@ namespace DailyChessPuzzleApi.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TargetClientId")
+                        .IsRequired()
+                        .HasMaxLength(105)
+                        .HasColumnType("character varying(105)");
+
                     b.Property<int>("TotalScore")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OutboxId", "Period", "PeriodKey")
+                    b.HasIndex("Status", "NextRetryAtUtc", "CreatedAtUtc");
+
+                    b.HasIndex("OutboxId", "TargetClientId", "IsRemoval", "Period", "PeriodKey")
                         .IsUnique()
                         .HasFilter("\"CountryCode\" IS NULL");
 
-                    b.HasIndex("Status", "NextRetryAtUtc", "CreatedAtUtc");
-
-                    b.HasIndex("OutboxId", "Period", "PeriodKey", "CountryCode")
+                    b.HasIndex("OutboxId", "TargetClientId", "IsRemoval", "Period", "PeriodKey", "CountryCode")
                         .IsUnique()
+                        .HasDatabaseName("IX_LeaderboardCacheOutboxDeliveries_OutboxId_TargetClientId_I~1")
                         .HasFilter("\"CountryCode\" IS NOT NULL");
 
                     b.ToTable("LeaderboardCacheOutboxDeliveries");
@@ -162,8 +172,8 @@ namespace DailyChessPuzzleApi.Migrations
 
                     b.Property<string>("ClientId")
                         .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasMaxLength(105)
+                        .HasColumnType("character varying(105)");
 
                     b.Property<string>("CountryCode")
                         .HasMaxLength(2)
@@ -258,8 +268,8 @@ namespace DailyChessPuzzleApi.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<string>("ClientId")
-                        .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("CountryCode")
                         .HasColumnType("text");
@@ -282,6 +292,9 @@ namespace DailyChessPuzzleApi.Migrations
                     b.Property<bool>("UsedHint")
                         .HasColumnType("boolean");
 
+                    b.Property<int?>("UserId")
+                        .HasColumnType("integer");
+
                     b.Property<int>("WrongMoves")
                         .HasColumnType("integer");
 
@@ -292,11 +305,59 @@ namespace DailyChessPuzzleApi.Migrations
                     b.HasIndex("PuzzleId");
 
                     b.HasIndex("ClientId", "PuzzleId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL");
 
                     b.HasIndex("CountryCode", "PlayedOn");
 
+                    b.HasIndex("UserId", "PuzzleId")
+                        .IsUnique()
+                        .HasFilter("\"UserId\" IS NOT NULL");
+
                     b.ToTable("PuzzleAttempts");
+                });
+
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.User", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CountryCode")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Username")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.HasIndex("Username")
+                        .IsUnique();
+
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.DailyPuzzle", b =>
@@ -315,8 +376,7 @@ namespace DailyChessPuzzleApi.Migrations
                     b.HasOne("DailyChessPuzzleApi.Models.PuzzleAttempt", null)
                         .WithMany()
                         .HasForeignKey("PuzzleAttemptId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.LeaderboardCacheOutboxDelivery", b =>
@@ -338,7 +398,14 @@ namespace DailyChessPuzzleApi.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("DailyChessPuzzleApi.Models.User", "User")
+                        .WithMany("PuzzleAttempts")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("Puzzle");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.LeaderboardCacheOutbox", b =>
@@ -349,6 +416,11 @@ namespace DailyChessPuzzleApi.Migrations
             modelBuilder.Entity("DailyChessPuzzleApi.Models.Puzzle", b =>
                 {
                     b.Navigation("DailyPuzzles");
+                });
+
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.User", b =>
+                {
+                    b.Navigation("PuzzleAttempts");
                 });
 #pragma warning restore 612, 618
         }

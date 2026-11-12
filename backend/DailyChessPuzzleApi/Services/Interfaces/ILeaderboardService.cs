@@ -8,6 +8,7 @@ namespace DailyChessPuzzleApi.Services.Interfaces
         Task<LeaderboardResponse> GetLeaderboardAsync(
             string? country,
             string? clientId,
+            int? userId,
             int limit,
             DateOnly? startDate,
             DateOnly? endDate,
