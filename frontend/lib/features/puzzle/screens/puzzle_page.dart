@@ -14,10 +14,10 @@ class PuzzlePage extends StatefulWidget {
   const PuzzlePage({super.key});
 
   @override
-  State<PuzzlePage> createState() => _PuzzlePageState();
+  State<PuzzlePage> createState() => PuzzlePageState();
 }
 
-class _PuzzlePageState extends State<PuzzlePage> {
+class PuzzlePageState extends State<PuzzlePage> {
   static const Color _background = Color(0xFF101A17);
   static const Color _surface = Color(0xFF1B2923);
   static const Color _primary = Color(0xFFB7D7A8);
@@ -33,7 +33,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
   bool _isReplay = false;
   bool _usedHint = false;
 
-  // Kullanıcı Başla butonuna bastı mı?
   bool _hasStarted = false;
 
   String? _errorMessage;
@@ -78,6 +77,20 @@ class _PuzzlePageState extends State<PuzzlePage> {
     _loadTodayPuzzle();
   }
 
+  // Sekmeye dönüldüğünde bulmaca henüz başlamamışsa yeniler.
+  // Devam eden veya tamamlanmış oyunun durumunu korur.
+  Future<void> refreshPuzzle() async {
+    if (!mounted ||
+        _isLoading ||
+        _isSubmitting ||
+        _hasStarted ||
+        _isSolved) {
+      return;
+    }
+
+    await _loadTodayPuzzle();
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -85,7 +98,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
     super.dispose();
   }
 
-  // Kronometreyi başlatır.
   void _startTimer() {
     _timer?.cancel();
 
@@ -106,7 +118,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
     _timer = null;
   }
 
-  // Kullanıcı Başla butonuna bastığında çağrılır.
   void _startPuzzle() {
     if (_hasStarted || _isLoading || _puzzle == null) return;
 
@@ -117,7 +128,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
           : 'Sıra sende! Doğru hamleyi bul.';
     });
 
-    // Süre yalnızca kullanıcı Başla butonuna bastığında başlar.
     _startTimer();
   }
 
@@ -130,6 +140,8 @@ class _PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _loadTodayPuzzle() async {
+    if (!mounted) return;
+
     _stopTimer();
 
     _controller?.dispose();
@@ -186,7 +198,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
 
       var validationPosition = initialPosition;
 
-      // API'den gelen bütün hamlelerin geçerli olduğunu kontrol et.
       for (final uci in puzzle.moves) {
         final move = NormalMove.fromUci(uci);
 
@@ -197,9 +208,7 @@ class _PuzzlePageState extends State<PuzzlePage> {
         validationPosition = validationPosition.play(move);
       }
 
-      // İlk hamle rakibin açılış hamlesidir.
       final firstMove = NormalMove.fromUci(puzzle.moves.first);
-
       final positionAfterOpponent = initialPosition.play(firstMove);
 
       if (!mounted) return;
@@ -228,10 +237,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
             ? 'Bu bulmacayı daha önce çözdün. Tekrar oynayabilirsin.'
             : 'Hazır olduğunda bulmacaya başlayabilirsin.';
       });
-
-      // DİKKAT:
-      // Burada kronometre başlatılmıyor.
-      // Kullanıcı Başla butonuna bastığında başlayacak.
     } catch (error, stackTrace) {
       debugPrint('Puzzle yükleme hatası: $error');
       debugPrint('$stackTrace');
@@ -335,7 +340,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
 
     if (!mounted || _isSolved || !_hasStarted) return;
 
-    // Bekleme sırasında oyun yeniden başlatılmış olabilir.
     final currentPosition = _position;
 
     if (currentPosition == null) return;
@@ -383,13 +387,10 @@ class _PuzzlePageState extends State<PuzzlePage> {
     );
   }
 
-  // Sıradaki doğru hamlenin başlangıç karesini gösterir.
-  // Hedef kare ve hamlenin tamamı açıklanmaz.
   void _useHint() {
     if (!_canUseHint) return;
 
     final puzzle = _puzzle!;
-
     final expectedMove = puzzle.moves[_nextMoveIndex];
 
     if (expectedMove.length < 4) return;
@@ -413,7 +414,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
       _feedback = 'Tebrikler! Bulmacayı başarıyla çözdün.';
     });
 
-    // Daha önce kayıt yapılmışsa tekrar puan gönderme.
     if (!_hasSubmitted) {
       await _submitPuzzle();
     } else {
@@ -510,8 +510,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
     }
   }
 
-  // Bulmacayı tekrar başlangıç konumuna getirir.
-  // Kullanıcı yeniden Başla butonuna basmalıdır.
   void _restartPuzzle() {
     final startingPosition = _startingPosition;
     final puzzle = _puzzle;
@@ -556,9 +554,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
       animate: false,
       resetPremove: true,
     );
-
-    // Kronometre burada başlatılmıyor.
-    // Tekrar Başla butonuna basıldığında başlayacak.
   }
 
   @override
@@ -620,7 +615,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
           height: constraints.maxHeight,
           child: Stack(
             children: [
-              // Bulmaca ekranının tamamı başlangıçta bulanık.
               Positioned.fill(
                 child: IgnorePointer(
                   ignoring: !_hasStarted,
@@ -671,8 +665,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
                   ),
                 ),
               ),
-
-              // Başlangıç katmanı.
               if (!_hasStarted)
                 Positioned.fill(
                   child: _buildStartOverlay(),
@@ -1089,7 +1081,6 @@ class _PuzzlePageState extends State<PuzzlePage> {
     );
   }
 
-  // Bulmaca tamamlandığında gösterilen sonuç ekranı.
   Widget _buildResultBody() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),

@@ -48,5 +48,20 @@ namespace DailyChessPuzzleApi.Controllers
                 "Login completed successfully.",
                 result));
         }
+
+        [HttpPost("google")]
+        public async Task<IActionResult> GoogleLogin(
+            [FromBody] GoogleLoginRequest request,
+            CancellationToken cancellationToken)
+        {
+            var result = await _authService.GoogleLoginAsync(
+                request,
+                cancellationToken);
+
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Google authentication completed successfully.",
+                result));
+        }
     }
 }

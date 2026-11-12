@@ -39,15 +39,24 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   final GlobalKey<HomePageState> _homePageKey =
   GlobalKey<HomePageState>();
 
+  final GlobalKey<PuzzlePageState> _puzzlePageKey =
+  GlobalKey<PuzzlePageState>();
+
+  final GlobalKey<LeaderboardPageState> _leaderboardPageKey =
+  GlobalKey<LeaderboardPageState>();
+
+  final GlobalKey<ProfilePageState> _profilePageKey =
+  GlobalKey<ProfilePageState>();
+
   late final List<Widget> _pages = [
     HomePage(
       key: _homePageKey,
       onOpenPuzzle: () => _navigateTo(1),
       onOpenLeaderboard: () => _navigateTo(2),
     ),
-    const PuzzlePage(),
-    const LeaderboardPage(),
-    const ProfilePage(),
+    PuzzlePage(key: _puzzlePageKey),
+    LeaderboardPage(key: _leaderboardPageKey),
+    ProfilePage(key: _profilePageKey),
   ];
 
   void _navigateTo(int index) {
@@ -57,8 +66,22 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
       _selectedIndex = index;
     });
 
-    if (index == 0) {
-      _homePageKey.currentState?.refreshStatistics();
+    switch (index) {
+      case 0:
+        _homePageKey.currentState?.refreshStatistics();
+        break;
+
+      case 1:
+        _puzzlePageKey.currentState?.refreshPuzzle();
+        break;
+
+      case 2:
+        _leaderboardPageKey.currentState?.refreshLeaderboard();
+        break;
+
+      case 3:
+        _profilePageKey.currentState?.refreshProfile();
+        break;
     }
   }
 

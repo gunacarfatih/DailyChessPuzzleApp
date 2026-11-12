@@ -38,12 +38,24 @@ namespace DailyChessPuzzleApi.Data
                     .HasMaxLength(50)
                     .IsRequired();
 
+                entity.Property(x => x.FirstName)
+                    .HasMaxLength(50)
+                    .IsRequired();
+
+                entity.Property(x => x.LastName)
+                    .HasMaxLength(50)
+                    .IsRequired();
+
                 entity.Property(x => x.Email)
                     .HasMaxLength(254)
                     .IsRequired();
 
                 entity.Property(x => x.PasswordHash)
-                    .IsRequired();
+                    .IsRequired(false);
+
+                entity.Property(x => x.GoogleId)
+                    .HasMaxLength(100)
+                    .IsRequired(false);
 
                 entity.Property(x => x.CountryCode)
                     .HasMaxLength(2);
@@ -53,6 +65,10 @@ namespace DailyChessPuzzleApi.Data
 
                 entity.HasIndex(x => x.Email)
                     .IsUnique();
+
+                entity.HasIndex(x => x.GoogleId)
+                    .IsUnique()
+                    .HasFilter("\"GoogleId\" IS NOT NULL");
             });
 
             // PUZZLE
@@ -133,7 +149,6 @@ namespace DailyChessPuzzleApi.Data
                     .HasMaxLength(105)
                     .IsRequired();
 
-                // Aynı PuzzleAttempt için birden fazla Outbox olayına izin verir.
                 entity.HasIndex(x => x.PuzzleAttemptId);
 
                 entity.HasIndex(x => x.CreatedAtUtc);
@@ -191,7 +206,6 @@ namespace DailyChessPuzzleApi.Data
                     x.CreatedAtUtc
                 });
 
-                // CountryCode NULL olan kayıtlar.
                 entity.HasIndex(x => new
                 {
                     x.OutboxId,
@@ -203,7 +217,6 @@ namespace DailyChessPuzzleApi.Data
                 .IsUnique()
                 .HasFilter("\"CountryCode\" IS NULL");
 
-                // CountryCode dolu olan kayıtlar.
                 entity.HasIndex(x => new
                 {
                     x.OutboxId,

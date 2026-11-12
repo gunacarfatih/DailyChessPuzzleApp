@@ -13,10 +13,10 @@ class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
   @override
-  State<ProfilePage> createState() => _ProfilePageState();
+  State<ProfilePage> createState() => ProfilePageState();
 }
 
-class _ProfilePageState extends State<ProfilePage> {
+class ProfilePageState extends State<ProfilePage> {
   final LeaderboardApiService _leaderboardApiService =
   LeaderboardApiService();
 
@@ -45,6 +45,12 @@ class _ProfilePageState extends State<ProfilePage> {
     _loadProfile();
   }
 
+  Future<void> refreshProfile() async {
+    if (!mounted || _isLoading || _isLoggingOut) return;
+
+    await _loadProfile();
+  }
+
   // Oturum ve profil bilgilerini yükler.
   Future<void> _loadProfile() async {
     if (mounted) {
@@ -57,7 +63,6 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       final clientId = await _clientIdStorage.getClientId();
 
-      // Token süresi dolmuşsa AuthStorage oturumu temizler.
       final isLoggedIn = await _authStorage.isLoggedIn();
 
       String? username;
@@ -299,32 +304,24 @@ class _ProfilePageState extends State<ProfilePage> {
       children: [
         _buildProfileHeader(),
         const SizedBox(height: 20),
-
-        // Misafir veya kayıtlı kullanıcıya uygun hesap alanı.
         if (_isLoggedIn)
           _buildLoggedInActions()
         else
           _buildGuestActions(),
-
         const SizedBox(height: 24),
-
         _buildSectionTitle('İstatistikler'),
         const SizedBox(height: 14),
         _buildStatistics(),
-
         const SizedBox(height: 24),
-
         _buildSectionTitle('Oyuncu Bilgileri'),
         const SizedBox(height: 14),
         _buildPlayerInformation(),
-
         const SizedBox(height: 24),
         _buildInformationCard(),
       ],
     );
   }
 
-  // Profil başlığı.
   Widget _buildProfileHeader() {
     final displayName = _isLoggedIn &&
         _username != null &&
@@ -369,9 +366,7 @@ class _ProfilePageState extends State<ProfilePage> {
               color: const Color(0xFFB7D7A8),
             ),
           ),
-
           const SizedBox(height: 16),
-
           Text(
             displayName,
             textAlign: TextAlign.center,
@@ -380,9 +375,7 @@ class _ProfilePageState extends State<ProfilePage> {
               fontWeight: FontWeight.bold,
             ),
           ),
-
           const SizedBox(height: 7),
-
           Text(
             subtitle,
             textAlign: TextAlign.center,
@@ -391,9 +384,7 @@ class _ProfilePageState extends State<ProfilePage> {
               fontSize: 12,
             ),
           ),
-
           const SizedBox(height: 14),
-
           Container(
             padding: const EdgeInsets.symmetric(
               horizontal: 14,
@@ -433,7 +424,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  // Misafir kullanıcı için giriş ve kayıt seçenekleri.
   Widget _buildGuestActions() {
     return Container(
       padding: const EdgeInsets.all(18),
@@ -464,9 +454,7 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ],
           ),
-
           const SizedBox(height: 10),
-
           const Text(
             'Hesap oluşturarak puanlarını kalıcı olarak '
                 'saklayabilir ve farklı cihazlardan erişebilirsin.',
@@ -476,9 +464,7 @@ class _ProfilePageState extends State<ProfilePage> {
               height: 1.5,
             ),
           ),
-
           const SizedBox(height: 18),
-
           SizedBox(
             height: 48,
             child: ElevatedButton.icon(
@@ -487,9 +473,7 @@ class _ProfilePageState extends State<ProfilePage> {
               label: const Text('Giriş Yap'),
             ),
           ),
-
           const SizedBox(height: 10),
-
           SizedBox(
             height: 48,
             child: OutlinedButton.icon(
@@ -503,7 +487,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  // Kayıtlı kullanıcı için hesap işlemleri.
   Widget _buildLoggedInActions() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -529,9 +512,7 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ],
           ),
-
           const SizedBox(height: 14),
-
           SizedBox(
             height: 46,
             child: OutlinedButton.icon(
@@ -594,9 +575,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ],
         ),
-
         const SizedBox(height: 12),
-
         _buildStatisticCard(
           icon: Icons.leaderboard_rounded,
           title: 'Genel Sıralama',
@@ -642,9 +621,7 @@ class _ProfilePageState extends State<ProfilePage> {
               size: 23,
             ),
           ),
-
           const SizedBox(width: 12),
-
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -687,47 +664,39 @@ class _ProfilePageState extends State<ProfilePage> {
                 ? 'Hesap #${_userId ?? '-'}'
                 : _displayClientId,
           ),
-
           const Divider(
             height: 1,
             color: Colors.white10,
           ),
-
           if (_isLoggedIn) ...[
             _buildInformationRow(
               icon: Icons.person_outline,
               title: 'Kullanıcı adı',
               value: _username ?? '-',
             ),
-
             const Divider(
               height: 1,
               color: Colors.white10,
             ),
-
             _buildInformationRow(
               icon: Icons.email_outlined,
               title: 'E-posta',
               value: _email ?? '-',
             ),
-
             const Divider(
               height: 1,
               color: Colors.white10,
             ),
           ],
-
           _buildInformationRow(
             icon: Icons.emoji_events_outlined,
             title: 'Sıralama dönemi',
             value: 'Tüm zamanlar',
           ),
-
           const Divider(
             height: 1,
             color: Colors.white10,
           ),
-
           _buildInformationRow(
             icon: Icons.check_circle_outline,
             title: 'Oyuncu durumu',
@@ -757,9 +726,7 @@ class _ProfilePageState extends State<ProfilePage> {
             size: 20,
             color: const Color(0xFFB7D7A8),
           ),
-
           const SizedBox(width: 12),
-
           Expanded(
             child: Text(
               title,
@@ -769,7 +736,6 @@ class _ProfilePageState extends State<ProfilePage> {
               ),
             ),
           ),
-
           Flexible(
             child: Text(
               value,
@@ -800,9 +766,7 @@ class _ProfilePageState extends State<ProfilePage> {
             Icons.info_outline,
             color: Color(0xFFB7D7A8),
           ),
-
           SizedBox(width: 12),
-
           Expanded(
             child: Text(
               'Puan ve sıralama bilgilerin, çözdüğün bulmacalardan '
@@ -824,15 +788,12 @@ class _ProfilePageState extends State<ProfilePage> {
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 140),
-
         const Icon(
           Icons.cloud_off_outlined,
           size: 52,
           color: Colors.white54,
         ),
-
         const SizedBox(height: 16),
-
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 28),
           child: Text(
@@ -843,9 +804,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
         ),
-
         const SizedBox(height: 20),
-
         Center(
           child: ElevatedButton.icon(
             onPressed: _loadProfile,

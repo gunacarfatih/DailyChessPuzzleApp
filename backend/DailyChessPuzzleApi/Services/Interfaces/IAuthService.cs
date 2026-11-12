@@ -12,5 +12,9 @@ namespace DailyChessPuzzleApi.Services.Interfaces
         Task<AuthResponse> LoginAsync(
             LoginRequest request,
             CancellationToken cancellationToken);
+
+        Task<AuthResponse> GoogleLoginAsync(
+            GoogleLoginRequest request,
+            CancellationToken cancellationToken);
     }
 }

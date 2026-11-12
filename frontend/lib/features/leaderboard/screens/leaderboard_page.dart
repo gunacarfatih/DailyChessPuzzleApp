@@ -11,10 +11,10 @@ class LeaderboardPage extends StatefulWidget {
   const LeaderboardPage({super.key});
 
   @override
-  State<LeaderboardPage> createState() => _LeaderboardPageState();
+  State<LeaderboardPage> createState() => LeaderboardPageState();
 }
 
-class _LeaderboardPageState extends State<LeaderboardPage> {
+class LeaderboardPageState extends State<LeaderboardPage> {
   final LeaderboardApiService _apiService = LeaderboardApiService();
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
 
@@ -30,6 +30,12 @@ class _LeaderboardPageState extends State<LeaderboardPage> {
   void initState() {
     super.initState();
     _loadLeaderboard();
+  }
+
+  Future<void> refreshLeaderboard() async {
+    if (!mounted || _isLoading) return;
+
+    await _loadLeaderboard();
   }
 
   Future<void> _loadLeaderboard() async {

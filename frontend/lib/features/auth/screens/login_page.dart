@@ -50,13 +50,7 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
 
       if (response.success && response.data != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Giriş başarılı. Hoş geldin!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
+        _showSuccess('Giriş başarılı. Hoş geldin!');
         Navigator.pop(context, true);
       } else {
         _showError(
@@ -65,8 +59,38 @@ class _LoginPageState extends State<LoginPage> {
       }
     } catch (e) {
       if (!mounted) return;
-
       _showError(_getExceptionMessage(e));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loginWithGoogle() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final response = await _authService.loginWithGoogle();
+
+      if (!mounted) return;
+
+      if (response.success && response.data != null) {
+        _showSuccess('Google ile giriş başarılı. Hoş geldin!');
+        Navigator.pop(context, true);
+      } else {
+        _showError(
+          response.message ?? 'Google ile giriş yapılamadı.',
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      _showError(_getGoogleExceptionMessage(e));
     } finally {
       if (mounted) {
         setState(() {
@@ -79,6 +103,27 @@ class _LoginPageState extends State<LoginPage> {
   String _getExceptionMessage(Object error) {
     return 'Sunucuya bağlanırken bir hata oluştu. '
         'Lütfen tekrar deneyin.';
+  }
+
+  String _getGoogleExceptionMessage(Object error) {
+    final message = error.toString();
+
+    if (message.contains('GOOGLE_ACCOUNT_LINK_REQUIRED')) {
+      return 'Bu e-posta adresiyle daha önce normal kayıt yapılmış. '
+          'Önce e-posta ve şifrenle giriş yapmalısın.';
+    }
+
+    return 'Google ile giriş sırasında bir hata oluştu. '
+        'Lütfen tekrar deneyin.';
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   void _showError(String message) {
@@ -224,6 +269,52 @@ class _LoginPageState extends State<LoginPage> {
                       )
                           : const Text(
                         'Giriş Yap',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Divider(
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                        ),
+                        child: Text(
+                          'veya',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Divider(
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    height: 52,
+                    child: OutlinedButton.icon(
+                      onPressed:
+                      _isLoading ? null : _loginWithGoogle,
+                      icon: const Icon(
+                        Icons.g_mobiledata,
+                        size: 30,
+                      ),
+                      label: const Text(
+                        'Google ile Giriş Yap',
                         style: TextStyle(fontSize: 16),
                       ),
                     ),
