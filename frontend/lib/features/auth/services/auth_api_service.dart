@@ -21,6 +21,8 @@ class AuthApiService {
       '50351820821-cfv637694e6k8nfjm8ve48s28u4o2pef.apps.googleusercontent.com';
 
   static const String _googleLoginEndpoint = '/api/auth/google';
+  static const String _setPasswordEndpoint = '/api/auth/set-password';
+  static const String _changePasswordEndpoint = '/api/auth/change-password';
 
   // Google Sign-In singleton instance.
   static final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
@@ -36,8 +38,23 @@ class AuthApiService {
     await _googleInitialization;
   }
 
-  /// Yeni kullanıcı kaydı oluşturur.
-  /// Misafir ClientId değerini de backend'e gönderir.
+  // JWT gerektiren isteklerde kullanılacak Authorization başlığı.
+  Future<Options> _getAuthenticatedOptions() async {
+    final token = await _authStorage.getAccessToken();
+
+    if (token == null || token.isEmpty) {
+      throw Exception('Oturum süresi dolmuş. Lütfen tekrar giriş yap.');
+    }
+
+    return Options(
+      headers: {
+        'Authorization': 'Bearer $token',
+      },
+    );
+  }
+
+  // Yeni kullanıcı kaydı oluşturur.
+  // Misafir ClientId değerini de backend'e gönderir.
   Future<ApiResponse<AuthResponse>> register({
     required String username,
     required String email,
@@ -73,7 +90,7 @@ class AuthApiService {
     return result;
   }
 
-  /// Mevcut kullanıcıyla e-posta ve şifre üzerinden giriş yapar.
+  // Mevcut kullanıcıyla e-posta ve şifre üzerinden giriş yapar.
   Future<ApiResponse<AuthResponse>> login({
     required String email,
     required String password,
@@ -100,13 +117,13 @@ class AuthApiService {
     return result;
   }
 
-  /// Google hesabıyla giriş yapar.
-  ///
-  /// 1. Google Sign-In başlatılır.
-  /// 2. Kullanıcı Google hesabını seçer.
-  /// 3. Google ID Token alınır.
-  /// 4. Token backend'e gönderilir.
-  /// 5. Backend JWT'si güvenli şekilde saklanır.
+  // Google hesabıyla giriş yapar.
+  //
+  // 1. Google Sign-In başlatılır.
+  // 2. Kullanıcı Google hesabını seçer.
+  // 3. Google ID Token alınır.
+  // 4. Token backend'e gönderilir.
+  // 5. Backend JWT'si güvenli şekilde saklanır.
   Future<ApiResponse<AuthResponse>> loginWithGoogle() async {
     await _initializeGoogleSignIn();
 
@@ -116,7 +133,7 @@ class AuthApiService {
 
     // Google ID Token al.
     final GoogleSignInAuthentication authentication =
-    await account.authentication;
+        account.authentication;
 
     final String? idToken = authentication.idToken;
 
@@ -151,7 +168,62 @@ class AuthApiService {
     return result;
   }
 
-  /// Kullanıcı oturumunu kapatır.
+  // Google hesabı olan ve henüz şifresi bulunmayan kullanıcı
+  // için ilk şifreyi belirler.
+  Future<ApiResponse<Map<String, dynamic>>> setPassword({
+    required String newPassword,
+  }) async {
+    final options = await _getAuthenticatedOptions();
+
+    final response = await _dio.post(
+      _setPasswordEndpoint,
+      data: {
+        'newPassword': newPassword,
+      },
+      options: options,
+    );
+
+    final result = ApiResponse<Map<String, dynamic>>.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+    );
+
+    if (result.success) {
+      await _authStorage.updateHasPassword(true);
+    }
+
+    return result;
+  }
+
+  // Mevcut şifresi olan kullanıcının şifresini değiştirir.
+  Future<ApiResponse<Map<String, dynamic>>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final options = await _getAuthenticatedOptions();
+
+    final response = await _dio.post(
+      _changePasswordEndpoint,
+      data: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      },
+      options: options,
+    );
+
+    final result = ApiResponse<Map<String, dynamic>>.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+    );
+
+    if (result.success) {
+      await _authStorage.updateHasPassword(true);
+    }
+
+    return result;
+  }
+
+  // Kullanıcı oturumunu kapatır.
   Future<void> logout() async {
     await _authStorage.clearSession();
   }

@@ -164,7 +164,6 @@ namespace DailyChessPuzzleApi.Services
             string googleId = payload.Subject;
             string email = payload.Email.Trim().ToLowerInvariant();
 
-            // Kullanıcı daha önce Google ile giriş yapmış mı?
             var user = await _context.Users
                 .FirstOrDefaultAsync(
                     x => x.GoogleId == googleId,
@@ -173,8 +172,6 @@ namespace DailyChessPuzzleApi.Services
             if (user != null)
                 return CreateAuthResponse(user);
 
-            // Aynı e-posta ile normal kayıtlı bir hesap var mı?
-            // Güvenlik nedeniyle otomatik hesap birleştirmiyoruz.
             var existingUser = await _context.Users
                 .FirstOrDefaultAsync(
                     x => x.Email == email,
@@ -207,6 +204,74 @@ namespace DailyChessPuzzleApi.Services
             await _context.SaveChangesAsync(cancellationToken);
 
             return CreateAuthResponse(user);
+        }
+
+        public async Task SetPasswordAsync(
+            int userId,
+            SetPasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            var user = await _context.Users
+                .FirstOrDefaultAsync(
+                    x => x.Id == userId,
+                    cancellationToken);
+
+            if (user == null)
+                throw new KeyNotFoundException("USER_NOT_FOUND");
+
+            if (!string.IsNullOrWhiteSpace(user.PasswordHash))
+            {
+                throw new InvalidOperationException(
+                    "PASSWORD_ALREADY_SET");
+            }
+
+            user.PasswordHash = _passwordHasher.HashPassword(
+                user,
+                request.NewPassword);
+
+            user.UpdatedAtUtc = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        public async Task ChangePasswordAsync(
+            int userId,
+            ChangePasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            var user = await _context.Users
+                .FirstOrDefaultAsync(
+                    x => x.Id == userId,
+                    cancellationToken);
+
+            if (user == null)
+                throw new KeyNotFoundException("USER_NOT_FOUND");
+
+            if (string.IsNullOrWhiteSpace(user.PasswordHash))
+            {
+                throw new InvalidOperationException(
+                    "PASSWORD_NOT_SET");
+            }
+
+            var verificationResult =
+                _passwordHasher.VerifyHashedPassword(
+                    user,
+                    user.PasswordHash,
+                    request.CurrentPassword);
+
+            if (verificationResult == PasswordVerificationResult.Failed)
+            {
+                throw new UnauthorizedAccessException(
+                    "INVALID_CURRENT_PASSWORD");
+            }
+
+            user.PasswordHash = _passwordHasher.HashPassword(
+                user,
+                request.NewPassword);
+
+            user.UpdatedAtUtc = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync(cancellationToken);
         }
 
         private async Task<string> GenerateGoogleUsernameAsync(
@@ -291,6 +356,8 @@ namespace DailyChessPuzzleApi.Services
                 LastName = user.LastName,
                 Email = user.Email,
                 CountryCode = user.CountryCode,
+                HasPassword = !string.IsNullOrWhiteSpace(
+                    user.PasswordHash),
                 AccessToken = new JwtSecurityTokenHandler()
                     .WriteToken(token),
                 ExpiresAtUtc = expiresAtUtc

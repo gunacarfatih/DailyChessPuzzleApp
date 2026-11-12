@@ -6,6 +6,7 @@ import 'package:chessground/chessground.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/storage/auth_storage.dart';
 import '../../../core/storage/client_id_storage.dart';
 import '../models/puzzle.dart';
 import '../services/puzzle_api_service.dart';
@@ -25,6 +26,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
   final PuzzleApiService _puzzleApiService = PuzzleApiService();
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
+  final AuthStorage _authStorage = AuthStorage.instance;
 
   bool _isLoading = true;
   bool _isSolved = false;
@@ -32,8 +34,10 @@ class PuzzlePageState extends State<PuzzlePage> {
   bool _hasSubmitted = false;
   bool _isReplay = false;
   bool _usedHint = false;
-
   bool _hasStarted = false;
+
+  // Kullanıcının JWT token'ı varsa kayıtlı kullanıcıdır.
+  bool _isAuthenticated = false;
 
   String? _errorMessage;
   String? _submissionError;
@@ -54,7 +58,20 @@ class PuzzlePageState extends State<PuzzlePage> {
   int _nextMoveIndex = 0;
   int _elapsedSeconds = 0;
   int _wrongMoves = 0;
-  int? _score;
+
+  // Sunucunun kabul ettiği ve kaydettiği puan.
+  // Misafir kullanıcılar için bu alan kullanılmaz.
+  int? _acceptedScore;
+
+  // Canlı puan backend formülüyle aynı şekilde hesaplanır.
+  int get _liveScore {
+    final score = 1000 -
+        (_elapsedSeconds * 2) -
+        (_wrongMoves * 150) -
+        (_usedHint ? 250 : 0);
+
+    return score < 0 ? 0 : score;
+  }
 
   bool get _canUseHint {
     final position = _position;
@@ -155,6 +172,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _isReplay = false;
       _usedHint = false;
       _hasStarted = false;
+      _isAuthenticated = false;
 
       _errorMessage = null;
       _submissionError = null;
@@ -170,10 +188,17 @@ class PuzzlePageState extends State<PuzzlePage> {
       _nextMoveIndex = 0;
       _elapsedSeconds = 0;
       _wrongMoves = 0;
-      _score = null;
+      _acceptedScore = null;
     });
 
     try {
+      // JWT token kontrolü.
+      // Token varsa kullanıcı giriş yapmış demektir.
+      final accessToken = await _authStorage.getAccessToken();
+
+      final isAuthenticated =
+          accessToken != null && accessToken.isNotEmpty;
+
       final clientId = await _clientIdStorage.getClientId();
 
       final response = await _puzzleApiService.getTodayPuzzle(
@@ -226,9 +251,15 @@ class PuzzlePageState extends State<PuzzlePage> {
       setState(() {
         _isLoading = false;
 
+        _isAuthenticated = isAuthenticated;
+
         _hasSubmitted = puzzle.isSolved;
         _isReplay = puzzle.isSolved;
-        _score = puzzle.previousScore;
+
+        // Önceki puan yalnızca kayıtlı kullanıcıya gösterilir.
+        _acceptedScore = isAuthenticated
+            ? puzzle.previousScore
+            : null;
 
         _isSolved = false;
         _hasStarted = false;
@@ -487,7 +518,12 @@ class PuzzlePageState extends State<PuzzlePage> {
       if (!mounted) return;
 
       setState(() {
-        _score = receivedScore;
+        // Sunucudan gelen puan yalnızca kayıtlı kullanıcıya gösterilir.
+        // Misafir kullanıcı için canlı puan gösterilmeye devam eder.
+        _acceptedScore = _isAuthenticated
+            ? receivedScore
+            : null;
+
         _hasSubmitted = true;
         _isReplay = false;
         _isSubmitting = false;
@@ -543,6 +579,9 @@ class PuzzlePageState extends State<PuzzlePage> {
       _hintSquare = null;
 
       _submissionError = null;
+
+      // _acceptedScore sıfırlanmıyor.
+      // Önceki sunucu puanı korunuyor.
 
       _feedback = _hasSubmitted
           ? 'Tekrar deniyorsun. Hazır olduğunda başlayabilirsin.'
@@ -636,6 +675,8 @@ class PuzzlePageState extends State<PuzzlePage> {
                           _buildPuzzleInfo(),
                           const SizedBox(height: 16),
                           _buildTimerAndMistakes(),
+                          const SizedBox(height: 12),
+                          _buildLiveScoreCard(),
                           const SizedBox(height: 18),
                           Center(
                             child: SizedBox(
@@ -895,6 +936,71 @@ class PuzzlePageState extends State<PuzzlePage> {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Oyun devam ederken her saniye güncellenen canlı puan kartı.
+  Widget _buildLiveScoreCard() {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 18,
+        vertical: 16,
+      ),
+      decoration: BoxDecoration(
+        color: _primary.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _primary.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: _primary.withValues(alpha: 0.13),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Icon(
+              Icons.stars_rounded,
+              color: _primary,
+              size: 25,
+            ),
+          ),
+          const SizedBox(width: 13),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Canlı puanın',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Süre, yanlış hamle ve ipuçlarına göre güncellenir.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white60,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            '$_liveScore',
+            style: const TextStyle(
+              fontSize: 27,
+              fontWeight: FontWeight.bold,
+              color: _primary,
             ),
           ),
         ],
@@ -1181,16 +1287,16 @@ class PuzzlePageState extends State<PuzzlePage> {
             color: _secondary,
           ),
           const SizedBox(height: 12),
-          Text(
-            _score == null ? 'Puan' : 'Puanın',
-            style: const TextStyle(
+          const Text(
+            'Canlı puanın',
+            style: TextStyle(
               fontSize: 15,
               color: Colors.white70,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            _score?.toString() ?? '--',
+            '$_liveScore',
             style: const TextStyle(
               fontSize: 42,
               fontWeight: FontWeight.bold,
@@ -1198,20 +1304,70 @@ class PuzzlePageState extends State<PuzzlePage> {
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            _isReplay
-                ? 'Önceki kayıtlı puanın korunuyor.'
-                : _hasSubmitted
-                ? 'Puanın başarıyla kaydedildi.'
-                : _isSubmitting
-                ? 'Puanın kaydediliyor...'
-                : 'Puan henüz kaydedilmedi.',
+          const Text(
+            'Bu denemenin süre, hata ve ipucu bilgilerine göre hesaplanan puanı.',
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               color: Colors.white60,
             ),
           ),
+
+          // Sunucu tarafından kabul edilen puan sadece
+          // giriş yapmış kullanıcılara gösterilir.
+          if (_isAuthenticated) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Divider(color: Colors.white12),
+            ),
+            const Text(
+              'Sunucuda kayıtlı günlük puanın',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (_acceptedScore != null)
+              Text(
+                '$_acceptedScore',
+                style: const TextStyle(
+                  fontSize: 34,
+                  fontWeight: FontWeight.bold,
+                  color: _primary,
+                ),
+              )
+            else
+              Text(
+                _isSubmitting
+                    ? 'Kaydediliyor...'
+                    : _hasSubmitted
+                    ? 'Puan bilgisi alınamadı'
+                    : _submissionError != null
+                    ? 'Kaydedilemedi'
+                    : 'Henüz kaydedilmedi',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.white60,
+                ),
+              ),
+            const SizedBox(height: 8),
+            Text(
+              _isReplay
+                  ? 'Önceki kayıtlı puanın korunuyor.'
+                  : _acceptedScore != null
+                  ? 'Bu puan sunucudan alınmıştır.'
+                  : 'Kayıt durumu sunucu yanıtına göre güncellenecek.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 11,
+                color: Colors.white54,
+              ),
+            ),
+          ],
+
           if (_isSubmitting) ...[
             const SizedBox(height: 16),
             const CircularProgressIndicator(color: _primary),

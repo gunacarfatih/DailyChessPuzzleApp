@@ -15,7 +15,10 @@ class AuthStorage {
   static const String _userIdKey = 'auth_user_id';
   static const String _usernameKey = 'auth_username';
   static const String _emailKey = 'auth_email';
+  static const String _firstNameKey = 'auth_first_name';
+  static const String _lastNameKey = 'auth_last_name';
   static const String _countryCodeKey = 'auth_country_code';
+  static const String _hasPasswordKey = 'auth_has_password';
   static const String _expiresAtKey = 'auth_expires_at';
 
   Future<void> saveSession(AuthResponse response) async {
@@ -40,8 +43,23 @@ class AuthStorage {
     );
 
     await _storage.write(
+      key: _firstNameKey,
+      value: response.firstName ?? '',
+    );
+
+    await _storage.write(
+      key: _lastNameKey,
+      value: response.lastName ?? '',
+    );
+
+    await _storage.write(
       key: _countryCodeKey,
       value: response.countryCode ?? '',
+    );
+
+    await _storage.write(
+      key: _hasPasswordKey,
+      value: response.hasPassword.toString(),
     );
 
     await _storage.write(
@@ -89,8 +107,28 @@ class AuthStorage {
     return _storage.read(key: _emailKey);
   }
 
+  Future<String?> getFirstName() async {
+    return _storage.read(key: _firstNameKey);
+  }
+
+  Future<String?> getLastName() async {
+    return _storage.read(key: _lastNameKey);
+  }
+
   Future<String?> getCountryCode() async {
     return _storage.read(key: _countryCodeKey);
+  }
+
+  Future<bool> getHasPassword() async {
+    final value = await _storage.read(key: _hasPasswordKey);
+    return value == 'true';
+  }
+
+  Future<void> updateHasPassword(bool hasPassword) async {
+    await _storage.write(
+      key: _hasPasswordKey,
+      value: hasPassword.toString(),
+    );
   }
 
   Future<void> clearSession() async {
@@ -98,7 +136,10 @@ class AuthStorage {
     await _storage.delete(key: _userIdKey);
     await _storage.delete(key: _usernameKey);
     await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _firstNameKey);
+    await _storage.delete(key: _lastNameKey);
     await _storage.delete(key: _countryCodeKey);
+    await _storage.delete(key: _hasPasswordKey);
     await _storage.delete(key: _expiresAtKey);
   }
 }

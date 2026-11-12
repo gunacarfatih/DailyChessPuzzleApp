@@ -2,7 +2,9 @@
 using DailyChessPuzzleApi.DTOs.Auth;
 using DailyChessPuzzleApi.Responses;
 using DailyChessPuzzleApi.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace DailyChessPuzzleApi.Controllers
 {
@@ -62,6 +64,58 @@ namespace DailyChessPuzzleApi.Controllers
                 HttpContext,
                 "Google authentication completed successfully.",
                 result));
+        }
+
+        [Authorize]
+        [HttpPost("set-password")]
+        public async Task<IActionResult> SetPassword(
+            [FromBody] SetPasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            int userId = GetAuthenticatedUserId();
+
+            await _authService.SetPasswordAsync(
+                userId,
+                request,
+                cancellationToken);
+
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Password has been set successfully.",
+                new { HasPassword = true }));
+        }
+
+        [Authorize]
+        [HttpPost("change-password")]
+        public async Task<IActionResult> ChangePassword(
+            [FromBody] ChangePasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            int userId = GetAuthenticatedUserId();
+
+            await _authService.ChangePasswordAsync(
+                userId,
+                request,
+                cancellationToken);
+
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Password has been changed successfully.",
+                new { HasPassword = true }));
+        }
+
+        private int GetAuthenticatedUserId()
+        {
+            string? userIdValue = User.FindFirstValue(
+                ClaimTypes.NameIdentifier);
+
+            if (!int.TryParse(userIdValue, out int userId))
+            {
+                throw new UnauthorizedAccessException(
+                    "INVALID_AUTHENTICATED_USER");
+            }
+
+            return userId;
         }
     }
 }

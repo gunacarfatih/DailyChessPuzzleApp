@@ -15,6 +15,8 @@ namespace DailyChessPuzzleApi.DTOs.Auth
 
         public string? CountryCode { get; set; }
 
+        public bool HasPassword { get; set; }
+
         public string AccessToken { get; set; } = string.Empty;
 
         public DateTime ExpiresAtUtc { get; set; }

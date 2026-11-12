@@ -8,6 +8,7 @@ import '../../auth/screens/register_page.dart';
 import '../../auth/services/auth_api_service.dart';
 import '../../leaderboard/models/leaderboard_entry.dart';
 import '../../leaderboard/services/leaderboard_api_service.dart';
+import 'password_management_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -29,12 +30,15 @@ class ProfilePageState extends State<ProfilePage> {
   bool _isLoading = true;
   bool _isLoggedIn = false;
   bool _isLoggingOut = false;
+  bool _hasPassword = false;
 
   String? _errorMessage;
 
   String _clientId = '';
   String? _username;
   String? _email;
+  String? _firstName;
+  String? _lastName;
   int? _userId;
 
   LeaderboardEntry? _profileData;
@@ -67,12 +71,18 @@ class ProfilePageState extends State<ProfilePage> {
 
       String? username;
       String? email;
+      String? firstName;
+      String? lastName;
       int? userId;
+      bool hasPassword = false;
 
       if (isLoggedIn) {
         username = await _authStorage.getUsername();
         email = await _authStorage.getEmail();
+        firstName = await _authStorage.getFirstName();
+        lastName = await _authStorage.getLastName();
         userId = await _authStorage.getUserId();
+        hasPassword = await _authStorage.getHasPassword();
       }
 
       final response = await _leaderboardApiService.getLeaderboard(
@@ -88,7 +98,10 @@ class ProfilePageState extends State<ProfilePage> {
           _isLoggedIn = isLoggedIn;
           _username = username;
           _email = email;
+          _firstName = firstName;
+          _lastName = lastName;
           _userId = userId;
+          _hasPassword = hasPassword;
           _errorMessage =
               response.message ?? 'Profil bilgileri alınamadı.';
           _isLoading = false;
@@ -122,7 +135,10 @@ class ProfilePageState extends State<ProfilePage> {
         _isLoggedIn = isLoggedIn;
         _username = username;
         _email = email;
+        _firstName = firstName;
+        _lastName = lastName;
         _userId = userId;
+        _hasPassword = hasPassword;
         _profileData = currentUser;
         _isLoading = false;
       });
@@ -148,6 +164,27 @@ class ProfilePageState extends State<ProfilePage> {
     }
 
     return null;
+  }
+
+  // Ad ve soyadı birleştirir.
+  String get _displayFullName {
+    final firstName = _firstName?.trim() ?? '';
+    final lastName = _lastName?.trim() ?? '';
+
+    final fullName = '$firstName $lastName'.trim();
+
+    if (fullName.isNotEmpty) {
+      return fullName;
+    }
+
+    // Eski kayıtlarda ad-soyad yoksa kullanıcı adını göster.
+    final username = _username?.trim() ?? '';
+
+    if (username.isNotEmpty) {
+      return username;
+    }
+
+    return 'Satranç Oyuncusu';
   }
 
   String get _displayClientId {
@@ -187,6 +224,26 @@ class ProfilePageState extends State<ProfilePage> {
 
     if (result == true) {
       await _loadProfile();
+    }
+  }
+
+  // Şifre belirleme/değiştirme ekranını açar.
+  Future<void> _openPasswordManagementPage() async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PasswordManagementPage(
+          hasPassword: _hasPassword,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (result == true) {
+      setState(() {
+        _hasPassword = true;
+      });
     }
   }
 
@@ -323,10 +380,8 @@ class ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildProfileHeader() {
-    final displayName = _isLoggedIn &&
-        _username != null &&
-        _username!.isNotEmpty
-        ? _username!
+    final displayName = _isLoggedIn
+        ? _displayFullName
         : 'Satranç Oyuncusu';
 
     final subtitle = _isLoggedIn
@@ -513,11 +568,26 @@ class ProfilePageState extends State<ProfilePage> {
             ],
           ),
           const SizedBox(height: 14),
+
           SizedBox(
             height: 46,
             child: OutlinedButton.icon(
-              onPressed:
-              _isLoggingOut ? null : _confirmLogout,
+              onPressed: _openPasswordManagementPage,
+              icon: const Icon(Icons.lock_outline),
+              label: Text(
+                _hasPassword
+                    ? 'Şifre Değiştir'
+                    : 'Şifre Belirle',
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          SizedBox(
+            height: 46,
+            child: OutlinedButton.icon(
+              onPressed: _isLoggingOut ? null : _confirmLogout,
               icon: _isLoggingOut
                   ? const SizedBox(
                 width: 18,
@@ -528,7 +598,9 @@ class ProfilePageState extends State<ProfilePage> {
               )
                   : const Icon(Icons.logout),
               label: Text(
-                _isLoggingOut ? 'Çıkış yapılıyor...' : 'Çıkış Yap',
+                _isLoggingOut
+                    ? 'Çıkış yapılıyor...'
+                    : 'Çıkış Yap',
               ),
             ),
           ),
@@ -669,6 +741,28 @@ class ProfilePageState extends State<ProfilePage> {
             color: Colors.white10,
           ),
           if (_isLoggedIn) ...[
+            _buildInformationRow(
+              icon: Icons.badge_outlined,
+              title: 'Ad',
+              value: _firstName?.trim().isNotEmpty == true
+                  ? _firstName!.trim()
+                  : '-',
+            ),
+            const Divider(
+              height: 1,
+              color: Colors.white10,
+            ),
+            _buildInformationRow(
+              icon: Icons.badge_outlined,
+              title: 'Soyad',
+              value: _lastName?.trim().isNotEmpty == true
+                  ? _lastName!.trim()
+                  : '-',
+            ),
+            const Divider(
+              height: 1,
+              color: Colors.white10,
+            ),
             _buildInformationRow(
               icon: Icons.person_outline,
               title: 'Kullanıcı adı',
