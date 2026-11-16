@@ -22,6 +22,67 @@ namespace DailyChessPuzzleApi.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.BonusPuzzleAssignment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CurrentMoveIndex")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<bool>("IsCompleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int?>("PuzzleAttemptId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateOnly>("PuzzleDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("PuzzleId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("UsedHint")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("WrongMoves")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PuzzleAttemptId");
+
+                    b.HasIndex("PuzzleId");
+
+                    b.HasIndex("UserId", "PuzzleDate")
+                        .IsUnique();
+
+                    b.ToTable("BonusPuzzleAssignments");
+                });
+
             modelBuilder.Entity("DailyChessPuzzleApi.Models.DailyPuzzle", b =>
                 {
                     b.Property<int>("Id")
@@ -29,6 +90,9 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasColumnType("integer");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("Audience")
+                        .HasColumnType("integer");
 
                     b.Property<DateOnly>("PuzzleDate")
                         .HasColumnType("date");
@@ -38,10 +102,10 @@ namespace DailyChessPuzzleApi.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PuzzleDate")
-                        .IsUnique();
-
                     b.HasIndex("PuzzleId");
+
+                    b.HasIndex("PuzzleDate", "Audience")
+                        .IsUnique();
 
                     b.ToTable("DailyPuzzles");
                 });
@@ -256,6 +320,8 @@ namespace DailyChessPuzzleApi.Migrations
                     b.HasIndex("LichessPuzzleId")
                         .IsUnique();
 
+                    b.HasIndex("IsActive", "Rating");
+
                     b.ToTable("Puzzles");
                 });
 
@@ -315,6 +381,71 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasFilter("\"UserId\" IS NOT NULL");
 
                     b.ToTable("PuzzleAttempts");
+                });
+
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.PuzzleGameSession", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CurrentMoveIndex")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<bool>("IsCompleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateOnly>("PuzzleDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("PuzzleId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("UsedHint")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("WrongMoves")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PuzzleId");
+
+                    b.HasIndex("ClientId", "PuzzleDate")
+                        .IsUnique()
+                        .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL");
+
+                    b.HasIndex("UserId", "PuzzleDate")
+                        .IsUnique()
+                        .HasFilter("\"UserId\" IS NOT NULL");
+
+                    b.ToTable("PuzzleGameSessions");
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.User", b =>
@@ -377,6 +508,32 @@ namespace DailyChessPuzzleApi.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.BonusPuzzleAssignment", b =>
+                {
+                    b.HasOne("DailyChessPuzzleApi.Models.PuzzleAttempt", "PuzzleAttempt")
+                        .WithMany()
+                        .HasForeignKey("PuzzleAttemptId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DailyChessPuzzleApi.Models.Puzzle", "Puzzle")
+                        .WithMany()
+                        .HasForeignKey("PuzzleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DailyChessPuzzleApi.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Puzzle");
+
+                    b.Navigation("PuzzleAttempt");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("DailyChessPuzzleApi.Models.DailyPuzzle", b =>
                 {
                     b.HasOne("DailyChessPuzzleApi.Models.Puzzle", "Puzzle")
@@ -419,6 +576,24 @@ namespace DailyChessPuzzleApi.Migrations
                         .WithMany("PuzzleAttempts")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Puzzle");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.PuzzleGameSession", b =>
+                {
+                    b.HasOne("DailyChessPuzzleApi.Models.Puzzle", "Puzzle")
+                        .WithMany()
+                        .HasForeignKey("PuzzleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DailyChessPuzzleApi.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Puzzle");
 

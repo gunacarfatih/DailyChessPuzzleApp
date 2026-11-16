@@ -16,6 +16,12 @@ namespace DailyChessPuzzleApi.Data
         public DbSet<DailyPuzzle> DailyPuzzles => Set<DailyPuzzle>();
         public DbSet<PuzzleAttempt> PuzzleAttempts => Set<PuzzleAttempt>();
 
+        public DbSet<BonusPuzzleAssignment> BonusPuzzleAssignments
+            => Set<BonusPuzzleAssignment>();
+
+        public DbSet<PuzzleGameSession> PuzzleGameSessions
+            => Set<PuzzleGameSession>();
+
         public DbSet<LeaderboardCacheOutbox> LeaderboardCacheOutboxes
             => Set<LeaderboardCacheOutbox>();
 
@@ -78,6 +84,14 @@ namespace DailyChessPuzzleApi.Data
 
                 entity.HasIndex(x => x.LichessPuzzleId)
                     .IsUnique();
+
+                // Bonus havuzundaki aktif ve yüksek rating'li
+                // bulmacaların filtrelenmesini hızlandırır.
+                entity.HasIndex(x => new
+                {
+                    x.IsActive,
+                    x.Rating
+                });
             });
 
             // DAILY PUZZLE
@@ -85,13 +99,131 @@ namespace DailyChessPuzzleApi.Data
             {
                 entity.HasKey(x => x.Id);
 
-                entity.HasIndex(x => x.PuzzleDate)
-                    .IsUnique();
+                // Aynı gün Guest ve Registered için
+                // ayrı ayrı birer bulmaca atanabilir.
+                entity.HasIndex(x => new
+                {
+                    x.PuzzleDate,
+                    x.Audience
+                })
+                .IsUnique();
 
                 entity.HasOne(x => x.Puzzle)
                     .WithMany(x => x.DailyPuzzles)
                     .HasForeignKey(x => x.PuzzleId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // BONUS PUZZLE ASSIGNMENT
+            modelBuilder.Entity<BonusPuzzleAssignment>(entity =>
+            {
+                entity.HasKey(x => x.Id);
+
+                // Kullanıcı başına günde yalnızca bir bonus.
+                entity.HasIndex(x => new
+                {
+                    x.UserId,
+                    x.PuzzleDate
+                })
+                .IsUnique();
+
+                entity.Property(x => x.CurrentMoveIndex)
+                    .HasDefaultValue(1)
+                    .IsRequired();
+
+                entity.Property(x => x.WrongMoves)
+                    .HasDefaultValue(0)
+                    .IsRequired();
+
+                entity.Property(x => x.UsedHint)
+                    .HasDefaultValue(false)
+                    .IsRequired();
+
+                // Bonus açılana kadar başlangıç zamanı null olabilir.
+                entity.Property(x => x.StartedAtUtc)
+                    .IsRequired(false);
+
+                entity.Property(x => x.IsCompleted)
+                    .HasDefaultValue(false)
+                    .IsRequired();
+
+                entity.Property(x => x.CreatedAtUtc)
+                    .IsRequired();
+
+                entity.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(x => x.Puzzle)
+                    .WithMany()
+                    .HasForeignKey(x => x.PuzzleId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(x => x.PuzzleAttempt)
+                    .WithMany()
+                    .HasForeignKey(x => x.PuzzleAttemptId)
+                    .IsRequired(false)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // PUZZLE GAME SESSION
+            modelBuilder.Entity<PuzzleGameSession>(entity =>
+            {
+                entity.HasKey(x => x.Id);
+
+                entity.Property(x => x.ClientId)
+                    .HasMaxLength(100);
+
+                entity.Property(x => x.CurrentMoveIndex)
+                    .HasDefaultValue(1)
+                    .IsRequired();
+
+                entity.Property(x => x.WrongMoves)
+                    .HasDefaultValue(0)
+                    .IsRequired();
+
+                entity.Property(x => x.UsedHint)
+                    .HasDefaultValue(false)
+                    .IsRequired();
+
+                entity.Property(x => x.IsCompleted)
+                    .HasDefaultValue(false)
+                    .IsRequired();
+
+                entity.Property(x => x.StartedAtUtc)
+                    .IsRequired();
+
+                entity.Property(x => x.CreatedAtUtc)
+                    .IsRequired();
+
+                entity.HasOne(x => x.Puzzle)
+                    .WithMany()
+                    .HasForeignKey(x => x.PuzzleId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne(x => x.User)
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
+                // Kayıtlı kullanıcı başına günlük tek oturum.
+                entity.HasIndex(x => new
+                {
+                    x.UserId,
+                    x.PuzzleDate
+                })
+                .IsUnique()
+                .HasFilter("\"UserId\" IS NOT NULL");
+
+                // Misafir cihazı başına günlük tek oturum.
+                entity.HasIndex(x => new
+                {
+                    x.ClientId,
+                    x.PuzzleDate
+                })
+                .IsUnique()
+                .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL");
             });
 
             // PUZZLE ATTEMPT
