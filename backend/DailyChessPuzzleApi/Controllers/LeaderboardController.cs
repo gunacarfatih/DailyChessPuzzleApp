@@ -1,5 +1,4 @@
-﻿
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Responses;
 using Microsoft.AspNetCore.Mvc;

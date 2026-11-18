@@ -5,7 +5,14 @@ class BonusPuzzle {
   final bool isExpired;
   final int? puzzleId;
   final String? fen;
-  final List<String> moves;
+
+  // Sunucunun onayladığı hamleler.
+  final List<String> playedMoves;
+  final int currentMoveIndex;
+  final int wrongMoves;
+  final bool usedHint;
+  final String? hintSquare;
+
   final DateTime? startedAtUtc;
   final DateTime? completedAtUtc;
   final int? remainingSeconds;
@@ -17,7 +24,11 @@ class BonusPuzzle {
     required this.isExpired,
     this.puzzleId,
     this.fen,
-    this.moves = const [],
+    this.playedMoves = const [],
+    this.currentMoveIndex = 0,
+    this.wrongMoves = 0,
+    this.usedHint = false,
+    this.hintSquare,
     this.startedAtUtc,
     this.completedAtUtc,
     this.remainingSeconds,
@@ -25,23 +36,6 @@ class BonusPuzzle {
   });
 
   factory BonusPuzzle.fromJson(Map<String, dynamic> json) {
-    final rawMoves = json['moves'];
-
-    List<String> parsedMoves;
-
-    if (rawMoves is String) {
-      parsedMoves = rawMoves
-          .split(RegExp(r'\s+'))
-          .where((move) => move.isNotEmpty)
-          .toList();
-    } else if (rawMoves is List) {
-      parsedMoves = rawMoves
-          .map((move) => move.toString())
-          .toList();
-    } else {
-      parsedMoves = [];
-    }
-
     int? parseInt(dynamic value) {
       if (value is num) return value.toInt();
       if (value == null) return null;
@@ -53,17 +47,45 @@ class BonusPuzzle {
       return DateTime.tryParse(value.toString());
     }
 
+    final rawPlayedMoves =
+        json['playedMoves'] ?? json['PlayedMoves'];
+
+    final parsedPlayedMoves = rawPlayedMoves is List
+        ? rawPlayedMoves.map((move) => move.toString()).toList()
+        : <String>[];
+
     return BonusPuzzle(
-      isEligible: json['isEligible'] == true,
-      isCompleted: json['isCompleted'] == true,
-      isExpired: json['isExpired'] == true,
-      puzzleId: parseInt(json['puzzleId']),
-      fen: json['fen']?.toString(),
-      moves: parsedMoves,
-      startedAtUtc: parseDate(json['startedAtUtc']),
-      completedAtUtc: parseDate(json['completedAtUtc']),
-      remainingSeconds: parseInt(json['remainingSeconds']),
-      score: parseInt(json['score']),
+      isEligible:
+      (json['isEligible'] ?? json['IsEligible']) == true,
+      isCompleted:
+      (json['isCompleted'] ?? json['IsCompleted']) == true,
+      isExpired:
+      (json['isExpired'] ?? json['IsExpired']) == true,
+      puzzleId: parseInt(json['puzzleId'] ?? json['PuzzleId']),
+      fen: (json['fen'] ?? json['Fen'])?.toString(),
+      playedMoves: parsedPlayedMoves,
+      currentMoveIndex: parseInt(
+        json['currentMoveIndex'] ?? json['CurrentMoveIndex'],
+      ) ??
+          0,
+      wrongMoves: parseInt(
+        json['wrongMoves'] ?? json['WrongMoves'],
+      ) ??
+          0,
+      usedHint:
+      (json['usedHint'] ?? json['UsedHint']) == true,
+      hintSquare:
+      (json['hintSquare'] ?? json['HintSquare'])?.toString(),
+      startedAtUtc: parseDate(
+        json['startedAtUtc'] ?? json['StartedAtUtc'],
+      ),
+      completedAtUtc: parseDate(
+        json['completedAtUtc'] ?? json['CompletedAtUtc'],
+      ),
+      remainingSeconds: parseInt(
+        json['remainingSeconds'] ?? json['RemainingSeconds'],
+      ),
+      score: parseInt(json['score'] ?? json['Score']),
     );
   }
 }

@@ -1,3 +1,4 @@
+
 class ApiConstants {
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
@@ -6,16 +7,28 @@ class ApiConstants {
 
   // Daily Puzzle
   static const String todayPuzzleEndpoint = '/api/puzzle/today';
-  static const String submitPuzzleEndpoint = '/api/puzzle/submit';
+
+  static const String startPuzzleSessionEndpoint =
+      '/api/puzzle/session/start';
+
+  static const String submitPuzzleMoveEndpoint =
+      '/api/puzzle/move';
+
+  static const String usePuzzleHintEndpoint =
+      '/api/puzzle/hint';
 
   // Bonus Puzzle
   static const String bonusPuzzleEndpoint = '/api/puzzle/bonus';
+
   static const String startBonusPuzzleEndpoint =
       '/api/puzzle/bonus/start';
+
   static const String submitBonusMoveEndpoint =
       '/api/puzzle/bonus/move';
+
   static const String useBonusHintEndpoint =
       '/api/puzzle/bonus/hint';
+
   static const String submitBonusPuzzleEndpoint =
       '/api/puzzle/bonus/submit';
 

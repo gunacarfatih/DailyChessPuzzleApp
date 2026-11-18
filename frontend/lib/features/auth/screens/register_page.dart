@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 import '../services/auth_api_service.dart';
@@ -15,18 +14,13 @@ class _RegisterPageState extends State<RegisterPage> {
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
-  final TextEditingController _usernameController =
-  TextEditingController();
-
-  final TextEditingController _emailController =
-  TextEditingController();
-
-  final TextEditingController _passwordController =
-  TextEditingController();
-
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _firstNameController = TextEditingController();
+  final TextEditingController _lastNameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
   TextEditingController();
-
   final TextEditingController _countryCodeController =
   TextEditingController();
 
@@ -37,6 +31,8 @@ class _RegisterPageState extends State<RegisterPage> {
   @override
   void dispose() {
     _usernameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -54,16 +50,15 @@ class _RegisterPageState extends State<RegisterPage> {
     });
 
     try {
-      final countryCode = _countryCodeController.text
-          .trim()
-          .toUpperCase();
+      final countryCode = _countryCodeController.text.trim().toUpperCase();
 
       final response = await _authService.register(
-        username: _usernameController.text,
-        email: _emailController.text,
+        username: _usernameController.text.trim(),
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        email: _emailController.text.trim(),
         password: _passwordController.text,
-        countryCode:
-        countryCode.isEmpty ? null : countryCode,
+        countryCode: countryCode.isEmpty ? null : countryCode,
       );
 
       if (!mounted) return;
@@ -71,18 +66,14 @@ class _RegisterPageState extends State<RegisterPage> {
       if (response.success && response.data != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Hesabın başarıyla oluşturuldu!',
-            ),
+            content: Text('Hesabın başarıyla oluşturuldu!'),
             backgroundColor: Colors.green,
           ),
         );
 
         Navigator.pop(context, true);
       } else {
-        _showError(
-          response.message ?? 'Kayıt işlemi başarısız.',
-        );
+        _showError(response.message ?? 'Kayıt işlemi başarısız.');
       }
     } catch (e) {
       if (!mounted) return;
@@ -107,6 +98,20 @@ class _RegisterPageState extends State<RegisterPage> {
         backgroundColor: Colors.red,
       ),
     );
+  }
+
+  String? _validateName(String? value, String fieldName) {
+    final name = value?.trim() ?? '';
+
+    if (name.isEmpty) {
+      return '$fieldName gir.';
+    }
+
+    if (name.length > 50) {
+      return '$fieldName en fazla 50 karakter olabilir.';
+    }
+
+    return null;
   }
 
   @override
@@ -144,8 +149,8 @@ class _RegisterPageState extends State<RegisterPage> {
                   const SizedBox(height: 8),
 
                   Text(
-                    'Hesabını oluştur ve puanlarını kaybetmeden '
-                        'satranç yolculuğuna devam et.',
+                    'Hesabını oluştur ve satranç yolculuğuna '
+                        'kendi hesabınla devam et.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.grey.shade400,
@@ -154,6 +159,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
                   const SizedBox(height: 30),
 
+                  // Kullanıcı adı
                   TextFormField(
                     controller: _usernameController,
                     textCapitalization: TextCapitalization.none,
@@ -170,8 +176,7 @@ class _RegisterPageState extends State<RegisterPage> {
                         return 'Kullanıcı adı gir.';
                       }
 
-                      if (username.length < 3 ||
-                          username.length > 50) {
+                      if (username.length < 3 || username.length > 50) {
                         return 'Kullanıcı adı 3-50 karakter olmalı.';
                       }
 
@@ -181,6 +186,37 @@ class _RegisterPageState extends State<RegisterPage> {
 
                   const SizedBox(height: 16),
 
+                  // Ad
+                  TextFormField(
+                    controller: _firstNameController,
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(
+                      labelText: 'Ad',
+                      prefixIcon: Icon(Icons.badge_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (value) => _validateName(value, 'Ad'),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Soyad
+                  TextFormField(
+                    controller: _lastNameController,
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(
+                      labelText: 'Soyad',
+                      prefixIcon: Icon(Icons.badge_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (value) => _validateName(value, 'Soyad'),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // E-posta
                   TextFormField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -197,9 +233,8 @@ class _RegisterPageState extends State<RegisterPage> {
                         return 'E-posta adresi gir.';
                       }
 
-                      if (!RegExp(
-                        r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
-                      ).hasMatch(email)) {
+                      if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                          .hasMatch(email)) {
                         return 'Geçerli bir e-posta gir.';
                       }
 
@@ -209,6 +244,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
                   const SizedBox(height: 16),
 
+                  // Ülke kodu
                   TextFormField(
                     controller: _countryCodeController,
                     textCapitalization: TextCapitalization.characters,
@@ -225,8 +261,7 @@ class _RegisterPageState extends State<RegisterPage> {
                       final countryCode = value?.trim() ?? '';
 
                       if (countryCode.isNotEmpty &&
-                          !RegExp(r'^[a-zA-Z]{2}$')
-                              .hasMatch(countryCode)) {
+                          !RegExp(r'^[a-zA-Z]{2}$').hasMatch(countryCode)) {
                         return 'İki harfli ülke kodu gir. Örn: TR';
                       }
 
@@ -236,6 +271,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
                   const SizedBox(height: 16),
 
+                  // Şifre
                   TextFormField(
                     controller: _passwordController,
                     obscureText: _obscurePassword,
@@ -272,6 +308,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
                   const SizedBox(height: 16),
 
+                  // Şifre tekrar
                   TextFormField(
                     controller: _confirmPasswordController,
                     obscureText: _obscureConfirmPassword,
@@ -334,8 +371,8 @@ class _RegisterPageState extends State<RegisterPage> {
                   const SizedBox(height: 16),
 
                   Text(
-                    'Kayıt olduğunda mevcut misafir puanların '
-                        'hesabına aktarılır.',
+                    'Yeni hesabın sıfırdan başlayacak. '
+                        'Misafir oyun geçmişin ve puanların ayrı kalacak.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.grey.shade400,

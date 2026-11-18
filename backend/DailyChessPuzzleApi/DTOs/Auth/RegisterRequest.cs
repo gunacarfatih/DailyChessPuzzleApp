@@ -1,5 +1,4 @@
-﻿
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace DailyChessPuzzleApi.DTOs.Auth
 {
@@ -28,9 +27,5 @@ namespace DailyChessPuzzleApi.DTOs.Auth
 
         [StringLength(2, MinimumLength = 2)]
         public string? CountryCode { get; set; }
-
-        [Required]
-        [StringLength(100, MinimumLength = 1)]
-        public string ClientId { get; set; } = string.Empty;
     }
 }

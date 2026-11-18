@@ -1,5 +1,4 @@
-﻿
-using System.Net;
+﻿using System.Net;
 using System.Runtime.ExceptionServices;
 using DailyChessPuzzleApi.Responses;
 

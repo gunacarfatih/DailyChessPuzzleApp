@@ -1,4 +1,3 @@
-
 class LeaderboardEntry {
   final int rank;
   final String clientId;

@@ -1,5 +1,4 @@
-﻿
-using DailyChessPuzzleApi.Models;
+﻿using DailyChessPuzzleApi.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace DailyChessPuzzleApi.Data
@@ -207,22 +206,22 @@ namespace DailyChessPuzzleApi.Data
                     .HasForeignKey(x => x.UserId)
                     .OnDelete(DeleteBehavior.Restrict);
 
-                // Kayıtlı kullanıcı başına günlük tek oturum.
+                // Kayıtlı kullanıcıların günlük oturumlarını sorgulamayı hızlandırır.
+                // Unique değildir; aynı gün birden fazla oturum açılabilir.
                 entity.HasIndex(x => new
                 {
                     x.UserId,
                     x.PuzzleDate
                 })
-                .IsUnique()
                 .HasFilter("\"UserId\" IS NOT NULL");
 
-                // Misafir cihazı başına günlük tek oturum.
+                // Misafirlerin günlük oturumlarını sorgulamayı hızlandırır.
+                // Unique değildir; aynı gün birden fazla oturum açılabilir.
                 entity.HasIndex(x => new
                 {
                     x.ClientId,
                     x.PuzzleDate
                 })
-                .IsUnique()
                 .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL");
             });
 

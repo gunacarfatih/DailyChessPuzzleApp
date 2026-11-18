@@ -1,5 +1,4 @@
-﻿
-using DailyChessPuzzleApi.Services.Interfaces;
+﻿using DailyChessPuzzleApi.Services.Interfaces;
 
 namespace DailyChessPuzzleApi.Services
 {

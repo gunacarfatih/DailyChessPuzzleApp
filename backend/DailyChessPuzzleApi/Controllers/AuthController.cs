@@ -1,5 +1,4 @@
-﻿
-using DailyChessPuzzleApi.DTOs.Auth;
+﻿using DailyChessPuzzleApi.DTOs.Auth;
 using DailyChessPuzzleApi.Responses;
 using DailyChessPuzzleApi.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;

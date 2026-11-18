@@ -438,11 +438,9 @@ namespace DailyChessPuzzleApi.Migrations
                     b.HasIndex("PuzzleId");
 
                     b.HasIndex("ClientId", "PuzzleDate")
-                        .IsUnique()
                         .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL");
 
                     b.HasIndex("UserId", "PuzzleDate")
-                        .IsUnique()
                         .HasFilter("\"UserId\" IS NOT NULL");
 
                     b.ToTable("PuzzleGameSessions");

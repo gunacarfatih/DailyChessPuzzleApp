@@ -1,4 +1,3 @@
-
 class AuthResponse {
   final int userId;
   final String username;

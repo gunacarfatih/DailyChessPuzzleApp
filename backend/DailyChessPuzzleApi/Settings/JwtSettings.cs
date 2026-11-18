@@ -1,5 +1,4 @@
-﻿
-namespace DailyChessPuzzleApi.Settings
+﻿namespace DailyChessPuzzleApi.Settings
 {
     public class JwtSettings
     {

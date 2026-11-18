@@ -1,4 +1,3 @@
-
 import 'package:dio/dio.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -54,20 +53,22 @@ class AuthApiService {
   }
 
   // Yeni kullanıcı kaydı oluşturur.
-  // Misafir ClientId değerini de backend'e gönderir.
+  // Misafir ClientId gönderilmez.
+  // Yeni hesap bağımsız olarak oluşturulur.
   Future<ApiResponse<AuthResponse>> register({
     required String username,
+    required String firstName,
+    required String lastName,
     required String email,
     required String password,
     String? countryCode,
   }) async {
-    final clientId = await _clientIdStorage.getClientId();
-
     final requestData = <String, dynamic>{
       'username': username.trim(),
+      'firstName': firstName.trim(),
+      'lastName': lastName.trim(),
       'email': email.trim(),
       'password': password,
-      'clientId': clientId,
       'countryCode': countryCode,
     };
 

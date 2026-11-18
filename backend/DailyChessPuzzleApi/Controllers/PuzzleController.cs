@@ -12,32 +12,30 @@ namespace DailyChessPuzzleApi.Controllers
     public class PuzzleController : ControllerBase
     {
         private readonly IPuzzleService _puzzleService;
-        private readonly ILogger<PuzzleController> _logger;
 
-        public PuzzleController(
-            IPuzzleService puzzleService,
-            ILogger<PuzzleController> logger)
+        public PuzzleController(IPuzzleService puzzleService)
         {
             _puzzleService = puzzleService;
-            _logger = logger;
         }
 
-        // Günün bulmacasını getirir.
+        // ---------------------------------------------------------
+        // GÜNLÜK BULMACA
+        // ---------------------------------------------------------
+
         [HttpGet("today")]
         public async Task<IActionResult> GetToday(
             [FromQuery] string? clientId,
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: false,
-                out var userId);
+            var identityError = ValidateIdentity(false, out var userId);
 
             if (identityError != null)
                 return identityError;
 
             clientId = NormalizeClientId(clientId);
 
-            var clientError = ValidateGuestClientId(userId, clientId);
+            var clientError = ValidateGuestClientId(userId, clientId)
+                ?? ValidateClientIdLength(clientId);
 
             if (clientError != null)
                 return clientError;
@@ -62,86 +60,28 @@ namespace DailyChessPuzzleApi.Controllers
                 puzzle));
         }
 
-        // Günlük bulmaca sonucunu gönderir.
-        [HttpPost("submit")]
-        public async Task<IActionResult> Submit(
-            [FromBody] PuzzleSubmitRequest request,
-            CancellationToken cancellationToken)
-        {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: false,
-                out var userId);
+        // ---------------------------------------------------------
+        // YENİ GÜNLÜK OTURUM
+        // Her çağrıda yeni bir oturum oluşturulur.
+        // ---------------------------------------------------------
 
-            if (identityError != null)
-                return identityError;
-
-            request.ClientId = NormalizeClientId(request.ClientId);
-
-            var clientError = ValidateGuestClientId(
-                userId,
-                request.ClientId);
-
-            if (clientError != null)
-                return clientError;
-
-            if (request.ClientId?.Length > 100)
-            {
-                return BadRequest(ResponseFactory.Failure<object>(
-                    HttpContext,
-                    "ClientId cannot exceed 100 characters.",
-                    StatusCodes.Status400BadRequest,
-                    "CLIENT_ID_TOO_LONG"));
-            }
-
-            if (request.CountryCode != null &&
-                request.CountryCode.Length != 2)
-            {
-                return BadRequest(ResponseFactory.Failure<object>(
-                    HttpContext,
-                    "CountryCode must contain 2 characters.",
-                    StatusCodes.Status400BadRequest,
-                    "INVALID_COUNTRY_CODE"));
-            }
-
-            var response = await _puzzleService.SubmitAsync(
-                request,
-                userId,
-                cancellationToken);
-
-            return Ok(ResponseFactory.Success(
-                HttpContext,
-                "Puzzle submission completed successfully.",
-                response));
-        }
-
-        // Günlük bulmaca oturumunu başlatır.
         [HttpPost("session/start")]
         public async Task<IActionResult> StartSession(
             [FromQuery] string? clientId,
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: false,
-                out var userId);
+            var identityError = ValidateIdentity(false, out var userId);
 
             if (identityError != null)
                 return identityError;
 
             clientId = NormalizeClientId(clientId);
 
-            var clientError = ValidateGuestClientId(userId, clientId);
+            var clientError = ValidateGuestClientId(userId, clientId)
+                ?? ValidateClientIdLength(clientId);
 
             if (clientError != null)
                 return clientError;
-
-            if (clientId?.Length > 100)
-            {
-                return BadRequest(ResponseFactory.Failure<object>(
-                    HttpContext,
-                    "ClientId cannot exceed 100 characters.",
-                    StatusCodes.Status400BadRequest,
-                    "CLIENT_ID_TOO_LONG"));
-            }
 
             var response = await _puzzleService.StartSessionAsync(
                 userId,
@@ -154,15 +94,17 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Günlük bulmacada hamle gönderir.
+        // ---------------------------------------------------------
+        // GÜNLÜK BULMACA HAMLESİ
+        // SessionId zorunludur.
+        // ---------------------------------------------------------
+
         [HttpPost("move")]
         public async Task<IActionResult> SubmitMove(
             [FromBody] PuzzleMoveRequest request,
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: false,
-                out var userId);
+            var identityError = ValidateIdentity(false, out var userId);
 
             if (identityError != null)
                 return identityError;
@@ -171,19 +113,33 @@ namespace DailyChessPuzzleApi.Controllers
 
             var clientError = ValidateGuestClientId(
                 userId,
-                request.ClientId);
+                request.ClientId)
+                ?? ValidateClientIdLength(request.ClientId);
 
             if (clientError != null)
                 return clientError;
 
-            if (request.ClientId?.Length > 100)
+            if (request.SessionId == null || request.SessionId <= 0)
             {
                 return BadRequest(ResponseFactory.Failure<object>(
                     HttpContext,
-                    "ClientId cannot exceed 100 characters.",
+                    "A valid SessionId is required.",
                     StatusCodes.Status400BadRequest,
-                    "CLIENT_ID_TOO_LONG"));
+                    "SESSION_ID_REQUIRED"));
             }
+
+            if (string.IsNullOrWhiteSpace(request.Uci) ||
+                request.Uci.Length < 4 ||
+                request.Uci.Length > 10)
+            {
+                return BadRequest(ResponseFactory.Failure<object>(
+                    HttpContext,
+                    "Invalid UCI move.",
+                    StatusCodes.Status400BadRequest,
+                    "INVALID_UCI"));
+            }
+
+            request.Uci = request.Uci.Trim();
 
             var response = await _puzzleService.SubmitMoveAsync(
                 request,
@@ -196,27 +152,41 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Günlük bulmacada ipucu kullanır.
+        // ---------------------------------------------------------
+        // GÜNLÜK BULMACA İPUCU
+        // SessionId zorunludur.
+        // ---------------------------------------------------------
+
         [HttpPost("hint")]
         public async Task<IActionResult> UseHint(
+            [FromQuery] int? sessionId,
             [FromQuery] string? clientId,
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: false,
-                out var userId);
+            var identityError = ValidateIdentity(false, out var userId);
 
             if (identityError != null)
                 return identityError;
 
             clientId = NormalizeClientId(clientId);
 
-            var clientError = ValidateGuestClientId(userId, clientId);
+            var clientError = ValidateGuestClientId(userId, clientId)
+                ?? ValidateClientIdLength(clientId);
 
             if (clientError != null)
                 return clientError;
 
+            if (sessionId == null || sessionId <= 0)
+            {
+                return BadRequest(ResponseFactory.Failure<object>(
+                    HttpContext,
+                    "A valid SessionId is required.",
+                    StatusCodes.Status400BadRequest,
+                    "SESSION_ID_REQUIRED"));
+            }
+
             var response = await _puzzleService.UseHintAsync(
+                sessionId.Value,
                 userId,
                 clientId,
                 cancellationToken);
@@ -227,14 +197,15 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Kullanıcının bonus bulmaca hakkını kontrol eder.
+        // ---------------------------------------------------------
+        // BONUS BULMACA
+        // ---------------------------------------------------------
+
         [HttpGet("bonus")]
         public async Task<IActionResult> GetBonus(
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: true,
-                out var userId);
+            var identityError = ValidateIdentity(true, out var userId);
 
             if (identityError != null)
                 return identityError;
@@ -249,14 +220,11 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Bonus bulmacayı başlatır.
         [HttpPost("bonus/start")]
         public async Task<IActionResult> StartBonus(
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: true,
-                out var userId);
+            var identityError = ValidateIdentity(true, out var userId);
 
             if (identityError != null)
                 return identityError;
@@ -271,18 +239,29 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Bonus bulmacada hamle gönderir.
         [HttpPost("bonus/move")]
         public async Task<IActionResult> SubmitBonusMove(
             [FromBody] PuzzleMoveRequest request,
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: true,
-                out var userId);
+            var identityError = ValidateIdentity(true, out var userId);
 
             if (identityError != null)
                 return identityError;
+
+            if (string.IsNullOrWhiteSpace(request.Uci) ||
+                request.Uci.Length < 4 ||
+                request.Uci.Length > 10)
+            {
+                return BadRequest(ResponseFactory.Failure<object>(
+                    HttpContext,
+                    "Invalid UCI move.",
+                    StatusCodes.Status400BadRequest,
+                    "INVALID_UCI"));
+            }
+
+            request.Uci = request.Uci.Trim();
+            request.ClientId = null;
 
             var response = await _puzzleService.SubmitBonusMoveAsync(
                 request,
@@ -295,14 +274,11 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Bonus bulmacada ipucu kullanır.
         [HttpPost("bonus/hint")]
         public async Task<IActionResult> UseBonusHint(
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: true,
-                out var userId);
+            var identityError = ValidateIdentity(true, out var userId);
 
             if (identityError != null)
                 return identityError;
@@ -317,14 +293,11 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Bonus bulmaca sonucunu kaydeder.
         [HttpPost("bonus/submit")]
         public async Task<IActionResult> SubmitBonus(
             CancellationToken cancellationToken)
         {
-            var identityError = ValidateIdentity(
-                requireRegisteredUser: true,
-                out var userId);
+            var identityError = ValidateIdentity(true, out var userId);
 
             if (identityError != null)
                 return identityError;
@@ -339,8 +312,10 @@ namespace DailyChessPuzzleApi.Controllers
                 response));
         }
 
-        // Kimlik kontrolü.
-        // Bonus işlemlerinde kayıtlı kullanıcı zorunludur.
+        // ---------------------------------------------------------
+        // VALIDATION
+        // ---------------------------------------------------------
+
         private IActionResult? ValidateIdentity(
             bool requireRegisteredUser,
             out int? userId)
@@ -371,7 +346,6 @@ namespace DailyChessPuzzleApi.Controllers
             return null;
         }
 
-        // Misafir kullanıcıların ClientId göndermesini zorunlu tutar.
         private IActionResult? ValidateGuestClientId(
             int? userId,
             string? clientId)
@@ -388,7 +362,20 @@ namespace DailyChessPuzzleApi.Controllers
             return null;
         }
 
-        // ClientId değerini normalize eder.
+        private IActionResult? ValidateClientIdLength(string? clientId)
+        {
+            if (clientId?.Length > 100)
+            {
+                return BadRequest(ResponseFactory.Failure<object>(
+                    HttpContext,
+                    "ClientId cannot exceed 100 characters.",
+                    StatusCodes.Status400BadRequest,
+                    "CLIENT_ID_TOO_LONG"));
+            }
+
+            return null;
+        }
+
         private static string? NormalizeClientId(string? clientId)
         {
             return string.IsNullOrWhiteSpace(clientId)
@@ -396,7 +383,6 @@ namespace DailyChessPuzzleApi.Controllers
                 : clientId.Trim();
         }
 
-        // JWT içerisindeki kullanıcı ID değerini alır.
         private int? GetAuthenticatedUserId()
         {
             if (User.Identity?.IsAuthenticated != true)

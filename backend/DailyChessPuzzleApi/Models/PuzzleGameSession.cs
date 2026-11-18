@@ -17,10 +17,8 @@ namespace DailyChessPuzzleApi.Models
         public DateOnly PuzzleDate { get; set; }
 
         // Lichess hamle dizisinde sıradaki beklenen hamlenin indeksi.
-        // İlk hamle otomatik rakip hamlesi olduğu için 1'den başlar.
         public int CurrentMoveIndex { get; set; } = 1;
 
-        // Sunucu tarafından takip edilir.
         public int WrongMoves { get; set; }
 
         public bool UsedHint { get; set; }

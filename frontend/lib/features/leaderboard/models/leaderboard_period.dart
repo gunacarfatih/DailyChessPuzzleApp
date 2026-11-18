@@ -1,4 +1,3 @@
-
 import 'leaderboard_entry.dart';
 
 class LeaderboardPeriod {

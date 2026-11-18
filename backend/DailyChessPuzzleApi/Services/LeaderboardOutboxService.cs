@@ -1,5 +1,4 @@
-﻿
-using DailyChessPuzzleApi.Data;
+﻿using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
