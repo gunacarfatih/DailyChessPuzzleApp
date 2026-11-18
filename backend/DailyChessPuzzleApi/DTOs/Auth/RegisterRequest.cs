@@ -26,6 +26,9 @@ namespace DailyChessPuzzleApi.DTOs.Auth
         public string Password { get; set; } = string.Empty;
 
         [StringLength(2, MinimumLength = 2)]
+        [RegularExpression(
+            @"^[A-Za-z]{2}$",
+            ErrorMessage = "CountryCode must contain exactly two letters.")]
         public string? CountryCode { get; set; }
     }
 }

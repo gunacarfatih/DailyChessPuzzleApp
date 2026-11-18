@@ -11,7 +11,12 @@ import '../../leaderboard/services/leaderboard_api_service.dart';
 import 'password_management_page.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  final Future<void> Function()? onAuthChanged;
+
+  const ProfilePage({
+    super.key,
+    this.onAuthChanged,
+  });
 
   @override
   State<ProfilePage> createState() => ProfilePageState();
@@ -208,6 +213,7 @@ class ProfilePageState extends State<ProfilePage> {
 
     if (result == true) {
       await _loadProfile();
+      await widget.onAuthChanged?.call();
     }
   }
 
@@ -224,6 +230,7 @@ class ProfilePageState extends State<ProfilePage> {
 
     if (result == true) {
       await _loadProfile();
+      await widget.onAuthChanged?.call();
     }
   }
 
@@ -289,6 +296,8 @@ class ProfilePageState extends State<ProfilePage> {
 
     try {
       await _authService.logout();
+
+      await widget.onAuthChanged?.call();
 
       if (!mounted) return;
 
@@ -568,7 +577,6 @@ class ProfilePageState extends State<ProfilePage> {
             ],
           ),
           const SizedBox(height: 14),
-
           SizedBox(
             height: 46,
             child: OutlinedButton.icon(
@@ -581,9 +589,7 @@ class ProfilePageState extends State<ProfilePage> {
               ),
             ),
           ),
-
           const SizedBox(height: 10),
-
           SizedBox(
             height: 46,
             child: OutlinedButton.icon(

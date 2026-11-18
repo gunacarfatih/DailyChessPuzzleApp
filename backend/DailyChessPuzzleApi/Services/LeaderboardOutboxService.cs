@@ -1,6 +1,10 @@
-﻿using DailyChessPuzzleApi.Data;
+﻿
+using DailyChessPuzzleApi.Data;
+using DailyChessPuzzleApi.Hubs;
 using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Services.Interfaces;
+
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 namespace DailyChessPuzzleApi.Services
@@ -10,6 +14,7 @@ namespace DailyChessPuzzleApi.Services
         private readonly ApplicationDbContext _context;
         private readonly ILeaderboardCacheService _cacheService;
         private readonly ILogger<LeaderboardOutboxService> _logger;
+        private readonly IHubContext<LeaderboardHub> _hubContext;
 
         private static readonly TimeSpan LockDuration =
             TimeSpan.FromMinutes(5);
@@ -17,11 +22,13 @@ namespace DailyChessPuzzleApi.Services
         public LeaderboardOutboxService(
             ApplicationDbContext context,
             ILeaderboardCacheService cacheService,
-            ILogger<LeaderboardOutboxService> logger)
+            ILogger<LeaderboardOutboxService> logger,
+            IHubContext<LeaderboardHub> hubContext)
         {
             _context = context;
             _cacheService = cacheService;
             _logger = logger;
+            _hubContext = hubContext;
         }
 
         public async Task ProcessPendingAsync(
@@ -163,7 +170,6 @@ namespace DailyChessPuzzleApi.Services
                         }
                     }
 
-                    // Mevcut revision sistemi korunuyor.
                     // Her Outbox kaydının revision değeri kendi Id değeridir.
                     long incomingRevision = delivery.OutboxId;
 
@@ -177,6 +183,7 @@ namespace DailyChessPuzzleApi.Services
                             cancellationToken);
 
                     bool shouldRemoveFromRedis = false;
+                    bool leaderboardChanged = false;
 
                     if (delivery.IsRemoval)
                     {
@@ -202,10 +209,11 @@ namespace DailyChessPuzzleApi.Services
                             await _context.SaveChangesAsync(cancellationToken);
 
                             shouldRemoveFromRedis = true;
+                            leaderboardChanged = true;
                         }
                         else if (incomingRevision > existingScore.Revision)
                         {
-                            await _context.LeaderboardScores
+                            int affectedRows = await _context.LeaderboardScores
                                 .Where(x =>
                                     x.Id == existingScore.Id &&
                                     x.Revision < incomingRevision)
@@ -216,7 +224,8 @@ namespace DailyChessPuzzleApi.Services
                                     .SetProperty(x => x.UpdatedAtUtc, DateTime.UtcNow),
                                     cancellationToken);
 
-                            shouldRemoveFromRedis = true;
+                            shouldRemoveFromRedis = affectedRows > 0;
+                            leaderboardChanged = affectedRows > 0;
                         }
                     }
                     else
@@ -240,10 +249,12 @@ namespace DailyChessPuzzleApi.Services
                                 cancellationToken);
 
                             await _context.SaveChangesAsync(cancellationToken);
+
+                            leaderboardChanged = true;
                         }
                         else if (incomingRevision > existingScore.Revision)
                         {
-                            await _context.LeaderboardScores
+                            int affectedRows = await _context.LeaderboardScores
                                 .Where(x =>
                                     x.Id == existingScore.Id &&
                                     x.Revision < incomingRevision)
@@ -261,6 +272,8 @@ namespace DailyChessPuzzleApi.Services
                                         x => x.UpdatedAtUtc,
                                         DateTime.UtcNow),
                                     cancellationToken);
+
+                            leaderboardChanged = affectedRows > 0;
                         }
                     }
 
@@ -352,6 +365,48 @@ namespace DailyChessPuzzleApi.Services
                     }
 
                     await transaction.CommitAsync(cancellationToken);
+
+                    // Aynı Outbox kaydının günlük, haftalık, aylık,
+                    // tüm zamanlar ve ülke teslimatları olabilir.
+                    // Tek bildirim göndermek için yalnızca global günlük
+                    // skor değişikliğini bildirim tetikleyicisi olarak kullanıyoruz.
+                    bool shouldNotifyClients =
+                        leaderboardChanged &&
+                        delivery.Period.Equals(
+                            "daily",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        delivery.CountryCode == null;
+
+                    if (shouldNotifyClients)
+                    {
+                        try
+                        {
+                            await _hubContext.Clients.All.SendAsync(
+                                "LeaderboardUpdated",
+                                new
+                                {
+                                    period = delivery.Period,
+                                    periodKey = delivery.PeriodKey
+                                },
+                                CancellationToken.None);
+
+                            _logger.LogInformation(
+                                "Leaderboard update notification sent. " +
+                                "OutboxId: {OutboxId}, PeriodKey: {PeriodKey}",
+                                delivery.OutboxId,
+                                delivery.PeriodKey);
+                        }
+                        catch (Exception notificationException)
+                        {
+                            // SignalR bildirimi başarısız olsa bile
+                            // tamamlanmış Outbox işlemini tekrar kuyruğa alma.
+                            _logger.LogWarning(
+                                notificationException,
+                                "Leaderboard notification could not be sent. " +
+                                "OutboxId: {OutboxId}",
+                                delivery.OutboxId);
+                        }
+                    }
 
                     _logger.LogInformation(
                         "Leaderboard Delivery completed. " +

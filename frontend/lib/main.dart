@@ -1,10 +1,8 @@
+
 import 'package:flutter/material.dart';
 
 import 'core/theme/app_theme.dart';
-import 'features/home/screens/home_page.dart';
-import 'features/puzzle/screens/puzzle_page.dart';
-import 'features/leaderboard/screens/leaderboard_page.dart';
-import 'features/profile/screens/profile_page.dart';
+import 'features/navigation/main_navigation_page.dart';
 
 void main() {
   runApp(const DailyChessPuzzleApp());
@@ -20,103 +18,6 @@ class DailyChessPuzzleApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       home: const MainNavigationPage(),
-    );
-  }
-}
-
-class MainNavigationPage extends StatefulWidget {
-  const MainNavigationPage({super.key});
-
-  @override
-  State<MainNavigationPage> createState() =>
-      _MainNavigationPageState();
-}
-
-class _MainNavigationPageState extends State<MainNavigationPage> {
-  int _selectedIndex = 0;
-
-  final GlobalKey<HomePageState> _homePageKey =
-  GlobalKey<HomePageState>();
-
-  final GlobalKey<PuzzlePageState> _puzzlePageKey =
-  GlobalKey<PuzzlePageState>();
-
-  final GlobalKey<LeaderboardPageState> _leaderboardPageKey =
-  GlobalKey<LeaderboardPageState>();
-
-  final GlobalKey<ProfilePageState> _profilePageKey =
-  GlobalKey<ProfilePageState>();
-
-  late final List<Widget> _pages = [
-    HomePage(
-      key: _homePageKey,
-      onOpenPuzzle: () => _navigateTo(1),
-      onOpenLeaderboard: () => _navigateTo(2),
-    ),
-    PuzzlePage(key: _puzzlePageKey),
-    LeaderboardPage(key: _leaderboardPageKey),
-    ProfilePage(key: _profilePageKey),
-  ];
-
-  void _navigateTo(int index) {
-    if (index == _selectedIndex) return;
-
-    setState(() {
-      _selectedIndex = index;
-    });
-
-    switch (index) {
-      case 0:
-        _homePageKey.currentState?.refreshStatistics();
-        break;
-
-      case 1:
-        _puzzlePageKey.currentState?.refreshPuzzle();
-        break;
-
-      case 2:
-        _leaderboardPageKey.currentState?.refreshLeaderboard();
-        break;
-
-      case 3:
-        _profilePageKey.currentState?.refreshProfile();
-        break;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _pages,
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _navigateTo,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Ana Sayfa',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.extension_outlined),
-            selectedIcon: Icon(Icons.extension),
-            label: 'Bulmaca',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.leaderboard_outlined),
-            selectedIcon: Icon(Icons.leaderboard),
-            label: 'Sıralama',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profil',
-          ),
-        ],
-      ),
     );
   }
 }

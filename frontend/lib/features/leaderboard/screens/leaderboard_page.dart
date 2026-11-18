@@ -98,6 +98,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
   }
 
   Future<void> refreshLeaderboard() async {
+    debugPrint('LEADERBOARD PAGE: refreshLeaderboard() çağrıldı.');
     if (!mounted || _isLoading) return;
     await _loadLeaderboard();
   }

@@ -24,6 +24,8 @@ dependencies:
   geolocator: ^14.1.2
   geocoding: ^5.0.1
 
+  signalr_netcore: ^1.4.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

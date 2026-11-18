@@ -20,6 +20,7 @@ using Microsoft.OpenApi;
 using ReusableCaching.Extensions;
 using Serilog;
 using StackExchange.Redis;
+using DailyChessPuzzleApi.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -78,6 +79,25 @@ builder.Services
 
             ClockSkew = TimeSpan.FromSeconds(30)
         };
+
+        // SignalR WebSocket bağlantılarında token query string üzerinden gelebilir.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+
+                var path = context.HttpContext.Request.Path;
+
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    path.StartsWithSegments("/hubs/leaderboard"))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();
@@ -98,18 +118,18 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 
 builder.Services.AddReusableCaching(builder.Configuration);
 
+var redisConnectionString = builder.Configuration
+    .GetConnectionString("Redis");
+
+if (string.IsNullOrWhiteSpace(redisConnectionString))
+{
+    throw new InvalidOperationException(
+        "Redis connection string bulunamadı.");
+}
+
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
-    var redisConnection = builder.Configuration
-        .GetConnectionString("Redis");
-
-    if (string.IsNullOrWhiteSpace(redisConnection))
-    {
-        throw new InvalidOperationException(
-            "Redis connection string bulunamadı.");
-    }
-
-    var redisOptions = ConfigurationOptions.Parse(redisConnection);
+    var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
 
     // Redis kapalı olsa bile uygulamanın açılmasına izin ver.
     redisOptions.AbortOnConnectFail = false;
@@ -120,6 +140,20 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 builder.Services.AddSingleton<
     ILeaderboardCacheService,
     LeaderboardCacheService>();
+
+// --------------------------------------------------
+// SIGNALR
+// --------------------------------------------------
+
+builder.Services
+    .AddSignalR()
+    .AddStackExchangeRedis(
+        redisConnectionString,
+        options =>
+        {
+            options.Configuration.ChannelPrefix =
+                RedisChannel.Literal("DailyChessPuzzle");
+        });
 
 // --------------------------------------------------
 // SERILOG
@@ -266,5 +300,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 
 app.Run();

@@ -1536,20 +1536,6 @@ namespace DailyChessPuzzleApi.Services
             };
         }
 
-        private static PuzzleSubmitResponse CreateSubmitResponse(
-            PuzzleAttempt attempt,
-            string message)
-        {
-            return new PuzzleSubmitResponse
-            {
-                Score = attempt.Score,
-                Seconds = attempt.Seconds,
-                WrongMoves = attempt.WrongMoves,
-                UsedHint = attempt.UsedHint,
-                Message = message
-            };
-        }
-
         private static string GetDifficulty(int rating)
         {
             if (rating <= 1000)
