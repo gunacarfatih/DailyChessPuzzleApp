@@ -1,8 +1,9 @@
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../../auth/services/auth_api_service.dart';
+import '../../../providers/auth_provider.dart';
 
 class PasswordManagementPage extends StatefulWidget {
   final bool hasPassword;
@@ -19,8 +20,6 @@ class PasswordManagementPage extends StatefulWidget {
 
 class _PasswordManagementPageState
     extends State<PasswordManagementPage> {
-  final AuthApiService _authApiService = AuthApiService();
-
   final TextEditingController _currentPasswordController =
   TextEditingController();
 
@@ -30,7 +29,6 @@ class _PasswordManagementPageState
   final TextEditingController _confirmPasswordController =
   TextEditingController();
 
-  bool _isLoading = false;
   bool _obscureCurrentPassword = true;
   bool _obscureNewPassword = true;
   bool _obscureConfirmPassword = true;
@@ -71,17 +69,15 @@ class _PasswordManagementPageState
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
-
     try {
+      final authProvider = context.read<AuthProvider>();
+
       final result = widget.hasPassword
-          ? await _authApiService.changePassword(
+          ? await authProvider.changePassword(
         currentPassword: currentPassword,
         newPassword: newPassword,
       )
-          : await _authApiService.setPassword(
+          : await authProvider.setPassword(
         newPassword: newPassword,
       );
 
@@ -114,12 +110,6 @@ class _PasswordManagementPageState
       if (!mounted) return;
 
       _showMessage('Şifre işlemi sırasında bir hata oluştu.');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
 
@@ -182,17 +172,18 @@ class _PasswordManagementPageState
     required String label,
     required bool obscureText,
     required VoidCallback onVisibilityChanged,
+    required bool isLoading,
   }) {
     return TextField(
       controller: controller,
       obscureText: obscureText,
-      enabled: !_isLoading,
+      enabled: !isLoading,
       textInputAction: TextInputAction.next,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: const Icon(Icons.lock_outline),
         suffixIcon: IconButton(
-          onPressed: onVisibilityChanged,
+          onPressed: isLoading ? null : onVisibilityChanged,
           icon: Icon(
             obscureText ? Icons.visibility : Icons.visibility_off,
           ),
@@ -209,6 +200,8 @@ class _PasswordManagementPageState
 
   @override
   Widget build(BuildContext context) {
+    final isLoading = context.watch<AuthProvider>().isLoading;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -258,6 +251,7 @@ class _PasswordManagementPageState
                 ],
               ),
             ),
+
             const SizedBox(height: 26),
 
             if (widget.hasPassword) ...[
@@ -265,6 +259,7 @@ class _PasswordManagementPageState
                 controller: _currentPasswordController,
                 label: 'Mevcut şifre',
                 obscureText: _obscureCurrentPassword,
+                isLoading: isLoading,
                 onVisibilityChanged: () {
                   setState(() {
                     _obscureCurrentPassword =
@@ -279,18 +274,21 @@ class _PasswordManagementPageState
               controller: _newPasswordController,
               label: 'Yeni şifre',
               obscureText: _obscureNewPassword,
+              isLoading: isLoading,
               onVisibilityChanged: () {
                 setState(() {
                   _obscureNewPassword = !_obscureNewPassword;
                 });
               },
             ),
+
             const SizedBox(height: 16),
 
             _buildPasswordField(
               controller: _confirmPasswordController,
               label: 'Yeni şifre tekrar',
               obscureText: _obscureConfirmPassword,
+              isLoading: isLoading,
               onVisibilityChanged: () {
                 setState(() {
                   _obscureConfirmPassword =
@@ -298,6 +296,7 @@ class _PasswordManagementPageState
                 });
               },
             ),
+
             const SizedBox(height: 12),
 
             const Text(
@@ -307,13 +306,14 @@ class _PasswordManagementPageState
                 fontSize: 12,
               ),
             ),
+
             const SizedBox(height: 26),
 
             SizedBox(
               height: 52,
               child: ElevatedButton(
-                onPressed: _isLoading ? null : _submit,
-                child: _isLoading
+                onPressed: isLoading ? null : _submit,
+                child: isLoading
                     ? const SizedBox(
                   width: 22,
                   height: 22,

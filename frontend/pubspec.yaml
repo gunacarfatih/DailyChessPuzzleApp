@@ -25,6 +25,7 @@ dependencies:
   geocoding: ^5.0.1
 
   signalr_netcore: ^1.4.4
+  provider: ^6.1.5+1
 
 dev_dependencies:
   flutter_test:

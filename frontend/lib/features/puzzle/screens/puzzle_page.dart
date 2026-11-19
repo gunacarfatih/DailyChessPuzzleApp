@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
@@ -5,7 +6,10 @@ import 'package:chessground/chessground.dart';
 import 'package:dartchess/dartchess.dart';
 import 'package:flutter/material.dart';
 
-import '../../../core/storage/auth_storage.dart';
+import 'package:provider/provider.dart';
+import '../../../providers/auth_provider.dart';
+import '../../../providers/leaderboard_provider.dart';
+
 import '../../../core/storage/client_id_storage.dart';
 import '../models/puzzle.dart';
 import '../models/bonus_puzzle.dart';
@@ -23,11 +27,10 @@ class PuzzlePageState extends State<PuzzlePage> {
   static const Color _surface = Color(0xFF1B2923);
   static const Color _primary = Color(0xFFB7D7A8);
   static const Color _secondary = Color(0xFFD6B46A);
-  static const int _bonusDurationSeconds = 30;
+  static const int _bonusDurationSeconds = 300;
 
   final PuzzleApiService _puzzleApiService = PuzzleApiService();
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
-  final AuthStorage _authStorage = AuthStorage.instance;
 
   // Günlük bulmaca
   bool _isLoading = true;
@@ -289,6 +292,21 @@ class PuzzlePageState extends State<PuzzlePage> {
         '${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
+  // Liderlik tablosunu güvenli şekilde yeniler.
+  // Yenileme başarısız olsa bile puzzle tamamlanma işlemi etkilenmez.
+  Future<void> _refreshLeaderboardSafely() async {
+    if (!mounted) return;
+
+    try {
+      await context
+          .read<LeaderboardProvider>()
+          .refreshLeaderboard();
+    } catch (error, stackTrace) {
+      debugPrint('Liderlik tablosu yenileme hatası: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
   // ------------------------------------------------------------
   // GÜNLÜK BULMACA
   // ------------------------------------------------------------
@@ -354,10 +372,10 @@ class PuzzlePageState extends State<PuzzlePage> {
     });
 
     try {
-      final accessToken = await _authStorage.getAccessToken();
+      final authProvider = context.read<AuthProvider>();
+      await authProvider.initialize();
 
-      final isAuthenticated =
-          accessToken != null && accessToken.isNotEmpty;
+      final isAuthenticated = authProvider.isLoggedIn;
 
       final clientId = await _clientIdStorage.getClientId();
 
@@ -887,7 +905,6 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
   }
 
-
   Future<void> _finishPuzzle(
       Map<String, dynamic> data,
       ) async {
@@ -937,12 +954,13 @@ class PuzzlePageState extends State<PuzzlePage> {
       _submissionError = null;
     });
 
-    // Tekrar çözüm bonus hakkını yeniden tetiklemez.
+    // Yalnızca ilk başarılı günlük çözüm liderlik tablosunu yeniler.
+    // Tekrar çözüm (_isReplay) liderlik tablosunu etkilemez.
     if (_isAuthenticated && !_isReplay) {
+      await _refreshLeaderboardSafely();
       await _loadBonusStatus();
     }
   }
-
 
   void _restartPuzzle() {
     // Tahtayı yenilemek sunucudaki oturumu sıfırlamaz.
@@ -1216,7 +1234,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         _bonusRemainingSeconds =
             bonus.remainingSeconds ?? _bonusDurationSeconds;
         _isBonusLoading = false;
-        _bonusFeedback = '30 saniyen başladı! Doğru hamleyi bul.';
+        _bonusFeedback = '5 dakikalık süren başladı! Doğru hamleyi bul.';
       });
 
       _startBonusTimer();
@@ -1563,8 +1581,6 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
   }
 
-
-
   Future<void> _finishBonusPuzzle() async {
     if (!mounted || _isBonusSubmitting) return;
 
@@ -1605,6 +1621,11 @@ class PuzzlePageState extends State<PuzzlePage> {
         _showBonusCompletionAnimation = true;
       });
 
+      // Bonus sonucu sunucuya kaydedildikten sonra
+      // liderlik tablosunu yenile.
+      // Yenileme hatası bonus başarısını etkilemez.
+      await _refreshLeaderboardSafely();
+
       // Animasyonun görünmesi için 1,8 saniye bekle.
       await Future.delayed(
         const Duration(milliseconds: 1800),
@@ -1629,8 +1650,6 @@ class PuzzlePageState extends State<PuzzlePage> {
       });
     }
   }
-
-
 
   void _returnToDailyPuzzle() {
     _stopBonusTimer();
@@ -1690,7 +1709,6 @@ class PuzzlePageState extends State<PuzzlePage> {
     );
   }
 
-
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(
@@ -1728,7 +1746,6 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     return _buildPuzzleBody();
   }
-
 
   Widget _buildPuzzleBody() {
     return LayoutBuilder(
@@ -1859,7 +1876,6 @@ class PuzzlePageState extends State<PuzzlePage> {
       },
     );
   }
-
 
   Widget _buildBonusPuzzleBody() {
     final position = _bonusPosition;
@@ -2154,7 +2170,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             const SizedBox(height: 12),
             const Text(
               'Bonus bulmacayı çözerek ek puan kazanabilirsin. '
-                  '30 saniyelik süren yalnızca başla butonuna '
+                  '5 dakikalık süren yalnızca başla butonuna '
                   'bastığında başlayacak.',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -2309,7 +2325,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           const SizedBox(height: 12),
           Text(
             expired
-                ? '30 saniyelik bonus süresini tamamlayamadın.'
+                ? '5 dakikalık bonus süresini tamamlayamadın.'
                 : 'Bonus bulmacayı başarıyla çözdün.',
             textAlign: TextAlign.center,
             style: const TextStyle(
@@ -2384,7 +2400,6 @@ class PuzzlePageState extends State<PuzzlePage> {
       ),
     );
   }
-
 
   Widget _buildStartOverlay() {
     final canShowBonus = _isAuthenticated && _isBonusEligible;
@@ -2561,7 +2576,6 @@ class PuzzlePageState extends State<PuzzlePage> {
       ),
     );
   }
-
 
   Widget _buildPuzzleInfo() {
     return Container(
@@ -2950,7 +2964,6 @@ class PuzzlePageState extends State<PuzzlePage> {
   // SONUÇ EKRANI
   // ------------------------------------------------------------
 
-
   Widget _buildResultBody() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -3044,7 +3057,6 @@ class PuzzlePageState extends State<PuzzlePage> {
     );
   }
 
-
   Widget _buildBonusEntryCard() {
     final alreadyClosed = _isBonusCompleted || _isBonusExpired;
     final alreadyStarted = _isBonusStarted && !alreadyClosed;
@@ -3061,7 +3073,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           'Başlatılmış bir deneme yeniden başlatılamaz.';
     } else {
       description =
-      'Hatasız çözümün sayesinde 30 saniyelik bonus bulmaca '
+      'Hatasız çözümün sayesinde 5 dakikalık bonus bulmaca '
           'hakkı kazandın. İstediğin zaman başlatabilirsin.';
     }
 

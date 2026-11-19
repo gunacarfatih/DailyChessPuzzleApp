@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../services/auth_api_service.dart';
+import '../../../providers/auth_provider.dart';
 import 'register_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -11,7 +12,6 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final AuthApiService _authService = AuthApiService();
 
   final TextEditingController _emailController =
   TextEditingController();
@@ -21,7 +21,6 @@ class _LoginPageState extends State<LoginPage> {
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
-  bool _isLoading = false;
   bool _obscurePassword = true;
 
   @override
@@ -36,13 +35,9 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
-
     try {
-      final response = await _authService.login(
-        email: _emailController.text,
+      final response = await context.read<AuthProvider>().login(
+        email: _emailController.text.trim(),
         password: _passwordController.text,
       );
 
@@ -52,29 +47,18 @@ class _LoginPageState extends State<LoginPage> {
         _showSuccess('Giriş başarılı. Hoş geldin!');
         Navigator.pop(context, true);
       } else {
-        _showError(
-          response.message ?? 'Giriş yapılamadı.',
-        );
+        _showError(response.message ?? 'Giriş yapılamadı.');
       }
     } catch (e) {
       if (!mounted) return;
       _showError(_getExceptionMessage(e));
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
 
   Future<void> _loginWithGoogle() async {
-    setState(() {
-      _isLoading = true;
-    });
-
     try {
-      final response = await _authService.loginWithGoogle();
+      final response =
+      await context.read<AuthProvider>().loginWithGoogle();
 
       if (!mounted) return;
 
@@ -88,14 +72,7 @@ class _LoginPageState extends State<LoginPage> {
       }
     } catch (e) {
       if (!mounted) return;
-
       _showError(_getGoogleExceptionMessage(e));
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
 
@@ -151,6 +128,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isLoading = context.watch<AuthProvider>().isLoading;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Giriş Yap'),
@@ -224,7 +202,7 @@ class _LoginPageState extends State<LoginPage> {
                     obscureText: _obscurePassword,
                     textInputAction: TextInputAction.done,
                     onFieldSubmitted: (_) {
-                      if (!_isLoading) _login();
+                      if (!isLoading) _login();
                     },
                     decoration: InputDecoration(
                       labelText: 'Şifre',
@@ -257,8 +235,8 @@ class _LoginPageState extends State<LoginPage> {
                   SizedBox(
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: _isLoading ? null : _login,
-                      child: _isLoading
+                      onPressed: isLoading ? null : _login,
+                      child: isLoading
                           ? const SizedBox(
                         width: 22,
                         height: 22,
@@ -307,7 +285,7 @@ class _LoginPageState extends State<LoginPage> {
                     height: 52,
                     child: OutlinedButton.icon(
                       onPressed:
-                      _isLoading ? null : _loginWithGoogle,
+                      isLoading ? null : _loginWithGoogle,
                       icon: const Icon(
                         Icons.g_mobiledata,
                         size: 30,
@@ -327,7 +305,7 @@ class _LoginPageState extends State<LoginPage> {
                       const Text('Henüz hesabın yok mu?'),
                       TextButton(
                         onPressed:
-                        _isLoading ? null : _openRegisterPage,
+                        isLoading ? null : _openRegisterPage,
                         child: const Text('Kayıt Ol'),
                       ),
                     ],

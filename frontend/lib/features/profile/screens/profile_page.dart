@@ -1,13 +1,14 @@
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../../../core/storage/auth_storage.dart';
+import '../../../providers/auth_provider.dart';
+import '../../../providers/leaderboard_provider.dart';
+
 import '../../../core/storage/client_id_storage.dart';
 import '../../auth/screens/login_page.dart';
 import '../../auth/screens/register_page.dart';
-import '../../auth/services/auth_api_service.dart';
 import '../../leaderboard/models/leaderboard_entry.dart';
-import '../../leaderboard/services/leaderboard_api_service.dart';
 import 'password_management_page.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -23,14 +24,7 @@ class ProfilePage extends StatefulWidget {
 }
 
 class ProfilePageState extends State<ProfilePage> {
-  final LeaderboardApiService _leaderboardApiService =
-  LeaderboardApiService();
-
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
-
-  final AuthStorage _authStorage = AuthStorage.instance;
-
-  final AuthApiService _authService = AuthApiService();
 
   bool _isLoading = true;
   bool _isLoggedIn = false;
@@ -54,50 +48,66 @@ class ProfilePageState extends State<ProfilePage> {
     _loadProfile();
   }
 
+  // Profil ekranını yeniler.
+  // Bu işlemde global leaderboard verisi de zorla yenilenir.
   Future<void> refreshProfile() async {
     if (!mounted || _isLoading || _isLoggingOut) return;
 
-    await _loadProfile();
+    await _loadProfile(forceRefresh: true);
   }
 
   // Oturum ve profil bilgilerini yükler.
-  Future<void> _loadProfile() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
-    }
+  Future<void> _loadProfile({
+    bool forceRefresh = false,
+  }) async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
     try {
+      // Oturum bilgilerini Provider üzerinden al.
+      final authProvider = context.read<AuthProvider>();
+
+      // Uygulama açılışındaki oturum yüklemesi henüz
+      // tamamlanmamışsa tamamlanmasını bekle.
+      await authProvider.initialize();
+
       final clientId = await _clientIdStorage.getClientId();
 
-      final isLoggedIn = await _authStorage.isLoggedIn();
+      final isLoggedIn = authProvider.isLoggedIn;
 
-      String? username;
-      String? email;
-      String? firstName;
-      String? lastName;
-      int? userId;
-      bool hasPassword = false;
-
-      if (isLoggedIn) {
-        username = await _authStorage.getUsername();
-        email = await _authStorage.getEmail();
-        firstName = await _authStorage.getFirstName();
-        lastName = await _authStorage.getLastName();
-        userId = await _authStorage.getUserId();
-        hasPassword = await _authStorage.getHasPassword();
-      }
-
-      final response = await _leaderboardApiService.getLeaderboard(
-        clientId: clientId,
-        limit: 10,
-      );
+      final username = authProvider.username;
+      final email = authProvider.email;
+      final firstName = authProvider.firstName;
+      final lastName = authProvider.lastName;
+      final userId = authProvider.userId;
+      final hasPassword = authProvider.hasPassword;
 
       if (!mounted) return;
 
-      if (!response.success || response.data == null) {
+      // Leaderboard verisini ortak Provider üzerinden al.
+      final leaderboardProvider =
+      context.read<LeaderboardProvider>();
+
+      if (forceRefresh) {
+        await leaderboardProvider.refreshLeaderboard();
+      } else {
+        await leaderboardProvider.loadLeaderboard();
+      }
+
+      if (!mounted) return;
+
+      // Global leaderboard yanıtını Provider'dan al.
+      final leaderboard =
+      leaderboardProvider.leaderboardFor(null);
+
+      final leaderboardError =
+      leaderboardProvider.errorFor(null);
+
+      if (leaderboard == null) {
         setState(() {
           _clientId = clientId;
           _isLoggedIn = isLoggedIn;
@@ -107,15 +117,16 @@ class ProfilePageState extends State<ProfilePage> {
           _lastName = lastName;
           _userId = userId;
           _hasPassword = hasPassword;
-          _errorMessage =
-              response.message ?? 'Profil bilgileri alınamadı.';
+          _errorMessage = leaderboardError ??
+              'Profil bilgileri alınamadı.';
           _isLoading = false;
         });
 
         return;
       }
 
-      final allTime = response.data!.allTime;
+      // Profil istatistikleri için tüm zamanlar verisini kullan.
+      final allTime = leaderboard.allTime;
 
       final LeaderboardEntry? currentUser;
 
@@ -150,6 +161,8 @@ class ProfilePageState extends State<ProfilePage> {
     } catch (error) {
       if (!mounted) return;
 
+      debugPrint('Profil yükleme hatası: $error');
+
       setState(() {
         _errorMessage =
         'Profil bilgileri alınırken bir hata oluştu.';
@@ -158,6 +171,7 @@ class ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  // Sıralama listesinden mevcut kullanıcıyı bulur.
   LeaderboardEntry? _findCurrentUser(
       List<LeaderboardEntry> rankings,
       String clientId,
@@ -212,7 +226,7 @@ class ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
 
     if (result == true) {
-      await _loadProfile();
+      await _loadProfile(forceRefresh: true);
       await widget.onAuthChanged?.call();
     }
   }
@@ -229,7 +243,7 @@ class ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
 
     if (result == true) {
-      await _loadProfile();
+      await _loadProfile(forceRefresh: true);
       await widget.onAuthChanged?.call();
     }
   }
@@ -240,7 +254,7 @@ class ProfilePageState extends State<ProfilePage> {
       context,
       MaterialPageRoute(
         builder: (_) => PasswordManagementPage(
-          hasPassword: _hasPassword,
+          hasPassword: context.read<AuthProvider>().hasPassword,
         ),
       ),
     );
@@ -249,7 +263,7 @@ class ProfilePageState extends State<ProfilePage> {
 
     if (result == true) {
       setState(() {
-        _hasPassword = true;
+        _hasPassword = context.read<AuthProvider>().hasPassword;
       });
     }
   }
@@ -295,8 +309,10 @@ class ProfilePageState extends State<ProfilePage> {
     });
 
     try {
-      await _authService.logout();
+      // Çıkış işlemini Provider üzerinden gerçekleştir.
+      await context.read<AuthProvider>().logout();
 
+      // MainNavigationPage üzerindeki SignalR bağlantısını yenile.
       await widget.onAuthChanged?.call();
 
       if (!mounted) return;
@@ -308,7 +324,8 @@ class ProfilePageState extends State<ProfilePage> {
         ),
       );
 
-      await _loadProfile();
+      // Çıkış sonrasında misafir profilini ve istatistiklerini yenile.
+      await _loadProfile(forceRefresh: true);
     } catch (error) {
       if (!mounted) return;
 
@@ -339,7 +356,7 @@ class ProfilePageState extends State<ProfilePage> {
         ),
         actions: [
           IconButton(
-            onPressed: _isLoading ? null : _loadProfile,
+            onPressed: _isLoading ? null : refreshProfile,
             icon: const Icon(Icons.refresh),
             tooltip: 'Yenile',
           ),
@@ -347,7 +364,7 @@ class ProfilePageState extends State<ProfilePage> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _loadProfile,
+        onRefresh: refreshProfile,
         child: _buildBody(),
       ),
     );

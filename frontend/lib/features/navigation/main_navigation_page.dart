@@ -2,9 +2,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../providers/auth_provider.dart';
 import '../../core/services/leaderboard_signalr_service.dart';
-import '../../core/storage/auth_storage.dart';
 
 import '../home/screens/home_page.dart';
 import '../puzzle/screens/puzzle_page.dart';
@@ -38,6 +39,9 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   final LeaderboardSignalRService _signalRService =
   LeaderboardSignalRService();
 
+  // Eş zamanlı SignalR bağlantı güncellemelerini önler.
+  Future<void>? _signalRUpdateFuture;
+
   late final List<Widget> _pages = [
     HomePage(
       key: _homePageKey,
@@ -58,7 +62,10 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
     // SignalR bildirim callback'lerini tanımla.
     _signalRService.onLeaderboardUpdated = () {
-      debugPrint('SIGNALR CALLBACK: onLeaderboardUpdated çalıştı.');
+      debugPrint(
+        'SIGNALR CALLBACK: onLeaderboardUpdated çalıştı.',
+      );
+
       _refreshLeaderboard();
     };
 
@@ -74,22 +81,39 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     await _updateSignalRConnection();
   }
 
-  Future<void> _updateSignalRConnection() async {
-    final isLoggedIn =
-    await AuthStorage.instance.isLoggedIn();
+  // SignalR bağlantı güncellemesini tekilleştirir.
+  Future<void> _updateSignalRConnection() {
+    return _signalRUpdateFuture ??=
+        _updateSignalRConnectionInternal().whenComplete(() {
+          _signalRUpdateFuture = null;
+        });
+  }
+
+  // Provider üzerinden oturum durumunu kontrol eder
+  // ve SignalR bağlantısını günceller.
+  Future<void> _updateSignalRConnectionInternal() async {
+    final authProvider = context.read<AuthProvider>();
+
+    await authProvider.initialize();
 
     if (!mounted) return;
 
-    if (isLoggedIn) {
-      await _signalRService.connect();
-    } else {
-      await _signalRService.disconnect();
+    try {
+      if (authProvider.isLoggedIn) {
+        await _signalRService.connect();
+      } else {
+        await _signalRService.disconnect();
+      }
+    } catch (error) {
+      debugPrint('SignalR bağlantı güncelleme hatası: $error');
     }
   }
 
   // Liderlik tablosunu API üzerinden yeniler.
   void _refreshLeaderboard() {
-    debugPrint('NAVIGATION: Liderlik tablosu yenileniyor.');
+    debugPrint(
+      'NAVIGATION: Liderlik tablosu yenileniyor.',
+    );
 
     if (!mounted) return;
 

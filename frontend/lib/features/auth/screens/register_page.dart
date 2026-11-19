@@ -1,6 +1,8 @@
-import 'package:flutter/material.dart';
 
-import '../services/auth_api_service.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../providers/auth_provider.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -10,8 +12,6 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
-  final AuthApiService _authService = AuthApiService();
-
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
   final TextEditingController _usernameController = TextEditingController();
@@ -24,7 +24,6 @@ class _RegisterPageState extends State<RegisterPage> {
   final TextEditingController _countryCodeController =
   TextEditingController();
 
-  bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
 
@@ -45,14 +44,11 @@ class _RegisterPageState extends State<RegisterPage> {
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
-
     try {
-      final countryCode = _countryCodeController.text.trim().toUpperCase();
+      final countryCode =
+      _countryCodeController.text.trim().toUpperCase();
 
-      final response = await _authService.register(
+      final response = await context.read<AuthProvider>().register(
         username: _usernameController.text.trim(),
         firstName: _firstNameController.text.trim(),
         lastName: _lastNameController.text.trim(),
@@ -82,12 +78,6 @@ class _RegisterPageState extends State<RegisterPage> {
         'Sunucuya bağlanırken bir hata oluştu. '
             'Lütfen tekrar deneyin.',
       );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
 
@@ -116,6 +106,8 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isLoading = context.watch<AuthProvider>().isLoading;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Hesap Oluştur'),
@@ -314,7 +306,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     obscureText: _obscureConfirmPassword,
                     textInputAction: TextInputAction.done,
                     onFieldSubmitted: (_) {
-                      if (!_isLoading) _register();
+                      if (!isLoading) _register();
                     },
                     decoration: InputDecoration(
                       labelText: 'Şifre tekrar',
@@ -352,8 +344,8 @@ class _RegisterPageState extends State<RegisterPage> {
                   SizedBox(
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: _isLoading ? null : _register,
-                      child: _isLoading
+                      onPressed: isLoading ? null : _register,
+                      child: isLoading
                           ? const SizedBox(
                         width: 22,
                         height: 22,

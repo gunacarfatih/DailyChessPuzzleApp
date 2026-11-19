@@ -1,12 +1,12 @@
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../../../core/storage/client_id_storage.dart';
 import '../../../core/services/location_service.dart';
+import '../../../providers/leaderboard_provider.dart';
 import '../models/leaderboard_entry.dart';
 import '../models/leaderboard_period.dart';
 import '../models/leaderboard_response.dart';
-import '../services/leaderboard_api_service.dart';
 
 class LeaderboardPage extends StatefulWidget {
   const LeaderboardPage({super.key});
@@ -16,20 +16,20 @@ class LeaderboardPage extends StatefulWidget {
 }
 
 class LeaderboardPageState extends State<LeaderboardPage> {
-  final LeaderboardApiService _apiService = LeaderboardApiService();
-  final ClientIdStorage _clientIdStorage = ClientIdStorage();
   final LocationService _locationService = LocationService();
 
-  bool _isLoading = true;
-  String? _errorMessage;
+  // Konum bilgisi belirlenene kadar ilk yükleme ekranını gösterir.
+  bool _isInitializing = true;
 
+  // Kullanıcının seçtiği dönem.
   String _selectedPeriod = 'daily';
 
+  // Kullanıcının seçtiği ülke.
   String _selectedCountry = 'Global';
+
+  // Cihazın tespit edilen ülke bilgileri.
   String? _detectedCountryCode;
   String? _detectedCountryName;
-
-  LeaderboardResponse? _leaderboard;
 
   @override
   void initState() {
@@ -37,91 +37,102 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     _initializeLocationAndLoadLeaderboard();
   }
 
+  // Önce kullanıcının ülkesini tespit eder,
+  // ardından ilgili leaderboard verisini yükler.
   Future<void> _initializeLocationAndLoadLeaderboard() async {
-    final countryInfo = await _locationService.getCountryInfo();
-
-    if (!mounted) return;
-
-    if (countryInfo != null) {
-      setState(() {
-        _detectedCountryCode = countryInfo.code;
-        _detectedCountryName = countryInfo.name;
-      });
-    }
-
-    await _loadLeaderboard();
-  }
-
-  Future<void> _loadLeaderboard() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
     try {
-      final clientId = await _clientIdStorage.getClientId();
-
-      final response = await _apiService.getLeaderboard(
-        clientId: clientId,
-        country: _selectedCountry == 'Global'
-            ? null
-            : _detectedCountryCode,
-        limit: 10,
-      );
+      final countryInfo = await _locationService.getCountryInfo();
 
       if (!mounted) return;
 
-      final data = response.data;
-
-      if (!response.success || data == null) {
+      if (countryInfo != null) {
         setState(() {
-          _errorMessage = response.message;
-          _isLoading = false;
+          _detectedCountryCode = countryInfo.code;
+          _detectedCountryName = countryInfo.name;
         });
-        return;
       }
 
-      setState(() {
-        _leaderboard = data;
-        _isLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
+      await _loadLeaderboard();
+    } catch (error) {
+      debugPrint('Konum bilgisi yükleme hatası: $error');
 
-      setState(() {
-        _errorMessage = e.toString();
-        _isLoading = false;
-      });
+      if (mounted) {
+        await _loadLeaderboard();
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
+      }
     }
   }
 
-  Future<void> refreshLeaderboard() async {
-    debugPrint('LEADERBOARD PAGE: refreshLeaderboard() çağrıldı.');
-    if (!mounted || _isLoading) return;
-    await _loadLeaderboard();
+  // Seçili ülkenin leaderboard verisini Provider üzerinden yükler.
+  //
+  // forceRefresh false:
+  // Bellekte veri varsa mevcut veriyi kullanır.
+  //
+  // forceRefresh true:
+  // API üzerinden yeniden veri ister.
+  Future<void> _loadLeaderboard({
+    bool forceRefresh = false,
+  }) async {
+    if (!mounted) return;
+
+    final country = _selectedCountry == 'Global'
+        ? null
+        : _detectedCountryCode;
+
+    await context.read<LeaderboardProvider>().loadLeaderboard(
+      country: country,
+      forceRefresh: forceRefresh,
+    );
   }
 
-  LeaderboardPeriod? get _selectedLeaderboard {
-    final leaderboard = _leaderboard;
+  // MainNavigationPage ve SignalR tarafından çağrılır.
+  // Mevcut leaderboard verisini zorla yeniler.
+  Future<void> refreshLeaderboard() async {
+    debugPrint(
+      'LEADERBOARD PAGE: refreshLeaderboard() çağrıldı.',
+    );
 
+    if (!mounted) return;
+
+    final country = _selectedCountry == 'Global'
+        ? null
+        : _detectedCountryCode;
+
+    await context.read<LeaderboardProvider>().refreshLeaderboard(
+      country: country,
+    );
+  }
+
+  // API yanıtından seçili dönemin verisini alır.
+  LeaderboardPeriod? _getSelectedLeaderboard(
+      LeaderboardResponse? leaderboard,
+      ) {
     if (leaderboard == null) return null;
 
     switch (_selectedPeriod) {
       case 'daily':
         return leaderboard.daily;
+
       case 'weekly':
         return leaderboard.weekly;
+
       case 'monthly':
         return leaderboard.monthly;
+
       case 'allTime':
         return leaderboard.allTime;
+
       default:
         return leaderboard.daily;
     }
   }
 
+  // Kullanıcıya gösterilecek ClientId metnini düzenler.
   String _displayClientId(String clientId) {
     if (clientId.trim().isEmpty) return 'Oyuncu';
     return clientId;
@@ -129,7 +140,29 @@ class LeaderboardPageState extends State<LeaderboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedLeaderboard = _selectedLeaderboard;
+    // Provider değişikliklerini dinler.
+    final leaderboardProvider =
+    context.watch<LeaderboardProvider>();
+
+    // Seçili ülkeye ait verinin anahtarı.
+    final selectedCountryCode = _selectedCountry == 'Global'
+        ? null
+        : _detectedCountryCode;
+
+    // Provider'dan seçili ülkenin verisini alır.
+    final leaderboard =
+    leaderboardProvider.leaderboardFor(selectedCountryCode);
+
+    // Seçili dönemin verisini belirler.
+    final selectedLeaderboard =
+    _getSelectedLeaderboard(leaderboard);
+
+    // Yüklenme ve hata durumlarını Provider'dan alır.
+    final isLoading = _isInitializing ||
+        leaderboardProvider.isLoadingFor(selectedCountryCode);
+
+    final errorMessage =
+    leaderboardProvider.errorFor(selectedCountryCode);
 
     return Scaffold(
       backgroundColor: const Color(0xFF101B16),
@@ -145,18 +178,20 @@ class LeaderboardPageState extends State<LeaderboardPage> {
         elevation: 0,
       ),
       body: SafeArea(
-        child: _isLoading
+        child: isLoading
             ? const Center(
           child: CircularProgressIndicator(
             color: Color(0xFFB7D7A8),
           ),
         )
-            : _errorMessage != null
-            ? _buildError()
+            : errorMessage != null
+            ? _buildError(errorMessage)
             : selectedLeaderboard == null
             ? _buildEmpty()
             : RefreshIndicator(
-          onRefresh: _loadLeaderboard,
+          onRefresh: () => _loadLeaderboard(
+            forceRefresh: true,
+          ),
           color: const Color(0xFFB7D7A8),
           child: ListView(
             padding: const EdgeInsets.all(16),
@@ -171,7 +206,9 @@ class LeaderboardPageState extends State<LeaderboardPage> {
               const SizedBox(height: 24),
               _buildRankingList(selectedLeaderboard),
               const SizedBox(height: 16),
-              _buildCurrentUserCard(selectedLeaderboard),
+              _buildCurrentUserCard(
+                selectedLeaderboard,
+              ),
             ],
           ),
         ),
@@ -247,6 +284,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
             _selectedCountry = value;
           });
 
+          // Provider daha önce yüklenmiş veriyi varsa kullanır.
           _loadLeaderboard();
         },
         child: Container(
@@ -348,17 +386,29 @@ class LeaderboardPageState extends State<LeaderboardPage> {
         Expanded(
           child: second == null
               ? const SizedBox.shrink()
-              : _buildPodiumItem(second, 2),
+              : _buildPodiumItem(
+            second,
+            2,
+            leaderboard.currentUser,
+          ),
         ),
         Expanded(
           child: first == null
               ? const SizedBox.shrink()
-              : _buildPodiumItem(first, 1),
+              : _buildPodiumItem(
+            first,
+            1,
+            leaderboard.currentUser,
+          ),
         ),
         Expanded(
           child: third == null
               ? const SizedBox.shrink()
-              : _buildPodiumItem(third, 3),
+              : _buildPodiumItem(
+            third,
+            3,
+            leaderboard.currentUser,
+          ),
         ),
       ],
     );
@@ -367,10 +417,10 @@ class LeaderboardPageState extends State<LeaderboardPage> {
   Widget _buildPodiumItem(
       LeaderboardEntry entry,
       int position,
+      LeaderboardEntry? currentUser,
       ) {
     final isFirst = position == 1;
 
-    final currentUser = _selectedLeaderboard?.currentUser;
     final isCurrentUser =
         currentUser?.clientId == entry.clientId;
 
@@ -510,13 +560,20 @@ class LeaderboardPageState extends State<LeaderboardPage> {
           ),
         ),
         const SizedBox(height: 12),
-        ...entries.map(_buildRankingTile),
+        ...entries.map(
+              (entry) => _buildRankingTile(
+            entry,
+            leaderboard.currentUser,
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildRankingTile(LeaderboardEntry entry) {
-    final currentUser = _selectedLeaderboard?.currentUser;
+  Widget _buildRankingTile(
+      LeaderboardEntry entry,
+      LeaderboardEntry? currentUser,
+      ) {
     final isCurrentUser =
         currentUser?.clientId == entry.clientId;
 
@@ -744,7 +801,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     );
   }
 
-  Widget _buildError() {
+  Widget _buildError(String errorMessage) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -767,7 +824,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              _errorMessage ?? '',
+              errorMessage,
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white54,
@@ -776,7 +833,9 @@ class LeaderboardPageState extends State<LeaderboardPage> {
             ),
             const SizedBox(height: 16),
             ElevatedButton(
-              onPressed: _loadLeaderboard,
+              onPressed: () => _loadLeaderboard(
+                forceRefresh: true,
+              ),
               child: const Text('Tekrar Dene'),
             ),
           ],
