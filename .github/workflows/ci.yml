@@ -7,6 +7,22 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dailychess_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d dailychess_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DCP_TEST_POSTGRES: Host=localhost;Port=5432;Database=dailychess_test;Username=postgres;Password=postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -26,4 +42,6 @@ jobs:
       - run: flutter pub get
         working-directory: frontend
       - run: flutter analyze
+        working-directory: frontend
+      - run: flutter test test/core/models test/features test/widget_test.dart
         working-directory: frontend

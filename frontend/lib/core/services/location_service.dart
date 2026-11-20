@@ -18,7 +18,9 @@ class LocationService {
   final CountryCodeStorage _countryCodeStorage =
   CountryCodeStorage();
 
-  final Geocoding _geocoding = Geocoding();
+  // Defer plugin construction until location lookup is requested. The service
+  // should remain safe to create before platform plugins are available.
+  late final Geocoding _geocoding = Geocoding();
 
   /// Ülkenin ISO kodunu döndürür.
   /// Örnek: TR, DE, US

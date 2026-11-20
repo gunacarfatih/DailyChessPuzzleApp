@@ -5,14 +5,17 @@ import '../features/leaderboard/models/leaderboard_response.dart';
 import '../features/leaderboard/services/leaderboard_api_service.dart';
 
 class LeaderboardProvider extends ChangeNotifier {
-  final LeaderboardApiService _apiService = LeaderboardApiService();
+  LeaderboardProvider({LeaderboardApiService? apiService})
+      : _apiService = apiService ?? LeaderboardApiService();
+
+  final LeaderboardApiService _apiService;
 
   // Her ülkenin leaderboard verisini ayrı saklar.
   // Boş String global sıralamayı temsil eder.
-  final Map<String, LeaderboardResponse> _leaderboards = {};
+  final Map<String, Map<String, LeaderboardResponse>> _leaderboards = {};
 
   // Her ülkenin yüklenme durumunu ayrı saklar.
-  final Set<String> _loadingCountries = {};
+  final Set<String> _loadingKeys = {};
 
   // Her ülkenin hata mesajını ayrı saklar.
   final Map<String, String> _errors = {};
@@ -32,21 +35,21 @@ class LeaderboardProvider extends ChangeNotifier {
   }
 
   // İstenen ülkenin leaderboard verisini döndürür.
-  LeaderboardResponse? leaderboardFor(String? country) {
-    final key = _getCountryKey(country);
-    return _leaderboards[key];
+  String _getRequestKey(String? country, String period) =>
+      '${_getCountryKey(country)}|$period';
+
+  LeaderboardResponse? leaderboardFor(String? country, {String period = 'all'}) {
+    return _leaderboards[_getCountryKey(country)]?[period];
   }
 
   // İstenen ülkenin yüklenme durumunu döndürür.
-  bool isLoadingFor(String? country) {
-    final key = _getCountryKey(country);
-    return _loadingCountries.contains(key);
+  bool isLoadingFor(String? country, {String period = 'all'}) {
+    return _loadingKeys.contains(_getRequestKey(country, period));
   }
 
   // İstenen ülkenin hata mesajını döndürür.
-  String? errorFor(String? country) {
-    final key = _getCountryKey(country);
-    return _errors[key];
+  String? errorFor(String? country, {String period = 'all'}) {
+    return _errors[_getRequestKey(country, period)];
   }
 
   // Hesap değiştiğinde bütün leaderboard verilerini temizler.
@@ -56,7 +59,7 @@ class LeaderboardProvider extends ChangeNotifier {
 
     // Eski hesaba ait verileri ve istek kayıtlarını temizle.
     _leaderboards.clear();
-    _loadingCountries.clear();
+    _loadingKeys.clear();
     _errors.clear();
     _inFlightRequests.clear();
 
@@ -69,9 +72,11 @@ class LeaderboardProvider extends ChangeNotifier {
   // forceRefresh true ise API'den yeniden veri istenir.
   Future<void> loadLeaderboard({
     String? country,
+    String period = 'all',
     bool forceRefresh = false,
   }) {
-    final key = _getCountryKey(country);
+    final countryKey = _getCountryKey(country);
+    final key = _getRequestKey(country, period);
 
     // Aynı ülke için devam eden istek varsa mevcut isteği kullan.
     final existingRequest = _inFlightRequests[key];
@@ -81,7 +86,7 @@ class LeaderboardProvider extends ChangeNotifier {
     }
 
     // Bellekte veri varsa gereksiz API isteği yapma.
-    if (!forceRefresh && _leaderboards.containsKey(key)) {
+    if (!forceRefresh && _leaderboards[countryKey]?.containsKey(period) == true) {
       return Future<void>.value();
     }
 
@@ -90,7 +95,9 @@ class LeaderboardProvider extends ChangeNotifier {
 
     final request = _loadLeaderboard(
       key: key,
+      countryKey: countryKey,
       country: country,
+      period: period,
       generation: generation,
     );
 
@@ -102,10 +109,12 @@ class LeaderboardProvider extends ChangeNotifier {
   // API isteğini gerçekleştirir.
   Future<void> _loadLeaderboard({
     required String key,
+    required String countryKey,
     required int generation,
+    required String period,
     String? country,
   }) async {
-    _loadingCountries.add(key);
+    _loadingKeys.add(key);
     _errors.remove(key);
 
     notifyListeners();
@@ -116,6 +125,7 @@ class LeaderboardProvider extends ChangeNotifier {
       final result = await _apiService.getLeaderboard(
         country: country,
         limit: _leaderboardLimit,
+        period: period,
       );
 
       // Hesap değişmişse eski isteğin sonucunu kullanma.
@@ -124,7 +134,17 @@ class LeaderboardProvider extends ChangeNotifier {
       }
 
       if (result.success && result.data != null) {
-        _leaderboards[key] = result.data!;
+        final countryLeaderboards = _leaderboards.putIfAbsent(
+          countryKey,
+          () => <String, LeaderboardResponse>{},
+        );
+        if (period == 'all') {
+          for (final value in const ['daily', 'weekly', 'monthly', 'alltime']) {
+            countryLeaderboards[value] = result.data!;
+          }
+        } else {
+          countryLeaderboards[period] = result.data!;
+        }
       } else {
         _errors[key] = result.message?.isNotEmpty == true
             ? result.message!
@@ -136,13 +156,15 @@ class LeaderboardProvider extends ChangeNotifier {
         _errors[key] =
         'Liderlik tablosu yüklenirken bir hata oluştu.';
 
-        debugPrint('Leaderboard yükleme hatası: $error');
+        if (kDebugMode) {
+          debugPrint('Leaderboard yükleme hatası: $error');
+        }
       }
     } finally {
       // Yalnızca hâlâ geçerli olan istek kendi durumunu temizleyebilir.
       // Böylece eski istek yeni isteğin loading durumunu silemez.
       if (generation == _requestGeneration) {
-        _loadingCountries.remove(key);
+        _loadingKeys.remove(key);
         _inFlightRequests.remove(key);
 
         notifyListeners();
@@ -153,9 +175,11 @@ class LeaderboardProvider extends ChangeNotifier {
   // Mevcut veriyi zorla yeniler.
   Future<void> refreshLeaderboard({
     String? country,
+    String period = 'all',
   }) {
     return loadLeaderboard(
       country: country,
+      period: period,
       forceRefresh: true,
     );
   }

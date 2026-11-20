@@ -756,16 +756,10 @@ namespace DailyChessPuzzleApi.Services
                     0,
                     BonusDurationSeconds);
 
-                long timePenalty = (long)seconds * 2;
-                long wrongMovePenalty = (long)assignment.WrongMoves * 150;
-                long hintPenalty = assignment.UsedHint ? 250 : 0;
-
-                int score = (int)Math.Max(
-                    0L,
-                    1000L -
-                    timePenalty -
-                    wrongMovePenalty -
-                    hintPenalty);
+                int score = DailyPuzzleScoreCalculator.Calculate(
+                    seconds,
+                    assignment.WrongMoves,
+                    assignment.UsedHint);
 
                 var user = await _context.Users
                     .Where(x => x.Id == userId)
@@ -991,17 +985,10 @@ namespace DailyChessPuzzleApi.Services
             PuzzleGameSession session)
         {
             var seconds = CalculateDailySessionSeconds(session);
-
-            long timePenalty = (long)seconds * 2;
-            long wrongMovePenalty = (long)session.WrongMoves * 150;
-            long hintPenalty = session.UsedHint ? 250 : 0;
-
-            return (int)Math.Max(
-                0L,
-                1000L -
-                timePenalty -
-                wrongMovePenalty -
-                hintPenalty);
+            return DailyPuzzleScoreCalculator.Calculate(
+                seconds,
+                session.WrongMoves,
+                session.UsedHint);
         }
 
         // ---------------------------------------------------------

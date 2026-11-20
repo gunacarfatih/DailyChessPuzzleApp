@@ -15,6 +15,7 @@ namespace DailyChessPuzzleApi.Services.Interfaces
             int limit,
             DateOnly? startDate,
             DateOnly? endDate,
+            string? period = null,
             CancellationToken cancellationToken = default
         );
     }

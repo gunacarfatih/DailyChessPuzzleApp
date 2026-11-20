@@ -50,6 +50,7 @@ namespace DailyChessPuzzleApi.Services
             int limit,
             DateOnly? startDate,
             DateOnly? endDate,
+            string? period,
             CancellationToken cancellationToken = default)
         {
             if (limit <= 0)
@@ -65,6 +66,15 @@ namespace DailyChessPuzzleApi.Services
             }
 
             country = ValidateCountry(country);
+            string? requestedPeriod = string.IsNullOrWhiteSpace(period)
+                ? null
+                : period.Trim().ToLowerInvariant();
+
+            if (requestedPeriod is not null &&
+                requestedPeriod is not ("all" or "daily" or "weekly" or "monthly" or "alltime"))
+            {
+                throw new AppException(400, "INVALID_LEADERBOARD_PERIOD");
+            }
 
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
@@ -94,15 +104,19 @@ namespace DailyChessPuzzleApi.Services
                 }
             }
 
-            var daily = await GetFixedPeriodAsync(
-                "daily",
-                today.ToString("yyyy-MM-dd"),
-                today,
-                today,
-                country,
-                userId,
-                limit,
-                cancellationToken);
+            LeaderboardPeriodDto? daily = null;
+            if (requestedPeriod is null or "all" or "daily")
+            {
+                daily = await GetFixedPeriodAsync(
+                    "daily",
+                    today.ToString("yyyy-MM-dd"),
+                    today,
+                    today,
+                    country,
+                    userId,
+                    limit,
+                    cancellationToken);
+            }
 
             // Haftalık leaderboard: Pazartesi başlangıçlı ISO hafta.
             int daysSinceMonday =
@@ -118,40 +132,52 @@ namespace DailyChessPuzzleApi.Services
 
             string weeklyPeriodKey = $"{isoYear}-W{isoWeek:D2}";
 
-            var weekly = await GetFixedPeriodAsync(
-                "weekly",
-                weeklyPeriodKey,
-                weeklyStartDate,
-                today,
-                country,
-                userId,
-                limit,
-                cancellationToken);
+            LeaderboardPeriodDto? weekly = null;
+            if (requestedPeriod is null or "all" or "weekly")
+            {
+                weekly = await GetFixedPeriodAsync(
+                    "weekly",
+                    weeklyPeriodKey,
+                    weeklyStartDate,
+                    today,
+                    country,
+                    userId,
+                    limit,
+                    cancellationToken);
+            }
 
             var monthlyStartDate = new DateOnly(
                 today.Year,
                 today.Month,
                 1);
 
-            var monthly = await GetFixedPeriodAsync(
-                "monthly",
-                today.ToString("yyyy-MM"),
-                monthlyStartDate,
-                today,
-                country,
-                userId,
-                limit,
-                cancellationToken);
+            LeaderboardPeriodDto? monthly = null;
+            if (requestedPeriod is null or "all" or "monthly")
+            {
+                monthly = await GetFixedPeriodAsync(
+                    "monthly",
+                    today.ToString("yyyy-MM"),
+                    monthlyStartDate,
+                    today,
+                    country,
+                    userId,
+                    limit,
+                    cancellationToken);
+            }
 
-            var allTime = await GetFixedPeriodAsync(
-                "alltime",
-                "all",
-                null,
-                today,
-                country,
-                userId,
-                limit,
-                cancellationToken);
+            LeaderboardPeriodDto? allTime = null;
+            if (requestedPeriod is null or "all" or "alltime")
+            {
+                allTime = await GetFixedPeriodAsync(
+                    "alltime",
+                    "all",
+                    null,
+                    today,
+                    country,
+                    userId,
+                    limit,
+                    cancellationToken);
+            }
 
             LeaderboardPeriodDto? customRange = null;
 
@@ -167,17 +193,18 @@ namespace DailyChessPuzzleApi.Services
             }
 
             _logger.LogInformation(
-                "All leaderboards retrieved successfully. Country: {Country}, UserId: {UserId}, Limit: {Limit}",
+                "Leaderboard data retrieved. Period: {Period}, Country: {Country}, UserId: {UserId}, Limit: {Limit}",
+                requestedPeriod ?? "all",
                 country ?? "Global",
                 userId,
                 limit);
 
             return new LeaderboardResponse
             {
-                Daily = daily,
-                Weekly = weekly,
-                Monthly = monthly,
-                AllTime = allTime,
+                Daily = daily ?? new LeaderboardPeriodDto(),
+                Weekly = weekly ?? new LeaderboardPeriodDto(),
+                Monthly = monthly ?? new LeaderboardPeriodDto(),
+                AllTime = allTime ?? new LeaderboardPeriodDto(),
                 CustomRange = customRange
             };
         }

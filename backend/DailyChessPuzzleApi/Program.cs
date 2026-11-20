@@ -27,6 +27,10 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// UseSerilog is the sole logging provider. Keeping the default console
+// provider here can print every application log twice in development.
+builder.Logging.ClearProviders();
+
 // --------------------------------------------------
 // LEADERBOARD AYARLARI
 // --------------------------------------------------

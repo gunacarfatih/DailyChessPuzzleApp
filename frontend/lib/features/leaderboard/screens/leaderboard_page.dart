@@ -1,4 +1,5 @@
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -54,7 +55,9 @@ class LeaderboardPageState extends State<LeaderboardPage> {
 
       await _loadLeaderboard();
     } catch (error) {
-      debugPrint('Konum bilgisi yükleme hatası: $error');
+      if (kDebugMode) {
+        debugPrint('Konum bilgisi yükleme hatası: $error');
+      }
 
       if (mounted) {
         await _loadLeaderboard();
@@ -86,6 +89,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
 
     await context.read<LeaderboardProvider>().loadLeaderboard(
       country: country,
+      period: _selectedPeriod.toLowerCase(),
       forceRefresh: forceRefresh,
     );
   }
@@ -93,9 +97,11 @@ class LeaderboardPageState extends State<LeaderboardPage> {
   // MainNavigationPage ve SignalR tarafından çağrılır.
   // Mevcut leaderboard verisini zorla yeniler.
   Future<void> refreshLeaderboard() async {
-    debugPrint(
-      'LEADERBOARD PAGE: refreshLeaderboard() çağrıldı.',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        'LEADERBOARD PAGE: refreshLeaderboard() çağrıldı.',
+      );
+    }
 
     if (!mounted) return;
 
@@ -105,6 +111,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
 
     await context.read<LeaderboardProvider>().refreshLeaderboard(
       country: country,
+      period: 'all',
     );
   }
 
@@ -150,8 +157,10 @@ class LeaderboardPageState extends State<LeaderboardPage> {
         : _detectedCountryCode;
 
     // Provider'dan seçili ülkenin verisini alır.
-    final leaderboard =
-    leaderboardProvider.leaderboardFor(selectedCountryCode);
+    final leaderboard = leaderboardProvider.leaderboardFor(
+      selectedCountryCode,
+      period: _selectedPeriod.toLowerCase(),
+    );
 
     // Seçili dönemin verisini belirler.
     final selectedLeaderboard =
@@ -159,10 +168,15 @@ class LeaderboardPageState extends State<LeaderboardPage> {
 
     // Yüklenme ve hata durumlarını Provider'dan alır.
     final isLoading = _isInitializing ||
-        leaderboardProvider.isLoadingFor(selectedCountryCode);
+        leaderboardProvider.isLoadingFor(
+          selectedCountryCode,
+          period: _selectedPeriod.toLowerCase(),
+        );
 
-    final errorMessage =
-    leaderboardProvider.errorFor(selectedCountryCode);
+    final errorMessage = leaderboardProvider.errorFor(
+      selectedCountryCode,
+      period: _selectedPeriod.toLowerCase(),
+    );
 
     return Scaffold(
       backgroundColor: const Color(0xFF101B16),
@@ -367,6 +381,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
                 setState(() {
                   _selectedPeriod = value;
                 });
+                _loadLeaderboard();
               },
               child: Container(
                 padding: const EdgeInsets.symmetric(

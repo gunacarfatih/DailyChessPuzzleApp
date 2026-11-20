@@ -7,9 +7,12 @@ import '../../../core/network/api_client.dart';
 import '../models/puzzle.dart';
 import '../models/bonus_puzzle.dart';
 import '../models/puzzle_session.dart';
+import '../models/puzzle_action_result.dart';
 
 class PuzzleApiService {
-  final Dio _dio = ApiClient.dio;
+  PuzzleApiService({Dio? dio}) : _dio = dio ?? ApiClient.dio;
+
+  final Dio _dio;
 
   // ---------------------------------------------------------
   // GÜNLÜK BULMACA
@@ -58,7 +61,7 @@ class PuzzleApiService {
   // ---------------------------------------------------------
 
   // Belirli bir günlük oturuma hamle gönder.
-  Future<ApiResponse<Map<String, dynamic>>> submitPuzzleMove({
+  Future<ApiResponse<PuzzleActionResult>> submitPuzzleMove({
     required int sessionId,
     required String uci,
     required String clientId,
@@ -72,11 +75,11 @@ class PuzzleApiService {
       },
     );
 
-    return _parseMapResponse(response);
+    return _parseActionResponse(response);
   }
 
   // Belirli bir günlük oturumda ipucu kullan.
-  Future<ApiResponse<Map<String, dynamic>>> usePuzzleHint({
+  Future<ApiResponse<PuzzleActionResult>> usePuzzleHint({
     required int sessionId,
     required String clientId,
   }) async {
@@ -88,7 +91,7 @@ class PuzzleApiService {
       },
     );
 
-    return _parseMapResponse(response);
+    return _parseActionResponse(response);
   }
 
   // ---------------------------------------------------------
@@ -124,7 +127,7 @@ class PuzzleApiService {
   }
 
   // Bonus bulmacaya hamle gönder.
-  Future<ApiResponse<Map<String, dynamic>>> submitBonusMove({
+  Future<ApiResponse<PuzzleActionResult>> submitBonusMove({
     required String uci,
   }) async {
     final response = await _dio.post(
@@ -134,37 +137,39 @@ class PuzzleApiService {
       },
     );
 
-    return _parseMapResponse(response);
+    return _parseActionResponse(response);
   }
 
   // Bonus bulmacada ipucu kullan.
-  Future<ApiResponse<Map<String, dynamic>>> useBonusHint() async {
+  Future<ApiResponse<PuzzleActionResult>> useBonusHint() async {
     final response = await _dio.post(
       ApiConstants.useBonusHintEndpoint,
     );
 
-    return _parseMapResponse(response);
+    return _parseActionResponse(response);
   }
 
   // Bonus bulmaca sonucunu kaydet.
-  Future<ApiResponse<Map<String, dynamic>>> submitBonusPuzzle() async {
+  Future<ApiResponse<PuzzleActionResult>> submitBonusPuzzle() async {
     final response = await _dio.post(
       ApiConstants.submitBonusPuzzleEndpoint,
     );
 
-    return _parseMapResponse(response);
+    return _parseActionResponse(response);
   }
 
   // ---------------------------------------------------------
   // ORTAK RESPONSE PARSER
   // ---------------------------------------------------------
 
-  ApiResponse<Map<String, dynamic>> _parseMapResponse(
+  ApiResponse<PuzzleActionResult> _parseActionResponse(
       Response response,
       ) {
-    return ApiResponse<Map<String, dynamic>>.fromJson(
+    return ApiResponse<PuzzleActionResult>.fromJson(
       Map<String, dynamic>.from(response.data as Map),
-      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+      fromJsonT: (json) => PuzzleActionResult.fromJson(
+        Map<String, dynamic>.from(json as Map),
+      ),
     );
   }
 }

@@ -14,10 +14,18 @@ import '../../../providers/leaderboard_provider.dart';
 import '../../../core/storage/client_id_storage.dart';
 import '../models/puzzle.dart';
 import '../models/bonus_puzzle.dart';
+import '../models/puzzle_action_result.dart';
 import '../services/puzzle_api_service.dart';
 
 class PuzzlePage extends StatefulWidget {
-  const PuzzlePage({super.key});
+  const PuzzlePage({
+    super.key,
+    this.puzzleApiService,
+    this.clientIdStorage,
+  });
+
+  final PuzzleApiService? puzzleApiService;
+  final ClientIdStorage? clientIdStorage;
 
   @override
   State<PuzzlePage> createState() => PuzzlePageState();
@@ -30,8 +38,10 @@ class PuzzlePageState extends State<PuzzlePage> {
   static const Color _secondary = Color(0xFFD6B46A);
   static const int _bonusDurationSeconds = 300;
 
-  final PuzzleApiService _puzzleApiService = PuzzleApiService();
-  final ClientIdStorage _clientIdStorage = ClientIdStorage();
+  late final PuzzleApiService _puzzleApiService =
+      widget.puzzleApiService ?? PuzzleApiService();
+  late final ClientIdStorage _clientIdStorage =
+      widget.clientIdStorage ?? ClientIdStorage();
 
   // Hesap veya bulmaca oturumu değiştiğinde artırılır.
   // Önceki oturumlardan dönen asenkron cevaplar böylece geçersiz olur.
@@ -65,6 +75,8 @@ class PuzzlePageState extends State<PuzzlePage> {
   Move? _lastMove;
 
   Timer? _timer;
+  final Stopwatch _dailyElapsedClock = Stopwatch();
+  int _dailyElapsedAtSync = 0;
 
   int _nextMoveIndex = 0;
   int _elapsedSeconds = 0;
@@ -77,7 +89,6 @@ class PuzzlePageState extends State<PuzzlePage> {
   // İlk başarılı günlük çözümün liderlik tablosuna kaydedilen puanı.
   int? _acceptedScore;
 
-  DateTime? _dailyStartedAtUtc;
 
   // Bonus bulmaca
   BonusPuzzle? _bonusPuzzle;
@@ -204,56 +215,6 @@ class PuzzlePageState extends State<PuzzlePage> {
   // ------------------------------------------------------------
   // ORTAK YARDIMCI METOTLAR
   // ------------------------------------------------------------
-
-  dynamic _value(
-      Map<String, dynamic> data,
-      String key,
-      ) {
-    if (data.containsKey(key)) return data[key];
-
-    final pascalKey =
-        '${key[0].toUpperCase()}${key.substring(1)}';
-
-    return data[pascalKey];
-  }
-
-  int? _readInt(
-      Map<String, dynamic> data,
-      String key,
-      ) {
-    final value = _value(data, key);
-
-    if (value is num) return value.toInt();
-    if (value == null) return null;
-
-    return int.tryParse(value.toString());
-  }
-
-  bool _readBool(
-      Map<String, dynamic> data,
-      String key,
-      ) {
-    return _value(data, key) == true;
-  }
-
-  int? _readScore(dynamic data) {
-    if (data is! Map) return null;
-
-    final map = Map<String, dynamic>.from(data);
-
-    return _readInt(map, 'score') ??
-        _readInt(map, 'totalScore');
-  }
-
-  List<String> _readPlayedMoves(
-      Map<String, dynamic> data,
-      ) {
-    final raw = _value(data, 'playedMoves');
-
-    if (raw is! List) return <String>[];
-
-    return raw.map((move) => move.toString()).toList();
-  }
 
   Position _buildPositionFromPlayedMoves(
       String fen,
@@ -400,13 +361,16 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       _nextMoveIndex = 0;
       _elapsedSeconds = 0;
+      _dailyElapsedAtSync = 0;
+      _dailyElapsedClock
+        ..stop()
+        ..reset();
       _wrongMoves = 0;
 
       _sessionId = null;
       _sessionScore = null;
       _acceptedScore = null;
 
-      _dailyStartedAtUtc = null;
     });
 
     try {
@@ -506,12 +470,15 @@ class PuzzlePageState extends State<PuzzlePage> {
       _sessionScore = null;
 
       _elapsedSeconds = 0;
+      _dailyElapsedAtSync = 0;
+      _dailyElapsedClock
+        ..stop()
+        ..reset();
       _wrongMoves = 0;
       _usedHint = false;
       _hintSquare = null;
       _lastMove = null;
       _nextMoveIndex = 0;
-      _dailyStartedAtUtc = null;
 
       _submissionError = null;
       _feedback = 'Bulmaca oturumu başlatılıyor...';
@@ -576,15 +543,16 @@ class PuzzlePageState extends State<PuzzlePage> {
           ? playedMoves.length
           : data.currentMoveIndex;
 
-      _dailyStartedAtUtc = startedAtUtc;
-
-      _elapsedSeconds = startedAtUtc == null
+      final responseTimeUtc =
+          response.timestamp?.toUtc() ?? DateTime.now().toUtc();
+      _dailyElapsedAtSync = startedAtUtc == null
           ? 0
-          : DateTime.now()
-          .toUtc()
-          .difference(startedAtUtc)
-          .inSeconds
-          .clamp(0, 86400);
+          : responseTimeUtc
+              .difference(startedAtUtc)
+              .inSeconds
+              .clamp(0, 86400)
+              .toInt();
+      _elapsedSeconds = _dailyElapsedAtSync;
 
       _wrongMoves = data.wrongMoves;
       _usedHint = data.usedHint;
@@ -626,6 +594,9 @@ class PuzzlePageState extends State<PuzzlePage> {
         _feedback = 'Sıra sende! Doğru hamleyi bul.';
       });
 
+      _dailyElapsedClock
+        ..reset()
+        ..start();
       _startTimer();
     } catch (error, stackTrace) {
       _debugLog('Günlük oturum başlatma hatası: $error');
@@ -656,18 +627,11 @@ class PuzzlePageState extends State<PuzzlePage> {
           return;
         }
 
-        final startedAt = _dailyStartedAtUtc;
-
         setState(() {
-          if (startedAt != null) {
-            _elapsedSeconds = DateTime.now()
-                .toUtc()
-                .difference(startedAt)
-                .inSeconds
-                .clamp(0, 86400);
-          } else {
-            _elapsedSeconds++;
-          }
+          _elapsedSeconds = (_dailyElapsedAtSync +
+                  _dailyElapsedClock.elapsed.inSeconds)
+              .clamp(0, 86400)
+              .toInt();
         });
       },
     );
@@ -676,6 +640,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   void _stopTimer() {
     _timer?.cancel();
     _timer = null;
+    _dailyElapsedClock.stop();
   }
 
   GameData _buildGame(Position position) {
@@ -777,19 +742,11 @@ class PuzzlePageState extends State<PuzzlePage> {
         throw Exception('Sunucudan hamle bilgisi alınamadı.');
       }
 
-      final playedMoves = _readPlayedMoves(data);
-      final serverMoveIndex =
-          _readInt(data, 'currentMoveIndex') ??
-              playedMoves.length;
-
-      final serverWrongMoves =
-          _readInt(data, 'wrongMoves') ?? _wrongMoves;
-
-      final serverUsedHint = _readBool(data, 'usedHint');
-
-      final serverCompleted =
-          _readBool(data, 'isCompleted') ||
-              _readBool(data, 'isSolved');
+      final playedMoves = data.playedMoves;
+      final serverMoveIndex = data.currentMoveIndex ?? playedMoves.length;
+      final serverWrongMoves = data.wrongMoves ?? _wrongMoves;
+      final serverUsedHint = data.usedHint;
+      final serverCompleted = data.isCompleted || data.isSolved;
 
       final oldMoveCount = _nextMoveIndex;
 
@@ -856,8 +813,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           ? serverMoveIndex
           : playedMoves.length;
 
-      final serverHint = _value(data, 'hintSquare');
-      _hintSquare = serverHint?.toString();
+      _hintSquare = data.hintSquare;
 
       _controller?.updatePosition(
         _buildGame(newPosition),
@@ -937,17 +893,17 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       final data = response.data!;
-      final hintSquare = _value(data, 'hintSquare');
+      final hintSquare = data.hintSquare;
 
       if (hintSquare == null ||
-          hintSquare.toString().isEmpty) {
+          hintSquare.isEmpty) {
         throw Exception('Sunucu ipucu karesini döndürmedi.');
       }
 
       setState(() {
         _isSubmitting = false;
         _usedHint = true;
-        _hintSquare = hintSquare.toString();
+        _hintSquare = hintSquare;
         _feedback =
         'İpucu: $_hintSquare karesindeki taşı hareket ettir.';
       });
@@ -965,7 +921,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _finishPuzzle(
-      Map<String, dynamic> data, {
+      PuzzleActionResult data, {
         required int generation,
       }) async
   {
@@ -988,7 +944,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _showCompletionAnimation = false;
     });
 
-    final score = _readScore(data);
+    final score = data.score;
 
     setState(() {
       _isSolved = true;
@@ -1492,20 +1448,11 @@ class PuzzlePageState extends State<PuzzlePage> {
         throw Exception('Sunucudan hamle bilgisi alınamadı.');
       }
 
-      final playedMoves = _readPlayedMoves(data);
-
-      final serverWrongMoves =
-          _readInt(data, 'wrongMoves') ?? _bonusWrongMoves;
-
-      final serverMoveIndex =
-          _readInt(data, 'currentMoveIndex') ??
-              playedMoves.length;
-
-      final serverCompleted =
-          _readBool(data, 'isCompleted') ||
-              _readBool(data, 'isSolved');
-
-      final serverExpired = _readBool(data, 'isExpired');
+      final playedMoves = data.playedMoves;
+      final serverWrongMoves = data.wrongMoves ?? _bonusWrongMoves;
+      final serverMoveIndex = data.currentMoveIndex ?? playedMoves.length;
+      final serverCompleted = data.isCompleted || data.isSolved;
+      final serverExpired = data.isExpired;
 
       final oldMoveCount = _bonusNextMoveIndex;
 
@@ -1635,16 +1582,16 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       final data = response.data!;
-      final hintSquare = _value(data, 'hintSquare');
+      final hintSquare = data.hintSquare;
 
       if (hintSquare == null ||
-          hintSquare.toString().isEmpty) {
+          hintSquare.isEmpty) {
         throw Exception('Sunucu ipucu karesini döndürmedi.');
       }
 
       setState(() {
         _isBonusLoading = false;
-        _bonusHintSquare = hintSquare.toString();
+        _bonusHintSquare = hintSquare;
         _bonusFeedback =
         'İpucu: $_bonusHintSquare karesindeki taşı hareket ettir.';
       });
@@ -1689,7 +1636,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         );
       }
 
-      final score = _readScore(response.data);
+      final score = response.data?.score;
 
       setState(() {
         _bonusScore = score;

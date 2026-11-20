@@ -31,6 +31,7 @@ namespace DailyChessPuzzleApi.Controllers
             [FromQuery] int limit = 0,
             [FromQuery] DateOnly? startDate = null,
             [FromQuery] DateOnly? endDate = null,
+            [FromQuery] string? period = null,
             CancellationToken cancellationToken = default)
         {
             int? userId = null;
@@ -69,6 +70,7 @@ namespace DailyChessPuzzleApi.Controllers
                 limit,
                 startDate,
                 endDate,
+                period,
                 cancellationToken
             );
 

@@ -1,6 +1,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -65,9 +66,11 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
     // SignalR bildirim callback'lerini tanımla.
     _signalRService.onLeaderboardUpdated = () {
-      debugPrint(
-        'SIGNALR CALLBACK: onLeaderboardUpdated çalıştı.',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          'SIGNALR CALLBACK: onLeaderboardUpdated çalıştı.',
+        );
+      }
 
       _refreshLeaderboard();
     };
@@ -160,17 +163,21 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
       await _signalRService.connect();
     } catch (error) {
-      debugPrint(
-        'SignalR bağlantı güncelleme hatası: $error',
-      );
+      if (kDebugMode) {
+        debugPrint(
+          'SignalR bağlantı güncelleme hatası: $error',
+        );
+      }
     }
   }
 
   // Liderlik tablosunu API üzerinden yeniler.
   void _refreshLeaderboard() {
-    debugPrint(
-      'NAVIGATION: Liderlik tablosu yenileniyor.',
-    );
+    if (kDebugMode) {
+      debugPrint(
+        'NAVIGATION: Liderlik tablosu yenileniyor.',
+      );
+    }
 
     if (!mounted) return;
 

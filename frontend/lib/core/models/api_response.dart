@@ -77,6 +77,7 @@ class ApiResponse<T> {
       'BONUS_TIME_EXPIRED' => 'Bonus bulmacanın süresi doldu.',
       'PUZZLE_NOT_FOUND' => 'Bugünün bulmacası henüz hazır değil.',
       'LEADERBOARD_RANGE_TOO_LARGE' => 'Tarih aralığı en fazla 92 gün olabilir.',
+      'INVALID_LEADERBOARD_PERIOD' => 'Geçersiz liderlik tablosu dönemi.',
       'AUTHENTICATION_REQUIRED' || 'UNAUTHORIZED' =>
       'Oturumunuz sona erdi. Lütfen yeniden giriş yapın.',
       'RATE_LIMIT_EXCEEDED' =>

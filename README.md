@@ -58,7 +58,28 @@ PostgreSQL connection string is
 `Host=localhost;Port=5432;Database=dailychess;Username=dailychess;Password=dailychess-local`.
 The API health endpoint is available at `/health`.
 
-GitHub Actions builds the backend and runs Flutter formatting and static
+## Tests
+
+Run backend unit tests with:
+
+```text
+dotnet test backend/DailyChessPuzzle.slnx
+```
+
+The puzzle session integration tests use an isolated PostgreSQL schema. Set
+`DCP_TEST_POSTGRES` to a disposable PostgreSQL database connection string to
+run them locally; without it, xUnit marks those integration tests as skipped.
+GitHub Actions starts a dedicated PostgreSQL service for these tests.
+
+Run Flutter model and provider tests with:
+
+```text
+cd frontend
+flutter test test/core/models test/features test/widget_test.dart
+flutter analyze
+```
+
+GitHub Actions runs the backend tests, Flutter tests, and Flutter static
 analysis on pushes and pull requests.
 
 If the API runs behind a reverse proxy, configure its trusted IP addresses under

@@ -9,10 +9,16 @@ import '../../../core/storage/client_id_storage.dart';
 import '../models/auth_response.dart';
 
 class AuthApiService {
-  final Dio _dio = ApiClient.dio;
+  AuthApiService({
+    Dio? dio,
+    ClientIdStorage? clientIdStorage,
+  })  : _dio = dio ?? ApiClient.dio,
+        _authStorage = AuthStorage.instance,
+        _clientIdStorage = clientIdStorage ?? ClientIdStorage();
 
-  final AuthStorage _authStorage = AuthStorage.instance;
-  final ClientIdStorage _clientIdStorage = ClientIdStorage();
+  final Dio _dio;
+  final AuthStorage _authStorage;
+  final ClientIdStorage _clientIdStorage;
 
   // Google Web OAuth Client ID.
   // Android Client ID değil, Web Client ID kullanılmalıdır.

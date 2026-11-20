@@ -1,4 +1,5 @@
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -136,7 +137,9 @@ class ProfilePageState extends State<ProfilePage> {
     } catch (error) {
       if (!mounted) return;
 
-      debugPrint('Profil yükleme hatası: $error');
+      if (kDebugMode) {
+        debugPrint('Profil yükleme hatası: $error');
+      }
 
       setState(() {
         _errorMessage =
@@ -383,7 +386,9 @@ class ProfilePageState extends State<ProfilePage> {
     } catch (error) {
       if (!mounted) return;
 
-      debugPrint('Çıkış hatası: $error');
+      if (kDebugMode) {
+        debugPrint('Çıkış hatası: $error');
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

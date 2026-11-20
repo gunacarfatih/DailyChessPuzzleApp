@@ -7,12 +7,14 @@ import '../features/auth/models/auth_response.dart';
 import '../features/auth/services/auth_api_service.dart';
 
 class AuthProvider extends ChangeNotifier {
-  AuthProvider() {
+  AuthProvider({AuthApiService? authApiService})
+      : _authApiService = authApiService ?? AuthApiService(),
+        _authStorage = AuthStorage.instance {
     AuthStorage.onSessionExpired = _handleSessionExpired;
   }
 
-  final AuthApiService _authApiService = AuthApiService();
-  final AuthStorage _authStorage = AuthStorage.instance;
+  final AuthApiService _authApiService;
+  final AuthStorage _authStorage;
 
   // Oturum durumu
   bool _isLoggedIn = false;
