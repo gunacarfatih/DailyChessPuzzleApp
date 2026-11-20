@@ -9,9 +9,10 @@ class AuthStorage {
   static Future<void> Function()? onSessionExpired;
 
   static const FlutterSecureStorage _storage =
-  FlutterSecureStorage();
+      FlutterSecureStorage();
 
   static const String _tokenKey = 'auth_access_token';
+  static const String _refreshTokenKey = 'auth_refresh_token';
   static const String _userIdKey = 'auth_user_id';
   static const String _usernameKey = 'auth_username';
   static const String _emailKey = 'auth_email';
@@ -26,6 +27,12 @@ class AuthStorage {
       key: _tokenKey,
       value: response.accessToken,
     );
+    if (response.refreshToken != null && response.refreshToken!.isNotEmpty) {
+      await _storage.write(
+        key: _refreshTokenKey,
+        value: response.refreshToken,
+      );
+    }
 
     await _storage.write(
       key: _userIdKey,
@@ -70,25 +77,16 @@ class AuthStorage {
 
   Future<String?> getAccessToken() async {
     final token = await _storage.read(key: _tokenKey);
+    return token == null || token.isEmpty ? null : token;
+  }
 
-    if (token == null || token.isEmpty) {
-      return null;
-    }
+  Future<String?> getRefreshToken() => _storage.read(key: _refreshTokenKey);
 
+  Future<bool> isAccessTokenExpired() async {
     final expiresAt = await _storage.read(key: _expiresAtKey);
-
-    if (expiresAt != null) {
-      final expiryDate = DateTime.tryParse(expiresAt);
-
-      if (expiryDate == null ||
-          !expiryDate.isAfter(DateTime.now().toUtc())) {
-        await clearSession();
-        await onSessionExpired?.call();
-        return null;
-      }
-    }
-
-    return token;
+    if (expiresAt == null) return false;
+    final expiryDate = DateTime.tryParse(expiresAt);
+    return expiryDate == null || !expiryDate.isAfter(DateTime.now().toUtc());
   }
 
   Future<bool> hasStoredAccessToken() async {
@@ -147,6 +145,7 @@ class AuthStorage {
 
   Future<void> clearSession() async {
     await _storage.delete(key: _tokenKey);
+    await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _userIdKey);
     await _storage.delete(key: _usernameKey);
     await _storage.delete(key: _emailKey);

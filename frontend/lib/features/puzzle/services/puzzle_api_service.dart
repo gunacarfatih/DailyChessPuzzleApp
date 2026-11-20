@@ -6,6 +6,7 @@ import '../../../core/models/api_response.dart';
 import '../../../core/network/api_client.dart';
 import '../models/puzzle.dart';
 import '../models/bonus_puzzle.dart';
+import '../models/puzzle_session.dart';
 
 class PuzzleApiService {
   final Dio _dio = ApiClient.dio;
@@ -34,7 +35,7 @@ class PuzzleApiService {
   }
 
   // Yeni bir günlük bulmaca oturumu başlat.
-  Future<ApiResponse<Map<String, dynamic>>> startPuzzleSession({
+  Future<ApiResponse<PuzzleSession>> startPuzzleSession({
     required String clientId,
   }) async {
     final response = await _dio.post(
@@ -44,7 +45,12 @@ class PuzzleApiService {
       },
     );
 
-    return _parseMapResponse(response);
+    return ApiResponse<PuzzleSession>.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+      fromJsonT: (json) => PuzzleSession.fromJson(
+        Map<String, dynamic>.from(json as Map),
+      ),
+    );
   }
 
   // ---------------------------------------------------------

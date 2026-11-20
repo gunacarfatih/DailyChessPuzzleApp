@@ -262,6 +262,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 // --------------------------------------------------
 
 builder.Services.AddControllers();
+builder.Services.AddHealthChecks();
 
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
@@ -389,6 +390,7 @@ app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHealthChecks("/health");
 
 app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 

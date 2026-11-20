@@ -551,7 +551,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       final data = response.data!;
       final puzzle = _puzzle!;
 
-      final sessionId = _readInt(data, 'sessionId');
+      final sessionId = data.sessionId;
 
       if (sessionId == null) {
         throw Exception(
@@ -559,7 +559,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         );
       }
 
-      final playedMoves = _readPlayedMoves(data);
+      final playedMoves = data.playedMoves;
 
       final currentPosition = _buildPositionFromPlayedMoves(
         puzzle.fen,
@@ -574,20 +574,18 @@ class PuzzlePageState extends State<PuzzlePage> {
         playedMoves,
       );
 
-      final startedAtUtc =
-      _readDateTime(data, 'startedAtUtc');
+      final startedAtUtc = data.startedAtUtc;
 
-      final serverCompleted =
-          _readBool(data, 'isCompleted') ||
-              _readBool(data, 'isSolved');
+      final serverCompleted = data.isCompleted || data.isSolved;
 
       _sessionId = sessionId;
       _position = currentPosition;
       _startingPosition = startingPosition;
       _lastMove = _lastPlayedMove(playedMoves);
 
-      _nextMoveIndex = _readInt(data, 'currentMoveIndex') ??
-          playedMoves.length;
+      _nextMoveIndex = data.currentMoveIndex == 0
+          ? playedMoves.length
+          : data.currentMoveIndex;
 
       _dailyStartedAtUtc = startedAtUtc;
 
@@ -599,9 +597,9 @@ class PuzzlePageState extends State<PuzzlePage> {
           .inSeconds
           .clamp(0, 86400);
 
-      _wrongMoves = _readInt(data, 'wrongMoves') ?? 0;
-      _usedHint = _readBool(data, 'usedHint');
-      _hintSquare = _value(data, 'hintSquare')?.toString();
+      _wrongMoves = data.wrongMoves;
+      _usedHint = data.usedHint;
+      _hintSquare = data.hintSquare;
 
       _controller?.dispose();
 
@@ -612,7 +610,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       if (!_isCurrentGeneration(generation)) return;
 
       if (serverCompleted) {
-        final sessionScore = _readScore(data);
+        final sessionScore = data.score;
 
         setState(() {
           _isSubmitting = false;

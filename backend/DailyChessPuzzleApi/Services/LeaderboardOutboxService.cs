@@ -37,39 +37,57 @@ namespace DailyChessPuzzleApi.Services
             CancellationToken cancellationToken)
         {
             var now = DateTime.UtcNow;
+            var batchLockId = Guid.NewGuid().ToString("N");
+            var processingStatus = (int)LeaderboardCacheOutboxDeliveryStatus.Processing;
+            var pendingStatus = (int)LeaderboardCacheOutboxDeliveryStatus.Pending;
+            var failedStatus = (int)LeaderboardCacheOutboxDeliveryStatus.Failed;
+            var lockUntil = now.Add(LockDuration);
+            List<int> deliveryIds;
 
-            var deliveryIds = await _context.LeaderboardCacheOutboxDeliveries
-                .AsNoTracking()
-                .Where(x =>
-                    x.Status == LeaderboardCacheOutboxDeliveryStatus.Pending ||
-                    (
-                        x.Status == LeaderboardCacheOutboxDeliveryStatus.Failed &&
-                        x.NextRetryAtUtc != null &&
-                        x.NextRetryAtUtc <= now
-                    ) ||
-                    (
-                        x.Status == LeaderboardCacheOutboxDeliveryStatus.Processing &&
-                        x.LockedUntilUtc != null &&
-                        x.LockedUntilUtc <= now
-                    ))
-                .OrderBy(x => x.CreatedAtUtc)
-                .Select(x => x.Id)
-                .Take(100)
-                .ToListAsync(cancellationToken);
+            await using (var claimTransaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken))
+            {
+                var candidates = await _context.LeaderboardCacheOutboxDeliveries
+                    .FromSqlInterpolated($"""
+                        SELECT * FROM "LeaderboardCacheOutboxDeliveries"
+                        WHERE "Status" = {pendingStatus}
+                           OR ("Status" = {failedStatus}
+                               AND "NextRetryAtUtc" IS NOT NULL
+                               AND "NextRetryAtUtc" <= {now})
+                           OR ("Status" = {processingStatus}
+                               AND "LockedUntilUtc" IS NOT NULL
+                               AND "LockedUntilUtc" <= {now})
+                        ORDER BY "CreatedAtUtc"
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 100
+                        """)
+                    .AsNoTracking()
+                    .ToListAsync(cancellationToken);
+                deliveryIds = candidates.Select(x => x.Id).ToList();
+
+                if (deliveryIds.Count > 0)
+                {
+                    await _context.LeaderboardCacheOutboxDeliveries
+                        .Where(x => deliveryIds.Contains(x.Id))
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(x => x.Status,
+                                LeaderboardCacheOutboxDeliveryStatus.Processing)
+                            .SetProperty(x => x.LockedBy, batchLockId)
+                            .SetProperty(x => x.LockedUntilUtc, lockUntil)
+                            .SetProperty(x => x.LastError, (string?)null),
+                            cancellationToken);
+                }
+
+                await claimTransaction.CommitAsync(cancellationToken);
+                _context.ChangeTracker.Clear();
+            }
+
+            if (deliveryIds.Count == 0) return false;
 
             foreach (var deliveryId in deliveryIds)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-
-                string lockId = Guid.NewGuid().ToString("N");
-
-                bool lockAcquired = await TryAcquireLockAsync(
-                    deliveryId,
-                    lockId,
-                    cancellationToken);
-
-                if (!lockAcquired)
-                    continue;
+                string lockId = batchLockId;
 
                 int retryCount = 0;
 
@@ -396,21 +414,24 @@ namespace DailyChessPuzzleApi.Services
                         leaderboardChanged &&
                         delivery.Period.Equals(
                             "daily",
-                            StringComparison.OrdinalIgnoreCase) &&
-                        delivery.CountryCode == null;
+                            StringComparison.OrdinalIgnoreCase);
 
-                    if (shouldNotifyClients && ShouldSendNotification(delivery.PeriodKey))
+                    var notificationScope = delivery.CountryCode ?? "global";
+                    if (shouldNotifyClients && ShouldSendNotification(
+                            $"{delivery.Period}:{delivery.PeriodKey}:{notificationScope}"))
                     {
                         try
                         {
-                            await _hubContext.Clients.All.SendAsync(
-                                "LeaderboardUpdated",
-                                new
-                                {
-                                    period = delivery.Period,
-                                    periodKey = delivery.PeriodKey
-                                },
-                                CancellationToken.None);
+                            var eventPayload = new
+                            {
+                                period = delivery.Period,
+                                periodKey = delivery.PeriodKey
+                            };
+                            var groupName = delivery.CountryCode == null
+                                ? $"leaderboard:{delivery.Period}"
+                                : $"leaderboard:{delivery.Period}:{delivery.CountryCode}";
+                            await _hubContext.Clients.Group(groupName).SendAsync(
+                                "LeaderboardUpdated", eventPayload, CancellationToken.None);
 
                             _logger.LogInformation(
                                 "Leaderboard update notification sent. " +
@@ -620,50 +641,5 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
         }
 
-        private async Task<bool> TryAcquireLockAsync(
-            int deliveryId,
-            string lockId,
-            CancellationToken cancellationToken)
-        {
-            var now = DateTime.UtcNow;
-            var lockUntil = now.Add(LockDuration);
-
-            int affectedRows = await _context
-                .LeaderboardCacheOutboxDeliveries
-                .Where(x =>
-                    x.Id == deliveryId &&
-                    (
-                        x.Status ==
-                            LeaderboardCacheOutboxDeliveryStatus.Pending ||
-                        (
-                            x.Status ==
-                                LeaderboardCacheOutboxDeliveryStatus.Failed &&
-                            x.NextRetryAtUtc != null &&
-                            x.NextRetryAtUtc <= now
-                        ) ||
-                        (
-                            x.Status ==
-                                LeaderboardCacheOutboxDeliveryStatus.Processing &&
-                            x.LockedUntilUtc != null &&
-                            x.LockedUntilUtc <= now
-                        )
-                    ))
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(
-                        x => x.Status,
-                        LeaderboardCacheOutboxDeliveryStatus.Processing)
-                    .SetProperty(
-                        x => x.LockedBy,
-                        lockId)
-                    .SetProperty(
-                        x => x.LockedUntilUtc,
-                        lockUntil)
-                    .SetProperty(
-                        x => x.LastError,
-                        (string?)null),
-                    cancellationToken);
-
-            return affectedRows == 1;
-        }
     }
 }

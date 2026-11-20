@@ -204,7 +204,43 @@ namespace DailyChessPuzzleApi.Services
                 await _context.SaveChangesAsync(cancellationToken);
             }
 
-            return CreateAuthResponse(user);
+            return await CreateAuthResponseAsync(user, cancellationToken);
+        }
+
+        public async Task<AuthResponse> RefreshAsync(
+            RefreshTokenRequest request,
+            CancellationToken cancellationToken)
+        {
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
+
+            var tokenHash = HashRefreshToken(request.RefreshToken);
+            var refreshToken = await _context.RefreshTokens
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "RefreshTokens"
+                    WHERE "TokenHash" = {tokenHash}
+                    FOR UPDATE
+                    """)
+                .SingleOrDefaultAsync(cancellationToken);
+            var now = DateTime.UtcNow;
+
+            if (refreshToken == null ||
+                refreshToken.RevokedAtUtc.HasValue ||
+                refreshToken.ExpiresAtUtc <= now)
+            {
+                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+            }
+
+            var user = await _context.Users.FirstOrDefaultAsync(
+                x => x.Id == refreshToken.UserId,
+                cancellationToken);
+            if (user == null)
+                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+
+            refreshToken.RevokedAtUtc = now;
+            var response = await CreateAuthResponseAsync(user, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return response;
         }
 
         public async Task<AuthResponse> GoogleLoginAsync(
@@ -254,7 +290,7 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
 
             if (user != null)
-                return CreateAuthResponse(user);
+                return await CreateAuthResponseAsync(user, cancellationToken);
 
             var existingUser = await _context.Users
                 .FirstOrDefaultAsync(
@@ -271,7 +307,7 @@ namespace DailyChessPuzzleApi.Services
                     existingUser.EmailVerificationCodeExpiresAtUtc = null;
                     existingUser.UpdatedAtUtc = DateTime.UtcNow;
                     await _context.SaveChangesAsync(cancellationToken);
-                    return CreateAuthResponse(existingUser);
+                    return await CreateAuthResponseAsync(existingUser, cancellationToken);
                 }
 
                 throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
@@ -298,7 +334,7 @@ namespace DailyChessPuzzleApi.Services
 
             await _context.SaveChangesAsync(cancellationToken);
 
-            return CreateAuthResponse(user);
+            return await CreateAuthResponseAsync(user, cancellationToken);
         }
 
         public async Task LinkGoogleAccountAsync(
@@ -462,7 +498,9 @@ namespace DailyChessPuzzleApi.Services
             return username;
         }
 
-        private AuthResponse CreateAuthResponse(User user)
+        private async Task<AuthResponse> CreateAuthResponseAsync(
+            User user,
+            CancellationToken cancellationToken)
         {
             DateTime expiresAtUtc = DateTime.UtcNow.AddMinutes(
                 _jwtSettings.ExpirationMinutes);
@@ -500,6 +538,21 @@ namespace DailyChessPuzzleApi.Services
                 expires: expiresAtUtc,
                 signingCredentials: credentials);
 
+            var refreshToken = Convert.ToBase64String(
+                    RandomNumberGenerator.GetBytes(48))
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+            var refreshTokenExpiresAtUtc = DateTime.UtcNow.AddDays(30);
+            _context.RefreshTokens.Add(new RefreshToken
+            {
+                UserId = user.Id,
+                TokenHash = HashRefreshToken(refreshToken),
+                CreatedAtUtc = DateTime.UtcNow,
+                ExpiresAtUtc = refreshTokenExpiresAtUtc
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+
             return new AuthResponse
             {
                 UserId = user.Id,
@@ -512,9 +565,14 @@ namespace DailyChessPuzzleApi.Services
                     user.PasswordHash),
                 AccessToken = new JwtSecurityTokenHandler()
                     .WriteToken(token),
-                ExpiresAtUtc = expiresAtUtc
+                ExpiresAtUtc = expiresAtUtc,
+                RefreshToken = refreshToken,
+                RefreshTokenExpiresAtUtc = refreshTokenExpiresAtUtc
             };
         }
+
+        private static string HashRefreshToken(string token) =>
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
         private static string GenerateEmailVerificationCode() =>
             RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");

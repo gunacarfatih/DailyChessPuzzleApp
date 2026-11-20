@@ -30,6 +30,8 @@ namespace DailyChessPuzzleApi.Data
         public DbSet<LeaderboardScore> LeaderboardScores
             => Set<LeaderboardScore>();
 
+        public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -77,6 +79,20 @@ namespace DailyChessPuzzleApi.Data
                 entity.HasIndex(x => x.GoogleId)
                     .IsUnique()
                     .HasFilter("\"GoogleId\" IS NOT NULL");
+            });
+
+            modelBuilder.Entity<RefreshToken>(entity =>
+            {
+                entity.HasKey(x => x.Id);
+                entity.Property(x => x.TokenHash)
+                    .HasMaxLength(64)
+                    .IsRequired();
+                entity.HasIndex(x => x.TokenHash).IsUnique();
+                entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
+                entity.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             // PUZZLE

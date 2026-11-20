@@ -51,6 +51,7 @@ class ApiResponse<T> {
   static String? _localizedMessage(String? code, String? fallback) {
     return switch (code) {
       'INVALID_CREDENTIALS' => 'E-posta veya şifre hatalı.',
+      'INVALID_REFRESH_TOKEN' => 'Oturumunuz sona erdi. Lütfen yeniden giriş yapın.',
       'GOOGLE_ACCOUNT_LINK_REQUIRED' =>
       'Bu e-posta başka bir hesapta kayıtlı. E-posta ve şifrenizle giriş yapıp hesabınızı bağlayın.',
       'GOOGLE_EMAIL_NOT_VERIFIED' => 'Google e-posta adresi doğrulanmamış.',

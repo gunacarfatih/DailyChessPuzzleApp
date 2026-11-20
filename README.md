@@ -41,6 +41,10 @@ Existing accounts stay verified after the migration. New password accounts
 must verify the emailed six-digit code before they can log in. Google accounts
 are already email-verified by Google.
 
+Access tokens last 60 minutes and refresh tokens last 30 days. Refresh tokens
+are stored as hashes in the database and rotated on every refresh. Apply the
+`AddRefreshTokens` migration before launching the updated API.
+
 ## Database migrations
 
 Apply pending migrations during deployment, before starting API instances:
@@ -48,6 +52,14 @@ Apply pending migrations during deployment, before starting API instances:
 ```text
 dotnet ef database update --project backend/DailyChessPuzzleApi
 ```
+
+For local PostgreSQL and Redis, run `docker compose up -d`. The development
+PostgreSQL connection string is
+`Host=localhost;Port=5432;Database=dailychess;Username=dailychess;Password=dailychess-local`.
+The API health endpoint is available at `/health`.
+
+GitHub Actions builds the backend and runs Flutter formatting and static
+analysis on pushes and pull requests.
 
 If the API runs behind a reverse proxy, configure its trusted IP addresses under
 `ForwardedHeaders:KnownProxies`. Do not accept forwarded headers from untrusted

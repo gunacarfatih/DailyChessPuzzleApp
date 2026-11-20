@@ -31,13 +31,8 @@ class LeaderboardSignalRService {
 
       _debugLog('SignalR: Hub URL: $hubUrl');
 
-      final httpOptions = HttpConnectionOptions(
-        accessTokenFactory: () async =>
-            await AuthStorage.instance.getAccessToken() ?? '',
-      );
-
       _connection = HubConnectionBuilder()
-          .withUrl(hubUrl, options: httpOptions)
+          .withUrl(hubUrl)
           .withAutomaticReconnect()
           .build();
 
@@ -52,6 +47,7 @@ class LeaderboardSignalRService {
 
       _connection!.onreconnected(({connectionId}) {
         _debugLog('SignalR yeniden bağlandı: $connectionId');
+        _joinDefaultLeaderboard();
         onConnectionRestored?.call();
       });
 
@@ -59,11 +55,20 @@ class LeaderboardSignalRService {
 
       await _connection!.start();
 
+      await _joinDefaultLeaderboard();
+
       _debugLog('SignalR bağlantısı başarılı.');
     } catch (e, stackTrace) {
       _debugLog('SignalR bağlantı hatası: $e');
       _debugLog('SignalR stack trace: $stackTrace');
     }
+  }
+
+  Future<void> _joinDefaultLeaderboard() async {
+    final connection = _connection;
+    if (connection?.state != HubConnectionState.Connected) return;
+    final countryCode = await AuthStorage.instance.getCountryCode();
+    await connection!.invoke('JoinLeaderboard', args: ['daily', countryCode]);
   }
 
 

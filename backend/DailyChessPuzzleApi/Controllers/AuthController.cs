@@ -76,6 +76,19 @@ namespace DailyChessPuzzleApi.Controllers
                 result));
         }
 
+        [AllowAnonymous]
+        [HttpPost("refresh")]
+        public async Task<IActionResult> Refresh(
+            [FromBody] RefreshTokenRequest request,
+            CancellationToken cancellationToken)
+        {
+            var result = await _authService.RefreshAsync(request, cancellationToken);
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Session refreshed successfully.",
+                result));
+        }
+
         [HttpPost("google")]
         public async Task<IActionResult> GoogleLogin(
             [FromBody] GoogleLoginRequest request,
