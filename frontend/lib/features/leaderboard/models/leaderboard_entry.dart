@@ -1,12 +1,15 @@
+
 class LeaderboardEntry {
   final int rank;
-  final String clientId;
+  final String publicId;
+  final String username;
   final int totalScore;
   final int solvedCount;
 
   const LeaderboardEntry({
     required this.rank,
-    required this.clientId,
+    required this.publicId,
+    required this.username,
     required this.totalScore,
     required this.solvedCount,
   });
@@ -14,7 +17,8 @@ class LeaderboardEntry {
   factory LeaderboardEntry.fromJson(Map<String, dynamic> json) {
     return LeaderboardEntry(
       rank: (json['rank'] as num?)?.toInt() ?? 0,
-      clientId: json['clientId']?.toString() ?? '',
+      publicId: json['publicId']?.toString() ?? '',
+      username: json['username']?.toString() ?? '',
       totalScore: (json['totalScore'] as num?)?.toInt() ?? 0,
       solvedCount: (json['solvedCount'] as num?)?.toInt() ?? 0,
     );

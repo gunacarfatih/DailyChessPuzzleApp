@@ -796,8 +796,6 @@ namespace DailyChessPuzzleApi.Services
                 await CreateLeaderboardOutboxEntriesAsync(
                     attempt.Id,
                     userId,
-                    null,
-                    $"user:{userId}",
                     today,
                     countryCode,
                     cancellationToken);
@@ -913,13 +911,13 @@ namespace DailyChessPuzzleApi.Services
 
             await _context.SaveChangesAsync(cancellationToken);
 
+            // Yalnızca kayıtlı kullanıcılar leaderboard sistemine dahil edilir.
+            // Misafirlerin PuzzleAttempt kayıtları tutulur ancak Outbox oluşturulmaz.
             if (session.UserId.HasValue)
             {
                 await CreateLeaderboardOutboxEntriesAsync(
                     attempt.Id,
-                    session.UserId,
-                    null,
-                    $"user:{session.UserId.Value}",
+                    session.UserId.Value,
                     today,
                     countryCode,
                     cancellationToken);
@@ -1109,17 +1107,18 @@ namespace DailyChessPuzzleApi.Services
 
         // ---------------------------------------------------------
         // LEADERBOARD OUTBOX
+        // Yalnızca kayıtlı kullanıcılar için oluşturulur.
         // ---------------------------------------------------------
 
         private async Task CreateLeaderboardOutboxEntriesAsync(
             int puzzleAttemptId,
-            int? userId,
-            string? clientId,
-            string leaderboardIdentity,
+            int userId,
             DateOnly today,
             string? countryCode,
             CancellationToken cancellationToken)
         {
+            string leaderboardIdentity = $"user:{userId}";
+
             var outboxEntry = new LeaderboardCacheOutbox
             {
                 PuzzleAttemptId = puzzleAttemptId,
@@ -1180,8 +1179,6 @@ namespace DailyChessPuzzleApi.Services
                     period.StartDate,
                     today,
                     userId,
-                    clientId,
-                    leaderboardIdentity,
                     null,
                     cancellationToken);
 
@@ -1194,8 +1191,6 @@ namespace DailyChessPuzzleApi.Services
                         period.StartDate,
                         today,
                         userId,
-                        clientId,
-                        leaderboardIdentity,
                         countryCode,
                         cancellationToken);
                 }
@@ -1208,28 +1203,17 @@ namespace DailyChessPuzzleApi.Services
             string periodKey,
             DateOnly startDate,
             DateOnly today,
-            int? userId,
-            string? clientId,
-            string leaderboardIdentity,
+            int userId,
             string? countryCode,
             CancellationToken cancellationToken)
         {
+            // Yalnızca ilgili kayıtlı kullanıcının puanları toplanır.
             var query = _context.PuzzleAttempts
                 .AsNoTracking()
                 .Where(a =>
+                    a.UserId == userId &&
                     a.PlayedOn >= startDate &&
                     a.PlayedOn <= today);
-
-            if (userId.HasValue)
-            {
-                query = query.Where(a => a.UserId == userId.Value);
-            }
-            else
-            {
-                query = query.Where(a =>
-                    a.UserId == null &&
-                    a.ClientId == clientId);
-            }
 
             if (countryCode != null)
                 query = query.Where(a => a.CountryCode == countryCode);
@@ -1247,12 +1231,12 @@ namespace DailyChessPuzzleApi.Services
                 return;
 
             string cacheKey =
-                $"DailyChessPuzzle_leaderboard:{period}:{periodKey}:{countryCode ?? "global"}";
+                $"DailyChessPuzzle_leaderboard:v2:{period}:{periodKey}:{countryCode ?? "global"}";
 
             var delivery = new LeaderboardCacheOutboxDelivery
             {
                 Outbox = outboxEntry,
-                TargetClientId = leaderboardIdentity,
+                TargetClientId = $"user:{userId}",
                 IsRemoval = false,
                 Period = period,
                 PeriodKey = periodKey,

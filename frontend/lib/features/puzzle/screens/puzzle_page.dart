@@ -32,6 +32,14 @@ class PuzzlePageState extends State<PuzzlePage> {
   final PuzzleApiService _puzzleApiService = PuzzleApiService();
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
 
+  // Hesap veya bulmaca oturumu değiştiğinde artırılır.
+  // Önceki oturumlardan dönen asenkron cevaplar böylece geçersiz olur.
+  int _puzzleGeneration = 0;
+
+  bool _isCurrentGeneration(int generation) {
+    return mounted && generation == _puzzleGeneration;
+  }
+
   // Günlük bulmaca
   bool _isLoading = true;
   bool _isSolved = false;
@@ -129,7 +137,8 @@ class PuzzlePageState extends State<PuzzlePage> {
     final bonus = _bonusPuzzle;
     final position = _bonusPosition;
 
-    return _isBonusMode &&
+    return _isAuthenticated &&
+        _isBonusMode &&
         _isBonusStarted &&
         !_isBonusLoading &&
         !_isBonusSubmitting &&
@@ -161,11 +170,33 @@ class PuzzlePageState extends State<PuzzlePage> {
     await _loadTodayPuzzle();
   }
 
+  // MainNavigationPage tarafından hesap değişiminde çağrılır.
+// Eski hesap isteklerini geçersiz kılar ve yeni bulmacayı yükler.
+  void resetPuzzleForAccountChange() {
+    if (!mounted) return;
+
+    // Önceki hesap için devam eden istekleri geçersiz kıl.
+    _puzzleGeneration++;
+
+    _stopTimer();
+    _stopBonusTimer();
+
+    _controller?.dispose();
+    _controller = null;
+
+    // Yeni hesabın günlük bulmacasını yükle.
+    _loadTodayPuzzle();
+  }
+
   @override
   void dispose() {
+    // Widget kapandığında devam eden bütün asenkron işlemleri geçersiz kıl.
+    _puzzleGeneration++;
+
     _timer?.cancel();
     _bonusTimer?.cancel();
     _controller?.dispose();
+
     super.dispose();
   }
 
@@ -237,8 +268,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   Position _buildPositionFromPlayedMoves(
       String fen,
       List<String> playedMoves,
-      )
-  {
+      ) {
     Position position = Chess.fromSetup(Setup.parseFen(fen));
 
     for (final uci in playedMoves) {
@@ -259,8 +289,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   Position _positionAfterFirstMove(
       String fen,
       List<String> playedMoves,
-      )
-  {
+      ) {
     final initialPosition = Chess.fromSetup(
       Setup.parseFen(fen),
     );
@@ -293,14 +322,27 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   // Liderlik tablosunu güvenli şekilde yeniler.
-  // Yenileme başarısız olsa bile puzzle tamamlanma işlemi etkilenmez.
-  Future<void> _refreshLeaderboardSafely() async {
+  // Generation değişmişse eski hesaptan gelen işlem yenileme yapamaz.
+  Future<void> _refreshLeaderboardSafely({
+    int? generation,
+  }) async
+  {
     if (!mounted) return;
+
+    if (generation != null &&
+        !_isCurrentGeneration(generation)) {
+      return;
+    }
 
     try {
       await context
           .read<LeaderboardProvider>()
           .refreshLeaderboard();
+
+      if (generation != null &&
+          !_isCurrentGeneration(generation)) {
+        return;
+      }
     } catch (error, stackTrace) {
       debugPrint('Liderlik tablosu yenileme hatası: $error');
       debugPrint('$stackTrace');
@@ -313,6 +355,9 @@ class PuzzlePageState extends State<PuzzlePage> {
 
   Future<void> _loadTodayPuzzle() async {
     if (!mounted) return;
+
+    // Yeni yükleme başlatılır; önceki isteklerin cevapları geçersiz olur.
+    final generation = ++_puzzleGeneration;
 
     _stopTimer();
     _stopBonusTimer();
@@ -329,6 +374,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _usedHint = false;
       _hasStarted = false;
       _isAuthenticated = false;
+      _showCompletionAnimation = false;
 
       _isBonusMode = false;
       _isBonusLoading = false;
@@ -337,6 +383,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _isBonusExpired = false;
       _isBonusStarted = false;
       _isBonusEligible = false;
+      _showBonusCompletionAnimation = false;
 
       _bonusPuzzle = null;
       _bonusError = null;
@@ -348,6 +395,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _bonusLastMove = null;
       _bonusNextMoveIndex = 0;
       _bonusWrongMoves = 0;
+      _bonusFeedback = 'Bonus bulmaca hazırlanıyor...';
 
       _errorMessage = null;
       _submissionError = null;
@@ -373,15 +421,22 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     try {
       final authProvider = context.read<AuthProvider>();
+
       await authProvider.initialize();
+
+      if (!_isCurrentGeneration(generation)) return;
 
       final isAuthenticated = authProvider.isLoggedIn;
 
       final clientId = await _clientIdStorage.getClientId();
 
+      if (!_isCurrentGeneration(generation)) return;
+
       final response = await _puzzleApiService.getTodayPuzzle(
         clientId: clientId,
       );
+
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
         throw Exception(
@@ -394,7 +449,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         Setup.parseFen(puzzle.fen),
       );
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       _puzzle = puzzle;
       _position = initialPosition;
@@ -428,7 +483,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Puzzle yükleme hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isLoading = false;
@@ -445,8 +500,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       return;
     }
 
-    // Bu oturum, daha önce tamamlanmış günlük bulmacanın
-    // tekrar çözümü mü?
+    final generation = _puzzleGeneration;
+
     final isReplay = _hasSubmitted;
 
     _stopTimer();
@@ -475,14 +530,16 @@ class PuzzlePageState extends State<PuzzlePage> {
     try {
       final clientId = await _clientIdStorage.getClientId();
 
+      if (!_isCurrentGeneration(generation)) return;
+
       final response =
       await _puzzleApiService.startPuzzleSession(
         clientId: clientId,
       );
 
-      debugPrint("START PUZZLE DATA: ${response.data}");
+      if (!_isCurrentGeneration(generation)) return;
 
-      if (!mounted) return;
+      debugPrint("START PUZZLE DATA: ${response.data}");
 
       if (!response.success || response.data == null) {
         throw Exception(
@@ -551,6 +608,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         game: _buildGame(currentPosition),
       );
 
+      if (!_isCurrentGeneration(generation)) return;
+
       if (serverCompleted) {
         final sessionScore = _readScore(data);
 
@@ -561,7 +620,6 @@ class PuzzlePageState extends State<PuzzlePage> {
           _hasStarted = false;
           _sessionScore = sessionScore;
 
-          // Tekrar oturumun puanı ilk günlük puanı değiştiremez.
           if (!isReplay &&
               _isAuthenticated &&
               sessionScore != null) {
@@ -585,7 +643,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Günlük oturum başlatma hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isSubmitting = false;
@@ -599,10 +657,16 @@ class PuzzlePageState extends State<PuzzlePage> {
   void _startTimer() {
     _timer?.cancel();
 
+    final generation = _puzzleGeneration;
+
     _timer = Timer.periodic(
       const Duration(seconds: 1),
           (_) {
-        if (!mounted || _isSolved || !_hasStarted) return;
+        if (!_isCurrentGeneration(generation) ||
+            _isSolved ||
+            !_hasStarted) {
+          return;
+        }
 
         final startedAt = _dailyStartedAtUtc;
 
@@ -644,8 +708,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   Future<void> _onMove(
       Move move, {
         bool? viaDragAndDrop,
-      }) async
-  {
+      }) async {
     if (_isBonusMode) {
       await _onBonusMove(move);
       return;
@@ -681,6 +744,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       return;
     }
 
+    final generation = _puzzleGeneration;
+
     setState(() {
       _isSubmitting = true;
     });
@@ -688,13 +753,15 @@ class PuzzlePageState extends State<PuzzlePage> {
     try {
       final clientId = await _clientIdStorage.getClientId();
 
+      if (!_isCurrentGeneration(generation)) return;
+
       final response = await _puzzleApiService.submitPuzzleMove(
         sessionId: sessionId,
         uci: move.uci,
         clientId: clientId,
       );
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success) {
         final errorCode = response.errorCode ?? '';
@@ -750,18 +817,16 @@ class PuzzlePageState extends State<PuzzlePage> {
         return;
       }
 
-      // Rakibin otomatik hamlesinden önce kısa bir bekleme.
       if (playedMoves.length > oldMoveCount + 1) {
         await Future.delayed(
           const Duration(milliseconds: 500),
         );
 
-        if (!mounted) return;
+        if (!_isCurrentGeneration(generation)) return;
       }
 
       final puzzle = _puzzle!;
 
-      // Oyuncunun yaptığı hamleleri ve son pozisyonu belirle.
       final playerMoves = playedMoves
           .take(oldMoveCount + 1)
           .toList();
@@ -771,7 +836,6 @@ class PuzzlePageState extends State<PuzzlePage> {
         playerMoves,
       );
 
-      // Önce oyuncunun hamlesini tahtada göster.
       _position = playerPosition;
       _lastMove = _lastPlayedMove(playerMoves);
 
@@ -784,16 +848,14 @@ class PuzzlePageState extends State<PuzzlePage> {
         resetPremove: true,
       );
 
-      // Rakibin otomatik cevabı varsa kısa süre bekle.
       if (playedMoves.length > oldMoveCount + 1) {
         await Future.delayed(
           const Duration(milliseconds: 500),
         );
 
-        if (!mounted) return;
+        if (!_isCurrentGeneration(generation)) return;
       }
 
-      // Ardından sunucudan gelen son pozisyonu göster.
       final newPosition = _buildPositionFromPlayedMoves(
         puzzle.fen,
         playedMoves,
@@ -816,9 +878,14 @@ class PuzzlePageState extends State<PuzzlePage> {
       );
 
       if (serverCompleted) {
-        await _finishPuzzle(data);
+        await _finishPuzzle(
+          data,
+          generation: generation,
+        );
         return;
       }
+
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isSubmitting = false;
@@ -829,7 +896,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Günlük hamle gönderme hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isSubmitting = false;
@@ -857,6 +924,8 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     if (!_canUseHint || sessionId == null) return;
 
+    final generation = _puzzleGeneration;
+
     setState(() {
       _isSubmitting = true;
     });
@@ -864,12 +933,14 @@ class PuzzlePageState extends State<PuzzlePage> {
     try {
       final clientId = await _clientIdStorage.getClientId();
 
+      if (!_isCurrentGeneration(generation)) return;
+
       final response = await _puzzleApiService.usePuzzleHint(
         sessionId: sessionId,
         clientId: clientId,
       );
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
         throw Exception(
@@ -896,7 +967,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Günlük ipucu hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isSubmitting = false;
@@ -906,24 +977,24 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _finishPuzzle(
-      Map<String, dynamic> data,
-      ) async {
-    if (!mounted || _isSolved) return;
+      Map<String, dynamic> data, {
+        required int generation,
+      }) async
+  {
+    if (!_isCurrentGeneration(generation) || _isSolved) return;
 
     _stopTimer();
 
-    // Önce tamamlanma mesajını göster.
     setState(() {
       _showCompletionAnimation = true;
       _feedback = 'Bulmaca tamamlandı!';
     });
 
-    // Son hamlenin ve tamamlanma mesajının görülmesi için bekle.
     await Future.delayed(
       const Duration(milliseconds: 1500),
     );
 
-    if (!mounted) return;
+    if (!_isCurrentGeneration(generation)) return;
 
     setState(() {
       _showCompletionAnimation = false;
@@ -936,11 +1007,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       _hasSubmitted = true;
       _isSubmitting = false;
 
-      // Bu oturumun puanı her zaman ayrı tutulur.
       _sessionScore = score;
 
-      // İlk başarılı günlük çözüm puanı korunur.
-      // Tekrar çözüm puanı bu alanı değiştirmez.
       if (!_isReplay &&
           _isAuthenticated &&
           score != null) {
@@ -954,17 +1022,20 @@ class PuzzlePageState extends State<PuzzlePage> {
       _submissionError = null;
     });
 
-    // Yalnızca ilk başarılı günlük çözüm liderlik tablosunu yeniler.
-    // Tekrar çözüm (_isReplay) liderlik tablosunu etkilemez.
+    // Misafirler liderlik tablosunu yenilemez ve bonus yüklemez.
+    // Tekrar çözüm de ilk günlük puanı değiştirmez.
     if (_isAuthenticated && !_isReplay) {
-      await _refreshLeaderboardSafely();
+      await _refreshLeaderboardSafely(
+        generation: generation,
+      );
+
+      if (!_isCurrentGeneration(generation)) return;
+
       await _loadBonusStatus();
     }
   }
 
   void _restartPuzzle() {
-    // Tahtayı yenilemek sunucudaki oturumu sıfırlamaz.
-    // Aynı SessionId ile devam edilir.
     final position = _position;
 
     if (position == null || _isSubmitting) return;
@@ -982,9 +1053,13 @@ class PuzzlePageState extends State<PuzzlePage> {
   // ------------------------------------------------------------
 
   Future<void> _loadBonusStatus() async {
-    if (!_isAuthenticated || _isBonusLoading || !mounted) {
+    if (!_isAuthenticated ||
+        _isBonusLoading ||
+        !mounted) {
       return;
     }
+
+    final generation = _puzzleGeneration;
 
     setState(() {
       _isBonusLoading = true;
@@ -993,7 +1068,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     try {
       final response = await _puzzleApiService.getBonusPuzzle();
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
         setState(() {
@@ -1024,7 +1099,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Bonus durum kontrol hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isBonusLoading = false;
@@ -1043,6 +1118,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       return;
     }
 
+    final generation = _puzzleGeneration;
+
     setState(() {
       _isBonusLoading = true;
       _bonusError = null;
@@ -1052,7 +1129,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     try {
       final response = await _puzzleApiService.getBonusPuzzle();
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
         throw Exception(
@@ -1081,6 +1158,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       final initialPosition = Chess.fromSetup(
         Setup.parseFen(bonus.fen!),
       );
+
+      if (!_isCurrentGeneration(generation)) return;
 
       _stopBonusTimer();
       _controller?.dispose();
@@ -1136,7 +1215,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Bonus hazırlama hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isBonusLoading = false;
@@ -1146,13 +1225,16 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _beginBonusPuzzle() async {
-    if (!_isBonusMode ||
+    if (!_isAuthenticated ||
+        !_isBonusMode ||
         _isBonusStarted ||
         _isBonusLoading ||
         _isBonusCompleted ||
         _isBonusExpired) {
       return;
     }
+
+    final generation = _puzzleGeneration;
 
     setState(() {
       _isBonusLoading = true;
@@ -1164,7 +1246,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       final response =
       await _puzzleApiService.startBonusPuzzle();
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
         throw Exception(
@@ -1210,6 +1292,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         playedMoves,
       );
 
+      if (!_isCurrentGeneration(generation)) return;
+
       _bonusPuzzle = bonus;
       _bonusPosition = currentPosition;
       _bonusStartingPosition = startingPosition;
@@ -1219,8 +1303,6 @@ class PuzzlePageState extends State<PuzzlePage> {
       _bonusHintSquare = bonus.hintSquare;
       _bonusScore = bonus.score;
 
-      // Günlük bulmacadaki gibi controller yeniden oluşturuluyor.
-      // Bonus bulmacanın kendi GameData bilgileri kullanılıyor.
       _controller?.dispose();
 
       _controller = ChessboardController(
@@ -1242,7 +1324,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Bonus başlatma hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isBonusLoading = false;
@@ -1270,10 +1352,12 @@ class PuzzlePageState extends State<PuzzlePage> {
   void _startBonusTimer() {
     _bonusTimer?.cancel();
 
+    final generation = _puzzleGeneration;
+
     _bonusTimer = Timer.periodic(
       const Duration(seconds: 1),
           (_) {
-        if (!mounted ||
+        if (!_isCurrentGeneration(generation) ||
             !_isBonusStarted ||
             _isBonusCompleted ||
             _isBonusExpired) {
@@ -1306,12 +1390,18 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _checkBonusExpiration() async {
-    if (!mounted || !_isBonusMode) return;
+    if (!mounted ||
+        !_isAuthenticated ||
+        !_isBonusMode) {
+      return;
+    }
+
+    final generation = _puzzleGeneration;
 
     try {
       final response = await _puzzleApiService.getBonusPuzzle();
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
         setState(() {
@@ -1346,7 +1436,8 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _onBonusMove(Move move) async {
-    if (!_isBonusMode ||
+    if (!_isAuthenticated ||
+        !_isBonusMode ||
         !_isBonusStarted ||
         _isBonusLoading ||
         _isBonusSubmitting ||
@@ -1356,6 +1447,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       _restoreBonusBoard();
       return;
     }
+
+    final generation = _puzzleGeneration;
 
     final position = _bonusPosition;
     final bonus = _bonusPuzzle;
@@ -1376,7 +1469,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         uci: move.uci,
       );
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success) {
         final errorCode = response.errorCode ?? '';
@@ -1439,7 +1532,6 @@ class PuzzlePageState extends State<PuzzlePage> {
         return;
       }
 
-      // Günlük bulmacadaki gibi önce oyuncunun hamlesini ayır.
       final playerMoves = playedMoves
           .take(oldMoveCount + 1)
           .toList();
@@ -1449,7 +1541,6 @@ class PuzzlePageState extends State<PuzzlePage> {
         playerMoves,
       );
 
-      // Önce oyuncunun hamlesini tahtada göster.
       _bonusPosition = playerPosition;
       _bonusLastMove = _lastPlayedMove(playerMoves);
 
@@ -1461,16 +1552,14 @@ class PuzzlePageState extends State<PuzzlePage> {
         resetPremove: true,
       );
 
-      // Rakibin otomatik cevabı varsa kısa bir bekleme yap.
       if (playedMoves.length > oldMoveCount + 1) {
         await Future.delayed(
           const Duration(milliseconds: 500),
         );
 
-        if (!mounted) return;
+        if (!_isCurrentGeneration(generation)) return;
       }
 
-      // Sunucudan gelen bütün hamleleri tahtaya uygula.
       final newPosition = _buildPositionFromPlayedMoves(
         bonus.fen!,
         playedMoves,
@@ -1485,7 +1574,6 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       _bonusHintSquare = null;
 
-      // Rakibin otomatik cevabını animasyonla göster.
       _controller?.updatePosition(
         _buildBonusGame(newPosition),
         animate: true,
@@ -1505,13 +1593,15 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       if (_isBonusCompleted) {
-        await _finishBonusPuzzle();
+        await _finishBonusPuzzle(
+          generation: generation,
+        );
       }
     } catch (error, stackTrace) {
       debugPrint('Bonus hamle hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isBonusLoading = false;
@@ -1538,6 +1628,8 @@ class PuzzlePageState extends State<PuzzlePage> {
   Future<void> _useBonusHint() async {
     if (!_canUseBonusHint) return;
 
+    final generation = _puzzleGeneration;
+
     setState(() {
       _isBonusLoading = true;
     });
@@ -1546,7 +1638,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       final response =
       await _puzzleApiService.useBonusHint();
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
         throw Exception(
@@ -1572,7 +1664,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Bonus ipucu hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isBonusLoading = false;
@@ -1581,8 +1673,14 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
   }
 
-  Future<void> _finishBonusPuzzle() async {
-    if (!mounted || _isBonusSubmitting) return;
+  Future<void> _finishBonusPuzzle({
+    required int generation,
+  }) async {
+    if (!_isCurrentGeneration(generation) ||
+        !_isAuthenticated ||
+        _isBonusSubmitting) {
+      return;
+    }
 
     _stopBonusTimer();
 
@@ -1595,7 +1693,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       final response =
       await _puzzleApiService.submitBonusPuzzle();
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success) {
         throw Exception(
@@ -1605,7 +1703,6 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       final score = _readScore(response.data);
 
-      // Bonus tamamlandı ve sunucuya kaydedildi.
       setState(() {
         _bonusScore = score;
         _isBonusCompleted = true;
@@ -1617,23 +1714,21 @@ class PuzzlePageState extends State<PuzzlePage> {
             ? 'Tebrikler! Bonus puanın kaydedildi.'
             : 'Bonus tamamlandı.';
 
-        // Günlük bulmacadaki animasyonu başlat.
         _showBonusCompletionAnimation = true;
       });
 
-      // Bonus sonucu sunucuya kaydedildikten sonra
-      // liderlik tablosunu yenile.
-      // Yenileme hatası bonus başarısını etkilemez.
-      await _refreshLeaderboardSafely();
+      await _refreshLeaderboardSafely(
+        generation: generation,
+      );
 
-      // Animasyonun görünmesi için 1,8 saniye bekle.
+      if (!_isCurrentGeneration(generation)) return;
+
       await Future.delayed(
         const Duration(milliseconds: 1800),
       );
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
-      // Animasyonu kapat ve bonus sonuç ekranına geç.
       setState(() {
         _showBonusCompletionAnimation = false;
       });
@@ -1641,7 +1736,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       debugPrint('Bonus sonuç kaydetme hatası: $error');
       debugPrint('$stackTrace');
 
-      if (!mounted) return;
+      if (!_isCurrentGeneration(generation)) return;
 
       setState(() {
         _isBonusSubmitting = false;
@@ -1747,6 +1842,10 @@ class PuzzlePageState extends State<PuzzlePage> {
     return _buildPuzzleBody();
   }
 
+  // ------------------------------------------------------------
+  // GÜNLÜK BULMACA ARAYÜZÜ
+  // ------------------------------------------------------------
+
   Widget _buildPuzzleBody() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1785,7 +1884,6 @@ class PuzzlePageState extends State<PuzzlePage> {
                                 orientation: _playerSide,
                                 onMove: _onMove,
                               ),
-
                               IgnorePointer(
                                 child: AnimatedOpacity(
                                   opacity: _showCompletionAnimation ? 1 : 0,
@@ -1837,7 +1935,6 @@ class PuzzlePageState extends State<PuzzlePage> {
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 12),
                       Expanded(
                         child: SingleChildScrollView(
@@ -1876,6 +1973,10 @@ class PuzzlePageState extends State<PuzzlePage> {
       },
     );
   }
+
+  // ------------------------------------------------------------
+  // BONUS BULMACA ARAYÜZÜ
+  // ------------------------------------------------------------
 
   Widget _buildBonusPuzzleBody() {
     final position = _bonusPosition;
@@ -1966,7 +2067,6 @@ class PuzzlePageState extends State<PuzzlePage> {
                             orientation: _bonusPlayerSide,
                             onMove: _onMove,
                           ),
-
                           IgnorePointer(
                             child: AnimatedOpacity(
                               opacity: _showBonusCompletionAnimation ? 1 : 0,
@@ -2401,6 +2501,10 @@ class PuzzlePageState extends State<PuzzlePage> {
     );
   }
 
+  // ------------------------------------------------------------
+  // GÜNLÜK BULMACA BAŞLANGIÇ EKRANI
+  // ------------------------------------------------------------
+
   Widget _buildStartOverlay() {
     final canShowBonus = _isAuthenticated && _isBonusEligible;
     final bonusClosed = _isBonusCompleted || _isBonusExpired;
@@ -2476,8 +2580,6 @@ class PuzzlePageState extends State<PuzzlePage> {
               ),
             ),
             const SizedBox(height: 24),
-
-            // Günlük bulmacayı çöz / tekrar çöz
             SizedBox(
               width: double.infinity,
               height: 54,
@@ -2503,8 +2605,6 @@ class PuzzlePageState extends State<PuzzlePage> {
                 ),
               ),
             ),
-
-            // Bonus bulmaca seçeneği
             if (canShowBonus) ...[
               const SizedBox(height: 12),
               SizedBox(
@@ -2542,12 +2642,10 @@ class PuzzlePageState extends State<PuzzlePage> {
                 ),
               ),
             ],
-
             if (_isSubmitting || _isBonusLoading) ...[
               const SizedBox(height: 14),
               const CircularProgressIndicator(color: _primary),
             ],
-
             if (_submissionError != null) ...[
               const SizedBox(height: 12),
               Text(
@@ -2559,7 +2657,6 @@ class PuzzlePageState extends State<PuzzlePage> {
                 ),
               ),
             ],
-
             if (_bonusError != null) ...[
               const SizedBox(height: 12),
               Text(
@@ -2576,6 +2673,10 @@ class PuzzlePageState extends State<PuzzlePage> {
       ),
     );
   }
+
+  // ------------------------------------------------------------
+  // GÜNLÜK BULMACA BİLGİ KARTLARI
+  // ------------------------------------------------------------
 
   Widget _buildPuzzleInfo() {
     return Container(
@@ -3015,12 +3116,10 @@ class PuzzlePageState extends State<PuzzlePage> {
           _buildResultScoreCard(),
           const SizedBox(height: 18),
           _buildResultStatistics(),
-
           if (_isAuthenticated && _isBonusEligible) ...[
             const SizedBox(height: 22),
             _buildBonusEntryCard(),
           ],
-
           if (_isAuthenticated &&
               _isBonusLoading &&
               !_isBonusEligible) ...[
@@ -3031,12 +3130,10 @@ class PuzzlePageState extends State<PuzzlePage> {
               ),
             ),
           ],
-
           if (_submissionError != null) ...[
             const SizedBox(height: 16),
             _buildSubmissionError(),
           ],
-
           const SizedBox(height: 24),
           SizedBox(
             height: 52,

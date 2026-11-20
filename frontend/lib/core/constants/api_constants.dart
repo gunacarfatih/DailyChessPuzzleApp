@@ -2,7 +2,7 @@
 class ApiConstants {
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.116.246.182:5053',
+    defaultValue: 'http://192.168.1.34:5053',
   );
 
   // Daily Puzzle

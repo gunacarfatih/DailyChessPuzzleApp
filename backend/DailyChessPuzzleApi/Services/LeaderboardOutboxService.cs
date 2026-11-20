@@ -103,6 +103,27 @@ namespace DailyChessPuzzleApi.Services
 
                     string targetClientId = delivery.TargetClientId;
 
+                    // Yalnızca geçerli kayıtlı kullanıcı kimlikleri
+                    // liderlik tablosuna dahil edilebilir.
+                    // Misafir veya hatalı kimliklere ait teslimatlar atlanır.
+                    if (!IsRegisteredIdentity(targetClientId))
+                    {
+                        await CompleteDeliveryAsync(
+                            deliveryId,
+                            lockId,
+                            cancellationToken);
+
+                        await transaction.CommitAsync(cancellationToken);
+
+                        _logger.LogInformation(
+                            "Guest or invalid leaderboard delivery skipped. " +
+                            "DeliveryId: {DeliveryId}",
+                            deliveryId);
+
+                        _context.ChangeTracker.Clear();
+                        continue;
+                    }
+
                     PuzzleAttempt? puzzleAttempt = null;
 
                     // PuzzleAttemptId null ise bu bir toplu işlem
@@ -137,9 +158,8 @@ namespace DailyChessPuzzleApi.Services
 
                             _logger.LogInformation(
                                 "Obsolete leaderboard update skipped. " +
-                                "DeliveryId: {DeliveryId}, TargetClientId: {ClientId}",
-                                deliveryId,
-                                targetClientId);
+                                "DeliveryId: {DeliveryId}",
+                                deliveryId);
 
                             _context.ChangeTracker.Clear();
                             continue;
@@ -161,9 +181,8 @@ namespace DailyChessPuzzleApi.Services
 
                             _logger.LogInformation(
                                 "Obsolete leaderboard removal skipped. " +
-                                "DeliveryId: {DeliveryId}, TargetClientId: {ClientId}",
-                                deliveryId,
-                                targetClientId);
+                                "DeliveryId: {DeliveryId}",
+                                deliveryId);
 
                             _context.ChangeTracker.Clear();
                             continue;
@@ -366,11 +385,10 @@ namespace DailyChessPuzzleApi.Services
 
                     await transaction.CommitAsync(cancellationToken);
 
-                    // Aynı Outbox kaydının günlük, haftalık, aylık,
-                    // tüm zamanlar ve ülke teslimatları olabilir.
-                    // Tek bildirim göndermek için yalnızca global günlük
-                    // skor değişikliğini bildirim tetikleyicisi olarak kullanıyoruz.
+                    // Yalnızca kayıtlı kullanıcıların global günlük
+                    // puan değişiklikleri SignalR bildirimi oluşturur.
                     bool shouldNotifyClients =
+                        IsRegisteredIdentity(targetClientId) &&
                         leaderboardChanged &&
                         delivery.Period.Equals(
                             "daily",
@@ -411,11 +429,9 @@ namespace DailyChessPuzzleApi.Services
                     _logger.LogInformation(
                         "Leaderboard Delivery completed. " +
                         "DeliveryId: {DeliveryId}, Period: {Period}, " +
-                        "TargetClientId: {ClientId}, IsRemoval: {IsRemoval}, " +
-                        "Revision: {Revision}",
+                        "IsRemoval: {IsRemoval}, Revision: {Revision}",
                         delivery.Id,
                         delivery.Period,
-                        targetClientId,
                         delivery.IsRemoval,
                         currentScore.Revision);
 
@@ -490,6 +506,23 @@ namespace DailyChessPuzzleApi.Services
                         actualRetryCount);
                 }
             }
+        }
+
+        // Kimliğin user: ile başlaması yeterli değildir.
+        // Devamında pozitif ve geçerli bir kullanıcı ID'si bulunmalıdır.
+        private static bool IsRegisteredIdentity(string targetClientId)
+        {
+            if (!targetClientId.StartsWith(
+                "user:",
+                StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string userIdText = targetClientId["user:".Length..];
+
+            return int.TryParse(userIdText, out int userId) &&
+                   userId > 0;
         }
 
         private static bool IsIdentityCurrent(

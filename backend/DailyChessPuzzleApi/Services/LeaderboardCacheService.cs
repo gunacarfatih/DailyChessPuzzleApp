@@ -362,18 +362,28 @@ namespace DailyChessPuzzleApi.Services
                 decoded.SolvedCount);
         }
 
-        public async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
-            GetTopAsync(string key, int count)
+
+        public async Task<List<(string ClientId, int TotalScore, int SolvedCount)>> GetTopAsync(
+                string key,
+                int count,
+                long offset = 0)
         {
             if (count <= 0)
             {
                 return [];
             }
 
+            if (offset < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+
+            long end = checked(offset + count - 1L);
+
             var entries = await _database.SortedSetRangeByRankWithScoresAsync(
                 key,
-                0,
-                count - 1,
+                offset,
+                end,
                 Order.Ascending);
 
             var result =
@@ -394,6 +404,7 @@ namespace DailyChessPuzzleApi.Services
 
             return result;
         }
+
 
         public async Task<long?> GetRankAsync(
             string key,

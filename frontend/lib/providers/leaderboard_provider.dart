@@ -1,13 +1,11 @@
 
 import 'package:flutter/foundation.dart';
 
-import '../core/storage/client_id_storage.dart';
 import '../features/leaderboard/models/leaderboard_response.dart';
 import '../features/leaderboard/services/leaderboard_api_service.dart';
 
 class LeaderboardProvider extends ChangeNotifier {
   final LeaderboardApiService _apiService = LeaderboardApiService();
-  final ClientIdStorage _clientIdStorage = ClientIdStorage();
 
   // Her ülkenin leaderboard verisini ayrı saklar.
   // Boş String global sıralamayı temsil eder.
@@ -24,12 +22,16 @@ class LeaderboardProvider extends ChangeNotifier {
 
   static const int _leaderboardLimit = 10;
 
+  // Hesap değiştiğinde artırılır.
+  // Eski nesle ait isteklerin sonuçlarını kaydetmesini engeller.
+  int _requestGeneration = 0;
+
   // Ülke kodunu standart bir anahtara dönüştürür.
   String _getCountryKey(String? country) {
     return country?.trim().toUpperCase() ?? '';
   }
 
-  // İstenen ülkenin leaderboard verisini getirir.
+  // İstenen ülkenin leaderboard verisini döndürür.
   LeaderboardResponse? leaderboardFor(String? country) {
     final key = _getCountryKey(country);
     return _leaderboards[key];
@@ -47,6 +49,20 @@ class LeaderboardProvider extends ChangeNotifier {
     return _errors[key];
   }
 
+  // Hesap değiştiğinde bütün leaderboard verilerini temizler.
+  void clearForAccountChange() {
+    // Önceki isteklerin sonuçlarını geçersiz hâle getir.
+    _requestGeneration++;
+
+    // Eski hesaba ait verileri ve istek kayıtlarını temizle.
+    _leaderboards.clear();
+    _loadingCountries.clear();
+    _errors.clear();
+    _inFlightRequests.clear();
+
+    notifyListeners();
+  }
+
   // Leaderboard verisini yükler.
   //
   // forceRefresh false ise mevcut veri tekrar kullanılır.
@@ -57,8 +73,7 @@ class LeaderboardProvider extends ChangeNotifier {
   }) {
     final key = _getCountryKey(country);
 
-    // Aynı ülke için devam eden bir istek varsa
-    // yeni istek başlatmak yerine mevcut isteği kullan.
+    // Aynı ülke için devam eden istek varsa mevcut isteği kullan.
     final existingRequest = _inFlightRequests[key];
 
     if (existingRequest != null) {
@@ -70,9 +85,13 @@ class LeaderboardProvider extends ChangeNotifier {
       return Future<void>.value();
     }
 
+    // İsteğin başladığı hesap neslini sakla.
+    final generation = _requestGeneration;
+
     final request = _loadLeaderboard(
       key: key,
       country: country,
+      generation: generation,
     );
 
     _inFlightRequests[key] = request;
@@ -83,6 +102,7 @@ class LeaderboardProvider extends ChangeNotifier {
   // API isteğini gerçekleştirir.
   Future<void> _loadLeaderboard({
     required String key,
+    required int generation,
     String? country,
   }) async {
     _loadingCountries.add(key);
@@ -91,15 +111,17 @@ class LeaderboardProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Kullanıcının ClientId bilgisini al.
-      final clientId = await _clientIdStorage.getClientId();
-
-      // Leaderboard API isteğini gerçekleştir.
+      // Kullanıcı kimliği JWT üzerinden belirlenir.
+      // API isteğinde ClientId gönderilmez.
       final result = await _apiService.getLeaderboard(
-        clientId: clientId,
         country: country,
         limit: _leaderboardLimit,
       );
+
+      // Hesap değişmişse eski isteğin sonucunu kullanma.
+      if (generation != _requestGeneration) {
+        return;
+      }
 
       if (result.success && result.data != null) {
         _leaderboards[key] = result.data!;
@@ -109,14 +131,22 @@ class LeaderboardProvider extends ChangeNotifier {
             : 'Liderlik tablosu yüklenemedi.';
       }
     } catch (error) {
-      _errors[key] = 'Liderlik tablosu yüklenirken bir hata oluştu.';
+      // Eski hesaba ait hata bilgisini de yeni oturuma taşıma.
+      if (generation == _requestGeneration) {
+        _errors[key] =
+        'Liderlik tablosu yüklenirken bir hata oluştu.';
 
-      debugPrint('Leaderboard yükleme hatası: $error');
+        debugPrint('Leaderboard yükleme hatası: $error');
+      }
     } finally {
-      _loadingCountries.remove(key);
-      _inFlightRequests.remove(key);
+      // Yalnızca hâlâ geçerli olan istek kendi durumunu temizleyebilir.
+      // Böylece eski istek yeni isteğin loading durumunu silemez.
+      if (generation == _requestGeneration) {
+        _loadingCountries.remove(key);
+        _inFlightRequests.remove(key);
 
-      notifyListeners();
+        notifyListeners();
+      }
     }
   }
 

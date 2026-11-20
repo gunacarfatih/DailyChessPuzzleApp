@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/auth_provider.dart';
+import '../../providers/leaderboard_provider.dart';
 import '../../core/services/leaderboard_signalr_service.dart';
 
 import '../home/screens/home_page.dart';
@@ -76,36 +77,63 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     _updateSignalRConnection();
   }
 
-  // Kullanıcı giriş/çıkış yaptığında çağrılır.
+  // Kullanıcı giriş/çıkış yaptığında veya hesap değiştirdiğinde çağrılır.
   Future<void> _handleAuthChanged() async {
+    if (!mounted) return;
+
+    // Önce eski hesaba ait leaderboard verilerini temizle.
+    context.read<LeaderboardProvider>().clearForAccountChange();
+
+    // Hesap değiştiğinde eski bulmaca oturumunu sıfırla
+    // ve yeni oturumun günlük bulmacasını yükle.
+    _puzzlePageKey.currentState?.resetPuzzleForAccountChange();
+
+    // Yeni oturum durumuna göre SignalR bağlantısını güncelle.
     await _updateSignalRConnection();
-  }
-
-  // SignalR bağlantı güncellemesini tekilleştirir.
-  Future<void> _updateSignalRConnection() {
-    return _signalRUpdateFuture ??=
-        _updateSignalRConnectionInternal().whenComplete(() {
-          _signalRUpdateFuture = null;
-        });
-  }
-
-  // Provider üzerinden oturum durumunu kontrol eder
-  // ve SignalR bağlantısını günceller.
-  Future<void> _updateSignalRConnectionInternal() async {
-    final authProvider = context.read<AuthProvider>();
-
-    await authProvider.initialize();
 
     if (!mounted) return;
 
+    // Yeni oturum bilgileriyle leaderboard verisini yeniden yükle.
+    _leaderboardPageKey.currentState?.refreshLeaderboard();
+  }
+
+  // SignalR bağlantı güncellemelerini sıraya alır.
+  Future<void> _updateSignalRConnection() {
+    final previousUpdate =
+        _signalRUpdateFuture ?? Future<void>.value();
+
+    final update = previousUpdate.then(
+          (_) => _updateSignalRConnectionInternal(),
+    );
+
+    _signalRUpdateFuture = update;
+
+    return update.whenComplete(() {
+      if (identical(_signalRUpdateFuture, update)) {
+        _signalRUpdateFuture = null;
+      }
+    });
+  }
+
+  // Provider üzerinden oturum durumunu kontrol eder
+// ve SignalR bağlantısını günceller.
+  Future<void> _updateSignalRConnectionInternal() async {
     try {
+      final authProvider = context.read<AuthProvider>();
+
+      await authProvider.initialize();
+
+      if (!mounted) return;
+
       if (authProvider.isLoggedIn) {
         await _signalRService.connect();
       } else {
         await _signalRService.disconnect();
       }
     } catch (error) {
-      debugPrint('SignalR bağlantı güncelleme hatası: $error');
+      debugPrint(
+        'SignalR bağlantı güncelleme hatası: $error',
+      );
     }
   }
 

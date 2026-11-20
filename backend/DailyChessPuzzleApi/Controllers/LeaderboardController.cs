@@ -1,4 +1,5 @@
-﻿using System.Security.Claims;
+﻿
+using System.Security.Claims;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Responses;
 using Microsoft.AspNetCore.Mvc;
@@ -25,7 +26,6 @@ namespace DailyChessPuzzleApi.Controllers
         [HttpGet]
         public async Task<IActionResult> GetLeaderboard(
             [FromQuery] string? country = null,
-            [FromQuery] string? clientId = null,
             [FromQuery] int limit = 0,
             [FromQuery] DateOnly? startDate = null,
             [FromQuery] DateOnly? endDate = null,
@@ -52,9 +52,8 @@ namespace DailyChessPuzzleApi.Controllers
             }
 
             _logger.LogInformation(
-                "GET leaderboard request received. Country: {Country}, ClientId: {ClientId}, UserId: {UserId}, Limit: {Limit}, StartDate: {StartDate}, EndDate: {EndDate}",
+                "GET leaderboard request received. Country: {Country}, UserId: {UserId}, Limit: {Limit}, StartDate: {StartDate}, EndDate: {EndDate}",
                 country ?? "Global",
-                clientId,
                 userId,
                 limit,
                 startDate,
@@ -64,7 +63,6 @@ namespace DailyChessPuzzleApi.Controllers
             // Liderlik tablosu servisinden veriler alınır.
             var response = await _leaderboardService.GetLeaderboardAsync(
                 country,
-                clientId,
                 userId,
                 limit,
                 startDate,

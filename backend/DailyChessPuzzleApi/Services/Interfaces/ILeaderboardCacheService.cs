@@ -1,4 +1,5 @@
-﻿namespace DailyChessPuzzleApi.Services.Interfaces
+﻿
+namespace DailyChessPuzzleApi.Services.Interfaces
 {
     public interface ILeaderboardCacheService
     {
@@ -39,7 +40,10 @@
             string clientId);
 
         Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
-            GetTopAsync(string key, int count);
+            GetTopAsync(
+                string key,
+                int count,
+                long offset = 0);
 
         Task<long?> GetRankAsync(
             string key,

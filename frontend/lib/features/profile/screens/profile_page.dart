@@ -49,7 +49,7 @@ class ProfilePageState extends State<ProfilePage> {
   }
 
   // Profil ekranını yeniler.
-  // Bu işlemde global leaderboard verisi de zorla yenilenir.
+  // Global leaderboard verisini de zorla yeniler.
   Future<void> refreshProfile() async {
     if (!mounted || _isLoading || _isLoggingOut) return;
 
@@ -68,11 +68,12 @@ class ProfilePageState extends State<ProfilePage> {
     });
 
     try {
-      // Oturum bilgilerini Provider üzerinden al.
+      // Provider referanslarını asenkron işlemlerden önce al.
       final authProvider = context.read<AuthProvider>();
+      final leaderboardProvider =
+      context.read<LeaderboardProvider>();
 
-      // Uygulama açılışındaki oturum yüklemesi henüz
-      // tamamlanmamışsa tamamlanmasını bekle.
+      // Uygulama açılışındaki oturum yüklemesinin tamamlanmasını bekle.
       await authProvider.initialize();
 
       final clientId = await _clientIdStorage.getClientId();
@@ -88,63 +89,48 @@ class ProfilePageState extends State<ProfilePage> {
 
       if (!mounted) return;
 
-      // Leaderboard verisini ortak Provider üzerinden al.
-      final leaderboardProvider =
-      context.read<LeaderboardProvider>();
+      LeaderboardEntry? currentUser;
 
-      if (forceRefresh) {
-        await leaderboardProvider.refreshLeaderboard();
-      } else {
-        await leaderboardProvider.loadLeaderboard();
+      // Yalnızca kayıtlı kullanıcıların leaderboard istatistikleri bulunur.
+      // Misafir kullanıcılar leaderboard sistemine dahil edilmez.
+      if (isLoggedIn) {
+        if (forceRefresh) {
+          await leaderboardProvider.refreshLeaderboard();
+        } else {
+          await leaderboardProvider.loadLeaderboard();
+        }
+
+        if (!mounted) return;
+
+        final leaderboard =
+        leaderboardProvider.leaderboardFor(null);
+
+        final leaderboardError =
+        leaderboardProvider.errorFor(null);
+
+        if (leaderboard == null) {
+          setState(() {
+            _clientId = clientId;
+            _isLoggedIn = isLoggedIn;
+            _username = username;
+            _email = email;
+            _firstName = firstName;
+            _lastName = lastName;
+            _userId = userId;
+            _hasPassword = hasPassword;
+            _errorMessage = leaderboardError ??
+                'Profil bilgileri alınamadı.';
+            _isLoading = false;
+          });
+
+          return;
+        }
+
+        // Profil istatistikleri için tüm zamanlar verisini kullan.
+        currentUser = leaderboard.allTime.currentUser;
       }
 
       if (!mounted) return;
-
-      // Global leaderboard yanıtını Provider'dan al.
-      final leaderboard =
-      leaderboardProvider.leaderboardFor(null);
-
-      final leaderboardError =
-      leaderboardProvider.errorFor(null);
-
-      if (leaderboard == null) {
-        setState(() {
-          _clientId = clientId;
-          _isLoggedIn = isLoggedIn;
-          _username = username;
-          _email = email;
-          _firstName = firstName;
-          _lastName = lastName;
-          _userId = userId;
-          _hasPassword = hasPassword;
-          _errorMessage = leaderboardError ??
-              'Profil bilgileri alınamadı.';
-          _isLoading = false;
-        });
-
-        return;
-      }
-
-      // Profil istatistikleri için tüm zamanlar verisini kullan.
-      final allTime = leaderboard.allTime;
-
-      final LeaderboardEntry? currentUser;
-
-      if (allTime.currentUser != null) {
-        currentUser = allTime.currentUser;
-      } else if (isLoggedIn && userId != null) {
-        currentUser = _findCurrentUser(
-          allTime.rankings,
-          'user:$userId',
-        );
-      } else if (!isLoggedIn) {
-        currentUser = _findCurrentUser(
-          allTime.rankings,
-          clientId,
-        );
-      } else {
-        currentUser = null;
-      }
 
       setState(() {
         _clientId = clientId;
@@ -169,20 +155,6 @@ class ProfilePageState extends State<ProfilePage> {
         _isLoading = false;
       });
     }
-  }
-
-  // Sıralama listesinden mevcut kullanıcıyı bulur.
-  LeaderboardEntry? _findCurrentUser(
-      List<LeaderboardEntry> rankings,
-      String clientId,
-      ) {
-    for (final entry in rankings) {
-      if (entry.clientId == clientId) {
-        return entry;
-      }
-    }
-
-    return null;
   }
 
   // Ad ve soyadı birleştirir.
@@ -226,8 +198,13 @@ class ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
 
     if (result == true) {
-      await _loadProfile(forceRefresh: true);
+      // Önce hesap değişikliğini bildir.
       await widget.onAuthChanged?.call();
+
+      if (!mounted) return;
+
+      // Ardından yeni hesabın profil bilgilerini yükle.
+      await _loadProfile();
     }
   }
 
@@ -243,8 +220,13 @@ class ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
 
     if (result == true) {
-      await _loadProfile(forceRefresh: true);
+      // Önce hesap değişikliğini bildir.
       await widget.onAuthChanged?.call();
+
+      if (!mounted) return;
+
+      // Ardından yeni hesabın profil bilgilerini yükle.
+      await _loadProfile();
     }
   }
 
@@ -297,6 +279,8 @@ class ProfilePageState extends State<ProfilePage> {
       },
     );
 
+    if (!mounted) return;
+
     if (shouldLogout == true) {
       await _logout();
     }
@@ -304,13 +288,16 @@ class ProfilePageState extends State<ProfilePage> {
 
   // JWT oturumunu temizler ve misafir profilini yükler.
   Future<void> _logout() async {
+    if (!mounted) return;
+
     setState(() {
       _isLoggingOut = true;
     });
 
     try {
-      // Çıkış işlemini Provider üzerinden gerçekleştir.
-      await context.read<AuthProvider>().logout();
+      final authProvider = context.read<AuthProvider>();
+
+      await authProvider.logout();
 
       // MainNavigationPage üzerindeki SignalR bağlantısını yenile.
       await widget.onAuthChanged?.call();
@@ -324,10 +311,12 @@ class ProfilePageState extends State<ProfilePage> {
         ),
       );
 
-      // Çıkış sonrasında misafir profilini ve istatistiklerini yenile.
+      // Çıkış sonrasında misafir profilini yükle.
       await _loadProfile(forceRefresh: true);
     } catch (error) {
       if (!mounted) return;
+
+      debugPrint('Çıkış hatası: $error');
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

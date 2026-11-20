@@ -20,7 +20,7 @@ class DailyChessPuzzleApp extends StatelessWidget {
       providers: [
         // Kullanıcı oturumunu yönetir.
         ChangeNotifierProvider(
-          create: (_) => AuthProvider()..initialize(),
+          create: (_) => AuthProvider(),
         ),
 
         // Liderlik tablosu verilerini yönetir.

@@ -1,10 +1,13 @@
-﻿using System.Globalization;
+﻿
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.DTOs;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
+
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -14,8 +17,14 @@ namespace DailyChessPuzzleApi.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly ILeaderboardCacheService _cacheService;
+        private readonly IPublicIdService _publicIdService;
         private readonly ILogger<LeaderboardService> _logger;
         private readonly LeaderboardSettings _settings;
+
+        private const string CachePrefix =
+            "DailyChessPuzzle_leaderboard:v2";
+
+        private const int CachePageSize = 50;
 
         private static readonly TimeSpan CustomRangeCacheDuration =
             TimeSpan.FromMinutes(60);
@@ -23,18 +32,19 @@ namespace DailyChessPuzzleApi.Services
         public LeaderboardService(
             ApplicationDbContext context,
             ILeaderboardCacheService cacheService,
+            IPublicIdService publicIdService,
             ILogger<LeaderboardService> logger,
             IOptions<LeaderboardSettings> options)
         {
             _context = context;
             _cacheService = cacheService;
+            _publicIdService = publicIdService;
             _logger = logger;
             _settings = options.Value;
         }
 
         public async Task<LeaderboardResponse> GetLeaderboardAsync(
             string? country,
-            string? clientId,
             int? userId,
             int limit,
             DateOnly? startDate,
@@ -55,18 +65,6 @@ namespace DailyChessPuzzleApi.Services
 
             country = ValidateCountry(country);
 
-            clientId = string.IsNullOrWhiteSpace(clientId)
-                ? null
-                : clientId.Trim();
-
-            // Kayıtlı kullanıcı için hesap kimliği,
-            // misafir kullanıcı için cihaz kimliği kullanılır.
-            string? leaderboardIdentity = userId.HasValue
-                ? $"user:{userId.Value}"
-                : clientId;
-
-            // Misafir kullanıcı ClientId göndermediyse
-            // mevcut kullanıcının sıralama bilgisi gösterilmez.
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
             if (startDate.HasValue != endDate.HasValue)
@@ -90,14 +88,13 @@ namespace DailyChessPuzzleApi.Services
                 }
             }
 
-            // Günlük leaderboard.
             var daily = await GetFixedPeriodAsync(
                 "daily",
                 today.ToString("yyyy-MM-dd"),
                 today,
                 today,
                 country,
-                leaderboardIdentity,
+                userId,
                 limit,
                 cancellationToken);
 
@@ -121,11 +118,10 @@ namespace DailyChessPuzzleApi.Services
                 weeklyStartDate,
                 today,
                 country,
-                leaderboardIdentity,
+                userId,
                 limit,
                 cancellationToken);
 
-            // Aylık leaderboard.
             var monthlyStartDate = new DateOnly(
                 today.Year,
                 today.Month,
@@ -137,22 +133,20 @@ namespace DailyChessPuzzleApi.Services
                 monthlyStartDate,
                 today,
                 country,
-                leaderboardIdentity,
+                userId,
                 limit,
                 cancellationToken);
 
-            // Tüm zamanlar leaderboard.
             var allTime = await GetFixedPeriodAsync(
                 "alltime",
                 "all",
                 null,
                 today,
                 country,
-                leaderboardIdentity,
+                userId,
                 limit,
                 cancellationToken);
 
-            // İsteğe bağlı özel tarih aralığı.
             LeaderboardPeriodDto? customRange = null;
 
             if (startDate.HasValue && endDate.HasValue)
@@ -161,18 +155,15 @@ namespace DailyChessPuzzleApi.Services
                     startDate.Value,
                     endDate.Value,
                     country,
-                    leaderboardIdentity,
                     userId,
-                    clientId,
                     limit,
                     cancellationToken);
             }
 
             _logger.LogInformation(
-                "All leaderboards retrieved successfully. Country: {Country}, UserId: {UserId}, ClientId: {ClientId}, Limit: {Limit}",
+                "All leaderboards retrieved successfully. Country: {Country}, UserId: {UserId}, Limit: {Limit}",
                 country ?? "Global",
                 userId,
-                clientId,
                 limit);
 
             return new LeaderboardResponse
@@ -191,18 +182,19 @@ namespace DailyChessPuzzleApi.Services
             DateOnly? startDate,
             DateOnly? endDate,
             string? country,
-            string? leaderboardIdentity,
+            int? userId,
             int limit,
             CancellationToken cancellationToken)
         {
             string cacheKey =
-                $"DailyChessPuzzle_leaderboard:{period}:{periodKey}:{country ?? "global"}";
+                $"{CachePrefix}:{period}:{periodKey}:{country ?? "global"}";
 
             List<(string ClientId, int TotalScore, int SolvedCount)> topEntries;
 
             try
             {
-                bool cacheExists = await _cacheService.ExistsAsync(cacheKey);
+                bool cacheExists =
+                    await _cacheService.ExistsAsync(cacheKey);
 
                 if (!cacheExists)
                 {
@@ -214,9 +206,10 @@ namespace DailyChessPuzzleApi.Services
                         cancellationToken);
                 }
 
-                topEntries = await _cacheService.GetTopAsync(
+                topEntries = await GetTopFromCacheAsync(
                     cacheKey,
-                    limit);
+                    limit,
+                    cancellationToken);
 
                 if (topEntries.Count == 0)
                 {
@@ -227,9 +220,10 @@ namespace DailyChessPuzzleApi.Services
                         country,
                         cancellationToken);
 
-                    topEntries = await _cacheService.GetTopAsync(
+                    topEntries = await GetTopFromCacheAsync(
                         cacheKey,
-                        limit);
+                        limit,
+                        cancellationToken);
                 }
             }
             catch (Exception ex) when (
@@ -248,54 +242,20 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
             }
 
-            var rankings = CreateRankings(topEntries);
+            var rankings = await CreateRankingsAsync(
+                topEntries,
+                cancellationToken);
 
             LeaderboardEntryDto? currentUser = null;
 
-            if (leaderboardIdentity != null)
+            if (userId.HasValue)
             {
-                try
-                {
-                    var userScore = await _cacheService.GetUserScoreAsync(
-                        cacheKey,
-                        leaderboardIdentity);
-
-                    if (userScore != null)
-                    {
-                        var userRank = await _cacheService.GetRankAsync(
-                            cacheKey,
-                            leaderboardIdentity);
-
-                        if (userRank.HasValue)
-                        {
-                            currentUser = new LeaderboardEntryDto
-                            {
-                                ClientId = leaderboardIdentity,
-                                TotalScore = userScore.Value.TotalScore,
-                                SolvedCount = userScore.Value.SolvedCount,
-                                Rank = (int)userRank.Value
-                            };
-                        }
-                    }
-                }
-                catch (Exception ex) when (
-                    ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(
-                        ex,
-                        "Redis current user lookup failed. Identity: {Identity}",
-                        leaderboardIdentity);
-                }
-
-                if (currentUser == null)
-                {
-                    currentUser = await GetCurrentUserFromDatabaseAsync(
-                        period,
-                        periodKey,
-                        country,
-                        leaderboardIdentity,
-                        cancellationToken);
-                }
+                currentUser = await GetCurrentUserFromDatabaseAsync(
+                    period,
+                    periodKey,
+                    country,
+                    userId.Value,
+                    cancellationToken);
             }
 
             return new LeaderboardPeriodDto
@@ -308,30 +268,109 @@ namespace DailyChessPuzzleApi.Services
             };
         }
 
+        /// <summary>
+        /// Redis kayıtlarını sayfalar halinde okur.
+        /// Users tablosunda bulunmayan kullanıcıları atlar.
+        /// İstenen sayıda kayıtlı kullanıcı bulunana kadar okumaya devam eder.
+        /// </summary>
+        private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
+            GetTopFromCacheAsync(
+                string cacheKey,
+                int limit,
+                CancellationToken cancellationToken)
+        {
+            var result =
+                new List<(string ClientId, int TotalScore, int SolvedCount)>();
+
+            var addedClientIds = new HashSet<string>(
+                StringComparer.Ordinal);
+
+            long offset = 0;
+
+            int pageSize = Math.Max(CachePageSize, limit);
+
+            while (result.Count < limit)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var page = await _cacheService.GetTopAsync(
+                    cacheKey,
+                    pageSize,
+                    offset);
+
+                if (page.Count == 0)
+                {
+                    break;
+                }
+
+                var userIds = page
+                    .Select(x => ParseUserId(x.ClientId))
+                    .Where(x => x.HasValue)
+                    .Select(x => x!.Value)
+                    .Distinct()
+                    .ToList();
+
+                var registeredUserIds = await _context.Users
+                    .AsNoTracking()
+                    .Where(x => userIds.Contains(x.Id))
+                    .Select(x => x.Id)
+                    .ToHashSetAsync(cancellationToken);
+
+                foreach (var entry in page)
+                {
+                    if (result.Count >= limit)
+                    {
+                        break;
+                    }
+
+                    int? parsedUserId = ParseUserId(entry.ClientId);
+
+                    if (!parsedUserId.HasValue ||
+                        !registeredUserIds.Contains(parsedUserId.Value))
+                    {
+                        continue;
+                    }
+
+                    if (!addedClientIds.Add(entry.ClientId))
+                    {
+                        continue;
+                    }
+
+                    result.Add(entry);
+                }
+
+                offset = checked(offset + page.Count);
+
+                if (page.Count < pageSize)
+                {
+                    break;
+                }
+            }
+
+            return result;
+        }
+
         private async Task<LeaderboardPeriodDto> GetCustomRangeAsync(
             DateOnly startDate,
             DateOnly endDate,
             string? country,
-            string? leaderboardIdentity,
             int? userId,
-            string? clientId,
             int limit,
             CancellationToken cancellationToken)
         {
             List<(string ClientId, int TotalScore, int SolvedCount)> topEntries;
-            LeaderboardEntryDto? currentUser = null;
+
+            var dailyKeys = new List<string>();
+            var versionKeys = new List<string>();
 
             try
             {
-                var dailyKeys = new List<string>();
-                var versionKeys = new List<string>();
-
                 for (var date = startDate;
                      date <= endDate;
                      date = date.AddDays(1))
                 {
                     string dailyKey =
-                        $"DailyChessPuzzle_leaderboard:daily:{date:yyyy-MM-dd}:{country ?? "global"}";
+                        $"{CachePrefix}:daily:{date:yyyy-MM-dd}:{country ?? "global"}";
 
                     string versionKey = $"{dailyKey}:version";
 
@@ -346,9 +385,6 @@ namespace DailyChessPuzzleApi.Services
                     versionKeys.Add(versionKey);
                 }
 
-                // Günlük cache sürümleri okunur.
-                // Böylece herhangi bir günlük skor değiştiğinde
-                // özel tarih aralığı cache anahtarı da değişir.
                 var versions = new List<long>();
 
                 foreach (var versionKey in versionKeys)
@@ -365,9 +401,10 @@ namespace DailyChessPuzzleApi.Services
                     [..16];
 
                 string rangeKey =
-                    $"DailyChessPuzzle_leaderboard:custom:{startDate:yyyy-MM-dd}:{endDate:yyyy-MM-dd}:{country ?? "global"}:{versionFingerprint}";
+                    $"{CachePrefix}:custom:{startDate:yyyy-MM-dd}:{endDate:yyyy-MM-dd}:{country ?? "global"}:{versionFingerprint}";
 
-                bool cacheExists = await _cacheService.ExistsAsync(rangeKey);
+                bool cacheExists =
+                    await _cacheService.ExistsAsync(rangeKey);
 
                 if (!cacheExists)
                 {
@@ -377,34 +414,10 @@ namespace DailyChessPuzzleApi.Services
                         CustomRangeCacheDuration);
                 }
 
-                topEntries = await _cacheService.GetTopAsync(
+                topEntries = await GetTopFromCacheAsync(
                     rangeKey,
-                    limit);
-
-                if (leaderboardIdentity != null)
-                {
-                    var userScore = await _cacheService.GetUserScoreAsync(
-                        rangeKey,
-                        leaderboardIdentity);
-
-                    if (userScore != null)
-                    {
-                        var userRank = await _cacheService.GetRankAsync(
-                            rangeKey,
-                            leaderboardIdentity);
-
-                        if (userRank.HasValue)
-                        {
-                            currentUser = new LeaderboardEntryDto
-                            {
-                                ClientId = leaderboardIdentity,
-                                TotalScore = userScore.Value.TotalScore,
-                                SolvedCount = userScore.Value.SolvedCount,
-                                Rank = (int)userRank.Value
-                            };
-                        }
-                    }
-                }
+                    limit,
+                    cancellationToken);
             }
             catch (Exception ex) when (
                 ex is not OperationCanceledException)
@@ -421,37 +434,27 @@ namespace DailyChessPuzzleApi.Services
                     country,
                     limit,
                     cancellationToken);
-
-                if (leaderboardIdentity != null)
-                {
-                    currentUser = await GetCustomRangeCurrentUserFromDatabaseAsync(
-                        startDate,
-                        endDate,
-                        country,
-                        userId,
-                        clientId,
-                        cancellationToken);
-                }
             }
 
-            // Redis'te kullanıcı bulunamazsa PostgreSQL'den kontrol edilir.
-            if (leaderboardIdentity != null && currentUser == null)
-            {
-                currentUser = await GetCustomRangeCurrentUserFromDatabaseAsync(
+            var rankings = await CreateRankingsAsync(
+                topEntries,
+                cancellationToken);
+
+            var currentUser = userId.HasValue
+                ? await GetCustomRangeCurrentUserFromDatabaseAsync(
                     startDate,
                     endDate,
                     country,
-                    userId,
-                    clientId,
-                    cancellationToken);
-            }
+                    userId.Value,
+                    cancellationToken)
+                : null;
 
             return new LeaderboardPeriodDto
             {
                 Period = "custom",
                 StartDate = startDate,
                 EndDate = endDate,
-                Rankings = CreateRankings(topEntries),
+                Rankings = rankings,
                 CurrentUser = currentUser
             };
         }
@@ -463,28 +466,32 @@ namespace DailyChessPuzzleApi.Services
             string? country,
             CancellationToken cancellationToken)
         {
-            bool isReady = await _cacheService.IsDailyCacheReadyAsync(
-                dailyKey);
+            bool isReady =
+                await _cacheService.IsDailyCacheReadyAsync(dailyKey);
 
             if (isReady)
             {
                 return;
             }
 
-            var entries = await _context.LeaderboardScores
-                .AsNoTracking()
-                .Where(x =>
-                    x.Period == "daily" &&
-                    x.PeriodKey == date.ToString("yyyy-MM-dd") &&
-                    x.CountryCode == country)
-                .Select(x => new
-                {
-                    x.ClientId,
-                    x.TotalScore,
-                    x.SolvedCount,
-                    x.Revision
-                })
-                .ToListAsync(cancellationToken);
+            // Yalnızca Users tablosunda bulunan kullanıcıları cache'e al.
+            var entries =
+                await (
+                    from score in _context.LeaderboardScores.AsNoTracking()
+                    join user in _context.Users.AsNoTracking()
+                        on score.ClientId equals "user:" + user.Id
+                    where
+                        score.Period == "daily" &&
+                        score.PeriodKey == date.ToString("yyyy-MM-dd") &&
+                        score.CountryCode == country
+                    select new
+                    {
+                        score.ClientId,
+                        score.TotalScore,
+                        score.SolvedCount,
+                        score.Revision
+                    })
+                    .ToListAsync(cancellationToken);
 
             var cacheEntries = entries
                 .Select(x => (
@@ -507,8 +514,6 @@ namespace DailyChessPuzzleApi.Services
                 cacheEntries.Count);
         }
 
-        // Özel tarih aralığında bütün denemeler hesap kimliğine
-        // veya misafir cihaz kimliğine göre gruplanır.
         private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
             GetCustomRangeTopFromDatabaseAsync(
                 DateOnly startDate,
@@ -517,11 +522,21 @@ namespace DailyChessPuzzleApi.Services
                 int limit,
                 CancellationToken cancellationToken)
         {
-            var query = _context.PuzzleAttempts
-                .AsNoTracking()
-                .Where(x =>
-                    x.PlayedOn >= startDate &&
-                    x.PlayedOn <= endDate);
+            // Guest kullanıcıların UserId değeri olmadığı için
+            // yalnızca kayıtlı kullanıcılarla eşleşen attempt kayıtları alınır.
+            var query =
+                from attempt in _context.PuzzleAttempts.AsNoTracking()
+                join user in _context.Users.AsNoTracking()
+                    on attempt.UserId equals (int?)user.Id
+                where
+                    attempt.PlayedOn >= startDate &&
+                    attempt.PlayedOn <= endDate
+                select new
+                {
+                    UserId = user.Id,
+                    attempt.Score,
+                    attempt.CountryCode
+                };
 
             if (country != null)
             {
@@ -529,76 +544,59 @@ namespace DailyChessPuzzleApi.Services
             }
 
             var entries = await query
-                .GroupBy(x =>
-                    x.UserId.HasValue
-                        ? "user:" + x.UserId.Value
-                        : x.ClientId)
+                .GroupBy(x => x.UserId)
                 .Select(group => new
                 {
-                    ClientId = group.Key,
+                    UserId = group.Key,
                     TotalScore = group.Sum(x => x.Score),
                     SolvedCount = group.Count()
                 })
                 .OrderByDescending(x => x.TotalScore)
                 .ThenByDescending(x => x.SolvedCount)
-                .ThenBy(x => x.ClientId)
+                .ThenBy(x => x.UserId)
                 .Take(limit)
                 .ToListAsync(cancellationToken);
 
             return entries
                 .Select(x => (
-                    x.ClientId,
+                    ClientId: $"user:{x.UserId}",
                     x.TotalScore,
                     x.SolvedCount))
                 .ToList();
         }
 
-        // Özel tarih aralığında mevcut kullanıcının puanı ve sırası.
-        private async Task<LeaderboardEntryDto?> GetCustomRangeCurrentUserFromDatabaseAsync(
-            DateOnly startDate,
-            DateOnly endDate,
-            string? country,
-            int? userId,
-            string? clientId,
-            CancellationToken cancellationToken)
+        private async Task<LeaderboardEntryDto?>
+            GetCustomRangeCurrentUserFromDatabaseAsync(
+                DateOnly startDate,
+                DateOnly endDate,
+                string? country,
+                int userId,
+                CancellationToken cancellationToken)
         {
-            if (!userId.HasValue && string.IsNullOrWhiteSpace(clientId))
-            {
-                return null;
-            }
-
-            var query = _context.PuzzleAttempts
-                .AsNoTracking()
-                .Where(x =>
-                    x.PlayedOn >= startDate &&
-                    x.PlayedOn <= endDate);
+            var query =
+                from attempt in _context.PuzzleAttempts.AsNoTracking()
+                join user in _context.Users.AsNoTracking()
+                    on attempt.UserId equals (int?)user.Id
+                where
+                    user.Id == userId &&
+                    attempt.PlayedOn >= startDate &&
+                    attempt.PlayedOn <= endDate
+                select new
+                {
+                    UserId = user.Id,
+                    attempt.Score,
+                    attempt.CountryCode
+                };
 
             if (country != null)
             {
                 query = query.Where(x => x.CountryCode == country);
             }
 
-            // Kayıtlı kullanıcı sadece UserId üzerinden aranır.
-            // Misafir kullanıcı yalnızca kendi ClientId değeriyle aranır.
-            if (userId.HasValue)
-            {
-                query = query.Where(x => x.UserId == userId.Value);
-            }
-            else
-            {
-                query = query.Where(x =>
-                    x.UserId == null &&
-                    x.ClientId == clientId);
-            }
-
             var userEntry = await query
-                .GroupBy(x =>
-                    x.UserId.HasValue
-                        ? "user:" + x.UserId.Value
-                        : x.ClientId)
+                .GroupBy(x => x.UserId)
                 .Select(group => new
                 {
-                    ClientId = group.Key,
                     TotalScore = group.Sum(x => x.Score),
                     SolvedCount = group.Count()
                 })
@@ -609,11 +607,19 @@ namespace DailyChessPuzzleApi.Services
                 return null;
             }
 
-            var allEntries = _context.PuzzleAttempts
-                .AsNoTracking()
-                .Where(x =>
-                    x.PlayedOn >= startDate &&
-                    x.PlayedOn <= endDate);
+            var allEntries =
+                from attempt in _context.PuzzleAttempts.AsNoTracking()
+                join user in _context.Users.AsNoTracking()
+                    on attempt.UserId equals (int?)user.Id
+                where
+                    attempt.PlayedOn >= startDate &&
+                    attempt.PlayedOn <= endDate
+                select new
+                {
+                    UserId = user.Id,
+                    attempt.Score,
+                    attempt.CountryCode
+                };
 
             if (country != null)
             {
@@ -622,10 +628,7 @@ namespace DailyChessPuzzleApi.Services
             }
 
             var groupedEntries = allEntries
-                .GroupBy(x =>
-                    x.UserId.HasValue
-                        ? "user:" + x.UserId.Value
-                        : x.ClientId)
+                .GroupBy(x => x.UserId)
                 .Select(group => new
                 {
                     TotalScore = group.Sum(x => x.Score),
@@ -641,41 +644,75 @@ namespace DailyChessPuzzleApi.Services
                     ),
                 cancellationToken);
 
-            return new LeaderboardEntryDto
-            {
-                ClientId = userEntry.ClientId,
-                TotalScore = userEntry.TotalScore,
-                SolvedCount = userEntry.SolvedCount,
-                Rank = usersAhead + 1
-            };
+            return await CreateEntryAsync(
+                userId,
+                userEntry.TotalScore,
+                userEntry.SolvedCount,
+                usersAhead + 1,
+                cancellationToken);
         }
 
-        private static List<LeaderboardEntryDto> CreateRankings(
-            List<(string ClientId, int TotalScore, int SolvedCount)> entries)
+        private async Task<List<LeaderboardEntryDto>> CreateRankingsAsync(
+            List<(string ClientId, int TotalScore, int SolvedCount)> entries,
+            CancellationToken cancellationToken)
         {
+            var userIds = entries
+                .Select(x => ParseUserId(x.ClientId))
+                .Where(x => x.HasValue)
+                .Select(x => x!.Value)
+                .Distinct()
+                .ToList();
+
+            // Kullanıcı adlarını tek sorguda getirerek N+1 sorgu problemini önle.
+            var usernames = await _context.Users
+                .AsNoTracking()
+                .Where(x => userIds.Contains(x.Id))
+                .Select(x => new
+                {
+                    x.Id,
+                    x.Username
+                })
+                .ToDictionaryAsync(
+                    x => x.Id,
+                    x => x.Username,
+                    cancellationToken);
+
             var rankings = new List<LeaderboardEntryDto>();
 
             int currentRank = 0;
+            int visiblePosition = 0;
+
             int previousScore = -1;
             int previousSolvedCount = -1;
 
-            for (int i = 0; i < entries.Count; i++)
+            foreach (var entry in entries)
             {
-                var entry = entries[i];
+                int? userId = ParseUserId(entry.ClientId);
 
-                if (i == 0 ||
+                // Geçersiz veya artık kayıtlı olmayan kullanıcıları gösterme.
+                if (!userId.HasValue ||
+                    !usernames.TryGetValue(userId.Value, out var username))
+                {
+                    continue;
+                }
+
+                visiblePosition++;
+
+                // Eşit puan ve çözüm sayısına sahip kullanıcılar aynı sırayı alır.
+                if (visiblePosition == 1 ||
                     entry.TotalScore != previousScore ||
                     entry.SolvedCount != previousSolvedCount)
                 {
-                    currentRank = i + 1;
+                    currentRank = visiblePosition;
                 }
 
                 rankings.Add(new LeaderboardEntryDto
                 {
-                    ClientId = entry.ClientId,
+                    Rank = currentRank,
+                    PublicId = _publicIdService.Generate(userId.Value),
+                    Username = username,
                     TotalScore = entry.TotalScore,
-                    SolvedCount = entry.SolvedCount,
-                    Rank = currentRank
+                    SolvedCount = entry.SolvedCount
                 });
 
                 previousScore = entry.TotalScore;
@@ -683,6 +720,195 @@ namespace DailyChessPuzzleApi.Services
             }
 
             return rankings;
+        }
+
+        private async Task<LeaderboardEntryDto?> CreateEntryAsync(
+            int userId,
+            int totalScore,
+            int solvedCount,
+            int rank,
+            CancellationToken cancellationToken)
+        {
+            var user = await _context.Users
+                .AsNoTracking()
+                .Where(x => x.Id == userId)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.Username
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (user == null)
+            {
+                return null;
+            }
+
+            return new LeaderboardEntryDto
+            {
+                Rank = rank,
+                PublicId = _publicIdService.Generate(user.Id),
+                Username = user.Username,
+                TotalScore = totalScore,
+                SolvedCount = solvedCount
+            };
+        }
+
+        private async Task<LeaderboardEntryDto?>
+            GetCurrentUserFromDatabaseAsync(
+                string period,
+                string periodKey,
+                string? country,
+                int userId,
+                CancellationToken cancellationToken)
+        {
+            string identity = $"user:{userId}";
+
+            // Kullanıcının gerçekten Users tablosunda bulunmasını zorunlu tut.
+            var query =
+                from score in _context.LeaderboardScores.AsNoTracking()
+                join user in _context.Users.AsNoTracking()
+                    on score.ClientId equals "user:" + user.Id
+                where
+                    score.Period == period &&
+                    score.PeriodKey == periodKey &&
+                    score.CountryCode == country
+                select new
+                {
+                    user.Id,
+                    score.ClientId,
+                    score.TotalScore,
+                    score.SolvedCount
+                };
+
+            var userEntry = await query
+                .Where(x => x.Id == userId && x.ClientId == identity)
+                .Select(x => new
+                {
+                    x.TotalScore,
+                    x.SolvedCount
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (userEntry == null)
+            {
+                return null;
+            }
+
+            int usersAhead = await query.CountAsync(
+                x =>
+                    x.TotalScore > userEntry.TotalScore ||
+                    (
+                        x.TotalScore == userEntry.TotalScore &&
+                        x.SolvedCount > userEntry.SolvedCount
+                    ),
+                cancellationToken);
+
+            return await CreateEntryAsync(
+                userId,
+                userEntry.TotalScore,
+                userEntry.SolvedCount,
+                usersAhead + 1,
+                cancellationToken);
+        }
+
+        private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
+            GetTopFromDatabaseAsync(
+                string period,
+                string periodKey,
+                string? country,
+                int limit,
+                CancellationToken cancellationToken)
+        {
+            // LeaderboardScores kayıtlarını gerçek kullanıcılarla eşleştir.
+            var entries = await (
+                from score in _context.LeaderboardScores.AsNoTracking()
+                join user in _context.Users.AsNoTracking()
+                    on score.ClientId equals "user:" + user.Id
+                where
+                    score.Period == period &&
+                    score.PeriodKey == periodKey &&
+                    score.CountryCode == country
+                orderby
+                    score.TotalScore descending,
+                    score.SolvedCount descending,
+                    score.ClientId
+                select new
+                {
+                    score.ClientId,
+                    score.TotalScore,
+                    score.SolvedCount
+                })
+                .Take(limit)
+                .ToListAsync(cancellationToken);
+
+            return entries
+                .Select(x => (
+                    x.ClientId,
+                    x.TotalScore,
+                    x.SolvedCount))
+                .ToList();
+        }
+
+        private async Task RebuildCacheAsync(
+            string cacheKey,
+            string period,
+            string periodKey,
+            string? country,
+            CancellationToken cancellationToken)
+        {
+            // Cache oluşturulurken de silinmiş kullanıcıları dahil etme.
+            var entries = await (
+                from score in _context.LeaderboardScores.AsNoTracking()
+                join user in _context.Users.AsNoTracking()
+                    on score.ClientId equals "user:" + user.Id
+                where
+                    score.Period == period &&
+                    score.PeriodKey == periodKey &&
+                    score.CountryCode == country
+                select new
+                {
+                    score.ClientId,
+                    score.TotalScore,
+                    score.SolvedCount,
+                    score.Revision
+                })
+                .ToListAsync(cancellationToken);
+
+            var cacheEntries = entries
+                .Select(x => (
+                    x.ClientId,
+                    x.TotalScore,
+                    x.SolvedCount,
+                    x.Revision))
+                .ToList();
+
+            await _cacheService.RebuildAsync(
+                cacheKey,
+                cacheEntries);
+
+            _logger.LogInformation(
+                "Leaderboard Redis cache rebuilt. CacheKey: {CacheKey}, UserCount: {UserCount}",
+                cacheKey,
+                cacheEntries.Count);
+        }
+
+        private static int? ParseUserId(string clientId)
+        {
+            const string prefix = "user:";
+
+            if (!clientId.StartsWith(
+                    prefix,
+                    StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return int.TryParse(
+                clientId[prefix.Length..],
+                out int userId) && userId > 0
+                    ? userId
+                    : null;
         }
 
         private static string? ValidateCountry(string? country)
@@ -711,127 +937,6 @@ namespace DailyChessPuzzleApi.Services
             }
 
             return country;
-        }
-
-        private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
-            GetTopFromDatabaseAsync(
-                string period,
-                string periodKey,
-                string? country,
-                int limit,
-                CancellationToken cancellationToken)
-        {
-            var entries = await _context.LeaderboardScores
-                .AsNoTracking()
-                .Where(x =>
-                    x.Period == period &&
-                    x.PeriodKey == periodKey &&
-                    x.CountryCode == country)
-                .OrderByDescending(x => x.TotalScore)
-                .ThenByDescending(x => x.SolvedCount)
-                .ThenBy(x => x.ClientId)
-                .Take(limit)
-                .Select(x => new
-                {
-                    x.ClientId,
-                    x.TotalScore,
-                    x.SolvedCount
-                })
-                .ToListAsync(cancellationToken);
-
-            return entries
-                .Select(x => (
-                    x.ClientId,
-                    x.TotalScore,
-                    x.SolvedCount))
-                .ToList();
-        }
-
-        private async Task RebuildCacheAsync(
-            string cacheKey,
-            string period,
-            string periodKey,
-            string? country,
-            CancellationToken cancellationToken)
-        {
-            var entries = await _context.LeaderboardScores
-                .AsNoTracking()
-                .Where(x =>
-                    x.Period == period &&
-                    x.PeriodKey == periodKey &&
-                    x.CountryCode == country)
-                .Select(x => new
-                {
-                    x.ClientId,
-                    x.TotalScore,
-                    x.SolvedCount,
-                    x.Revision
-                })
-                .ToListAsync(cancellationToken);
-
-            var cacheEntries = entries
-                .Select(x => (
-                    x.ClientId,
-                    x.TotalScore,
-                    x.SolvedCount,
-                    x.Revision))
-                .ToList();
-
-            await _cacheService.RebuildAsync(
-                cacheKey,
-                cacheEntries);
-
-            _logger.LogInformation(
-                "Leaderboard Redis cache rebuilt. CacheKey: {CacheKey}, UserCount: {UserCount}",
-                cacheKey,
-                cacheEntries.Count);
-        }
-
-        private async Task<LeaderboardEntryDto?> GetCurrentUserFromDatabaseAsync(
-            string period,
-            string periodKey,
-            string? country,
-            string leaderboardIdentity,
-            CancellationToken cancellationToken)
-        {
-            var query = _context.LeaderboardScores
-                .AsNoTracking()
-                .Where(x =>
-                    x.Period == period &&
-                    x.PeriodKey == periodKey &&
-                    x.CountryCode == country);
-
-            var userEntry = await query
-                .Where(x => x.ClientId == leaderboardIdentity)
-                .Select(x => new
-                {
-                    x.ClientId,
-                    x.TotalScore,
-                    x.SolvedCount
-                })
-                .FirstOrDefaultAsync(cancellationToken);
-
-            if (userEntry == null)
-            {
-                return null;
-            }
-
-            var usersAhead = await query
-                .CountAsync(x =>
-                    x.TotalScore > userEntry.TotalScore ||
-                    (
-                        x.TotalScore == userEntry.TotalScore &&
-                        x.SolvedCount > userEntry.SolvedCount
-                    ),
-                    cancellationToken);
-
-            return new LeaderboardEntryDto
-            {
-                ClientId = userEntry.ClientId,
-                TotalScore = userEntry.TotalScore,
-                SolvedCount = userEntry.SolvedCount,
-                Rank = usersAhead + 1
-            };
         }
     }
 }

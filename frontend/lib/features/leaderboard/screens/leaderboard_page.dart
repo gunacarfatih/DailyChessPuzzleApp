@@ -132,10 +132,10 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     }
   }
 
-  // Kullanıcıya gösterilecek ClientId metnini düzenler.
-  String _displayClientId(String clientId) {
-    if (clientId.trim().isEmpty) return 'Oyuncu';
-    return clientId;
+  // Kullanıcıya gösterilecek Username bilgisini düzenler.
+  String _displayUsername(String username) {
+    if (username.trim().isEmpty) return 'Oyuncu';
+    return username;
   }
 
   @override
@@ -144,7 +144,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     final leaderboardProvider =
     context.watch<LeaderboardProvider>();
 
-    // Seçili ülkeye ait verinin anahtarı.
+    // Seçili ülkenin leaderboard anahtarı.
     final selectedCountryCode = _selectedCountry == 'Global'
         ? null
         : _detectedCountryCode;
@@ -202,13 +202,41 @@ class LeaderboardPageState extends State<LeaderboardPage> {
               const SizedBox(height: 16),
               _buildPeriodSelector(),
               const SizedBox(height: 24),
-              _buildPodium(selectedLeaderboard),
-              const SizedBox(height: 24),
-              _buildRankingList(selectedLeaderboard),
-              const SizedBox(height: 16),
-              _buildCurrentUserCard(
-                selectedLeaderboard,
-              ),
+
+              // Sıralama ve kullanıcı verisi yoksa
+              // bilgilendirme mesajı göster.
+              if (selectedLeaderboard.rankings.isEmpty &&
+                  selectedLeaderboard.currentUser == null)
+                const Padding(
+                  padding: EdgeInsets.symmetric(
+                    vertical: 50,
+                  ),
+                  child: Center(
+                    child: Text(
+                      'Henüz sıralama verisi bulunmuyor.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                )
+              else ...[
+                // Sıralama listesi doluysa podyumu
+                // ve diğer sıralamaları göster.
+                if (selectedLeaderboard.rankings.isNotEmpty) ...[
+                  _buildPodium(selectedLeaderboard),
+                  const SizedBox(height: 24),
+                  _buildRankingList(selectedLeaderboard),
+                  const SizedBox(height: 16),
+                ],
+
+                // Kullanıcı ilk 10 içerisinde değilse
+                // kendi sıralamasını ayrıca göster.
+                if (selectedLeaderboard.currentUser != null)
+                  _buildCurrentUserCard(selectedLeaderboard),
+              ],
             ],
           ),
         ),
@@ -422,7 +450,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     final isFirst = position == 1;
 
     final isCurrentUser =
-        currentUser?.clientId == entry.clientId;
+        currentUser?.publicId == entry.publicId;
 
     final Color medalColor;
 
@@ -466,7 +494,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
             runSpacing: 3,
             children: [
               Text(
-                _displayClientId(entry.clientId),
+                _displayUsername(entry.username),
                 softWrap: true,
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -540,8 +568,28 @@ class LeaderboardPageState extends State<LeaderboardPage> {
   }
 
   Widget _buildRankingList(LeaderboardPeriod leaderboard) {
+    // Podyumda gösterilecek her derece için bir temsilci seçilir.
+    final podiumRepresentatives = <LeaderboardEntry>[];
+
+    for (int rank = 1; rank <= 3; rank++) {
+      final representative = leaderboard.rankings
+          .where((entry) => entry.rank == rank)
+          .firstOrNull;
+
+      if (representative != null) {
+        podiumRepresentatives.add(representative);
+      }
+    }
+
+    // Podyum temsilcilerinin PublicId değerleri alınır.
+    final podiumPublicIds = podiumRepresentatives
+        .map((entry) => entry.publicId)
+        .toSet();
+
+    // Yalnızca podyum temsilcileri listeden çıkarılır.
+    // Aynı dereceyi paylaşan diğer kullanıcılar listede kalır.
     final entries = leaderboard.rankings
-        .where((entry) => entry.rank > 3)
+        .where((entry) => !podiumPublicIds.contains(entry.publicId))
         .toList();
 
     if (entries.isEmpty) {
@@ -575,7 +623,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
       LeaderboardEntry? currentUser,
       ) {
     final isCurrentUser =
-        currentUser?.clientId == entry.clientId;
+        currentUser?.publicId == entry.publicId;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 9),
@@ -642,7 +690,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
                   runSpacing: 4,
                   children: [
                     Text(
-                      _displayClientId(entry.clientId),
+                      _displayUsername(entry.username),
                       softWrap: true,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
@@ -709,8 +757,10 @@ class LeaderboardPageState extends State<LeaderboardPage> {
       return const SizedBox.shrink();
     }
 
+    // Kullanıcı zaten ilk 10 sıralama içerisinde bulunuyorsa
+    // kişisel sıralama kartını tekrar gösterme.
     final isAlreadyInList = leaderboard.rankings.any(
-          (item) => item.clientId == entry.clientId,
+          (item) => item.publicId == entry.publicId,
     );
 
     if (isAlreadyInList) {
@@ -758,7 +808,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  _displayClientId(entry.clientId),
+                  _displayUsername(entry.username),
                   softWrap: true,
                   style: const TextStyle(
                     color: Colors.white,

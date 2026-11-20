@@ -1,6 +1,6 @@
+
 import 'package:flutter/material.dart';
 
-import '../../../core/storage/client_id_storage.dart';
 import '../../leaderboard/services/leaderboard_api_service.dart';
 
 class HomePage extends StatefulWidget {
@@ -18,7 +18,6 @@ class HomePage extends StatefulWidget {
 }
 
 class HomePageState extends State<HomePage> {
-  final ClientIdStorage _clientIdStorage = ClientIdStorage();
   final LeaderboardApiService _leaderboardApiService =
   LeaderboardApiService();
 
@@ -47,10 +46,7 @@ class HomePageState extends State<HomePage> {
     });
 
     try {
-      final clientId = await _clientIdStorage.getClientId();
-
       final response = await _leaderboardApiService.getLeaderboard(
-        clientId: clientId,
         limit: 10,
       );
 
@@ -70,8 +66,10 @@ class HomePageState extends State<HomePage> {
           _isLoadingStats = false;
         });
       }
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
+
+      debugPrint('Ana sayfa istatistik yükleme hatası: $error');
 
       setState(() {
         _isLoadingStats = false;

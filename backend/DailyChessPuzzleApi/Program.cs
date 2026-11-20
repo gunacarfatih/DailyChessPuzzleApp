@@ -9,6 +9,7 @@ using DailyChessPuzzleApi.Responses;
 using DailyChessPuzzleApi.Services;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
+using DailyChessPuzzleApi.Hubs;
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
@@ -20,7 +21,6 @@ using Microsoft.OpenApi;
 using ReusableCaching.Extensions;
 using Serilog;
 using StackExchange.Redis;
-using DailyChessPuzzleApi.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,6 +30,26 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<LeaderboardSettings>(
     builder.Configuration.GetSection("LeaderboardSettings"));
+
+// --------------------------------------------------
+// PUBLIC ID AYARLARI
+// --------------------------------------------------
+
+var publicIdSettings = builder.Configuration
+    .GetSection("PublicIdSettings")
+    .Get<PublicIdSettings>()
+    ?? throw new InvalidOperationException(
+        "PublicIdSettings yapılandırması bulunamadı.");
+
+if (string.IsNullOrWhiteSpace(publicIdSettings.Secret) ||
+    Encoding.UTF8.GetByteCount(publicIdSettings.Secret) < 32)
+{
+    throw new InvalidOperationException(
+        "PublicId Secret en az 32 byte uzunluğunda olmalıdır.");
+}
+
+builder.Services.Configure<PublicIdSettings>(
+    builder.Configuration.GetSection("PublicIdSettings"));
 
 // --------------------------------------------------
 // JWT AYARLARI
@@ -225,6 +245,9 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 builder.Services.AddScoped<IPuzzleService, PuzzleService>();
 
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
+
+// PublicId üretim servisi.
+builder.Services.AddSingleton<IPublicIdService, PublicIdService>();
 
 builder.Services.AddScoped<
     ILeaderboardOutboxService,

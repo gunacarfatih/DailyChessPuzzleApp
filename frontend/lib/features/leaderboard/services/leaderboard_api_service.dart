@@ -10,14 +10,12 @@ class LeaderboardApiService {
   final Dio _dio = ApiClient.dio;
 
   Future<ApiResponse<LeaderboardResponse>> getLeaderboard({
-    required String clientId,
     String? country,
     int limit = 10,
     DateTime? startDate,
     DateTime? endDate,
   }) async {
     final queryParameters = <String, dynamic>{
-      'clientId': clientId,
       'limit': limit,
     };
 
@@ -26,13 +24,11 @@ class LeaderboardApiService {
     }
 
     if (startDate != null) {
-      queryParameters['startDate'] =
-          _formatDate(startDate);
+      queryParameters['startDate'] = _formatDate(startDate);
     }
 
     if (endDate != null) {
-      queryParameters['endDate'] =
-          _formatDate(endDate);
+      queryParameters['endDate'] = _formatDate(endDate);
     }
 
     final response = await _dio.get(
