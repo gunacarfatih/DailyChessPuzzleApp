@@ -344,8 +344,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         return;
       }
     } catch (error, stackTrace) {
-      debugPrint('Liderlik tablosu yenileme hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Liderlik tablosu yenileme hatası: $error');
+      _debugLog('$stackTrace');
     }
   }
 
@@ -480,8 +480,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         await _loadBonusStatus();
       }
     } catch (error, stackTrace) {
-      debugPrint('Puzzle yükleme hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Puzzle yükleme hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -539,7 +539,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       if (!_isCurrentGeneration(generation)) return;
 
-      debugPrint("START PUZZLE DATA: ${response.data}");
+      _debugLog("START PUZZLE DATA: ${response.data}");
 
       if (!response.success || response.data == null) {
         throw Exception(
@@ -565,8 +565,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         playedMoves,
       );
 
-      debugPrint("PUZZLE INITIAL FEN: ${puzzle.fen}");
-      debugPrint("POSITION AFTER OPPONENT MOVE: ${currentPosition.fen}");
+      _debugLog("PUZZLE INITIAL FEN: ${puzzle.fen}");
+      _debugLog("POSITION AFTER OPPONENT MOVE: ${currentPosition.fen}");
 
       final startingPosition = _positionAfterFirstMove(
         puzzle.fen,
@@ -640,8 +640,8 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       _startTimer();
     } catch (error, stackTrace) {
-      debugPrint('Günlük oturum başlatma hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Günlük oturum başlatma hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -893,8 +893,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         _hintSquare = null;
       });
     } catch (error, stackTrace) {
-      debugPrint('Günlük hamle gönderme hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Günlük hamle gönderme hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -964,8 +964,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         'İpucu: $_hintSquare karesindeki taşı hareket ettir.';
       });
     } catch (error, stackTrace) {
-      debugPrint('Günlük ipucu hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Günlük ipucu hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1096,8 +1096,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         _bonusError = null;
       });
     } catch (error, stackTrace) {
-      debugPrint('Bonus durum kontrol hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Bonus durum kontrol hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1212,8 +1212,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         _startBonusTimer();
       }
     } catch (error, stackTrace) {
-      debugPrint('Bonus hazırlama hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Bonus hazırlama hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1321,8 +1321,8 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       _startBonusTimer();
     } catch (error, stackTrace) {
-      debugPrint('Bonus başlatma hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Bonus başlatma hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1431,7 +1431,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         _stopBonusTimer();
       }
     } catch (error) {
-      debugPrint('Bonus süre kontrol hatası: $error');
+      _debugLog('Bonus süre kontrol hatası: $error');
     }
   }
 
@@ -1598,8 +1598,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         );
       }
     } catch (error, stackTrace) {
-      debugPrint('Bonus hamle hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Bonus hamle hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1661,8 +1661,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         'İpucu: $_bonusHintSquare karesindeki taşı hareket ettir.';
       });
     } catch (error, stackTrace) {
-      debugPrint('Bonus ipucu hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Bonus ipucu hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1733,8 +1733,8 @@ class PuzzlePageState extends State<PuzzlePage> {
         _showBonusCompletionAnimation = false;
       });
     } catch (error, stackTrace) {
-      debugPrint('Bonus sonuç kaydetme hatası: $error');
-      debugPrint('$stackTrace');
+      _debugLog('Bonus sonuç kaydetme hatası: $error');
+      _debugLog('$stackTrace');
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -3534,4 +3534,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       ),
     );
   }
+}
+
+void _debugLog(Object? message) {
+  if (kDebugMode) debugPrint(message.toString());
 }

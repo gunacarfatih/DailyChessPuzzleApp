@@ -1,13 +1,18 @@
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
 import 'core/theme/app_theme.dart';
+import 'core/constants/api_constants.dart';
 import 'features/navigation/main_navigation_page.dart';
 import 'providers/auth_provider.dart';
 import 'providers/leaderboard_provider.dart';
 
 void main() {
+  if (kReleaseMode && !ApiConstants.baseUrl.startsWith('https://')) {
+    throw StateError('Release builds require an HTTPS API_BASE_URL.');
+  }
   runApp(const DailyChessPuzzleApp());
 }
 

@@ -3,12 +3,14 @@ using DailyChessPuzzleApi.Responses;
 using DailyChessPuzzleApi.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace DailyChessPuzzleApi.Controllers
 {
     [ApiController]
     [Route("api/auth")]
+    [EnableRateLimiting("auth")]
     public class AuthController : ControllerBase
     {
         private readonly IAuthService _authService;
@@ -63,6 +65,20 @@ namespace DailyChessPuzzleApi.Controllers
                 HttpContext,
                 "Google authentication completed successfully.",
                 result));
+        }
+
+        [Authorize]
+        [HttpPost("link-google")]
+        public async Task<IActionResult> LinkGoogleAccount(
+            [FromBody] LinkGoogleAccountRequest request,
+            CancellationToken cancellationToken)
+        {
+            int userId = GetAuthenticatedUserId();
+            await _authService.LinkGoogleAccountAsync(userId, request, cancellationToken);
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Google account linked successfully.",
+                new { linked = true }));
         }
 
         [Authorize]

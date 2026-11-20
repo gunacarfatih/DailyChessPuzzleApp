@@ -42,6 +42,8 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
   // Eş zamanlı SignalR bağlantı güncellemelerini önler.
   Future<void>? _signalRUpdateFuture;
+  AuthProvider? _observedAuthProvider;
+  bool _lastAuthState = false;
 
   late final List<Widget> _pages = [
     HomePage(
@@ -77,6 +79,36 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     _updateSignalRConnection();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<AuthProvider>();
+    if (identical(provider, _observedAuthProvider)) return;
+    _observedAuthProvider?.removeListener(_handleAuthProviderChanged);
+    _observedAuthProvider = provider;
+    _lastAuthState = provider.isLoggedIn;
+    provider.addListener(_handleAuthProviderChanged);
+  }
+
+  void _handleAuthProviderChanged() {
+    final provider = _observedAuthProvider;
+    if (provider == null) return;
+    final isLoggedIn = provider.isLoggedIn;
+    final sessionExpired = _lastAuthState && !isLoggedIn;
+    _lastAuthState = isLoggedIn;
+    if (!sessionExpired || !mounted) return;
+
+    setState(() => _selectedIndex = 3);
+    unawaited(_handleAuthChanged());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Oturumunuz sona erdi. Yeniden giriş yapın.')),
+        );
+      }
+    });
+  }
+
   // Kullanıcı giriş/çıkış yaptığında veya hesap değiştirdiğinde çağrılır.
   Future<void> _handleAuthChanged() async {
     if (!mounted) return;
@@ -95,6 +127,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
     // Yeni oturum bilgileriyle leaderboard verisini yeniden yükle.
     _leaderboardPageKey.currentState?.refreshLeaderboard();
+    _profilePageKey.currentState?.refreshProfile();
   }
 
   // SignalR bağlantı güncellemelerini sıraya alır.
@@ -125,11 +158,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
       if (!mounted) return;
 
-      if (authProvider.isLoggedIn) {
-        await _signalRService.connect();
-      } else {
-        await _signalRService.disconnect();
-      }
+      await _signalRService.connect();
     } catch (error) {
       debugPrint(
         'SignalR bağlantı güncelleme hatası: $error',
@@ -176,6 +205,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
   @override
   void dispose() {
+    _observedAuthProvider?.removeListener(_handleAuthProviderChanged);
     // Sayfa kapatılırken callback'leri temizle.
     _signalRService.onLeaderboardUpdated = null;
     _signalRService.onConnectionRestored = null;

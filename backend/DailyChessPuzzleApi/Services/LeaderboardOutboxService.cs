@@ -6,11 +6,13 @@ using DailyChessPuzzleApi.Services.Interfaces;
 
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Concurrent;
 
 namespace DailyChessPuzzleApi.Services
 {
     public class LeaderboardOutboxService : ILeaderboardOutboxService
     {
+        private static readonly ConcurrentDictionary<string, DateTime> LastNotificationUtc = new();
         private readonly ApplicationDbContext _context;
         private readonly ILeaderboardCacheService _cacheService;
         private readonly ILogger<LeaderboardOutboxService> _logger;
@@ -31,7 +33,7 @@ namespace DailyChessPuzzleApi.Services
             _hubContext = hubContext;
         }
 
-        public async Task ProcessPendingAsync(
+        public async Task<bool> ProcessPendingAsync(
             CancellationToken cancellationToken)
         {
             var now = DateTime.UtcNow;
@@ -395,7 +397,7 @@ namespace DailyChessPuzzleApi.Services
                             StringComparison.OrdinalIgnoreCase) &&
                         delivery.CountryCode == null;
 
-                    if (shouldNotifyClients)
+                    if (shouldNotifyClients && ShouldSendNotification(delivery.PeriodKey))
                     {
                         try
                         {
@@ -506,6 +508,38 @@ namespace DailyChessPuzzleApi.Services
                         actualRetryCount);
                 }
             }
+
+            return deliveryIds.Count == 100;
+        }
+
+        public async Task CleanupCompletedAsync(CancellationToken cancellationToken)
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-30);
+            await _context.LeaderboardCacheOutboxDeliveries
+                .Where(x => x.Status == LeaderboardCacheOutboxDeliveryStatus.Completed &&
+                            x.ProcessedAtUtc != null && x.ProcessedAtUtc < cutoff)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            await _context.LeaderboardCacheOutboxes
+                .Where(x => x.CreatedAtUtc < cutoff &&
+                            !_context.LeaderboardCacheOutboxDeliveries.Any(d =>
+                                d.OutboxId == x.Id &&
+                                d.Status != LeaderboardCacheOutboxDeliveryStatus.Completed))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
+        private static bool ShouldSendNotification(string periodKey)
+        {
+            var now = DateTime.UtcNow;
+            var previous = LastNotificationUtc.GetOrAdd(periodKey, DateTime.MinValue);
+            while (now - previous >= TimeSpan.FromSeconds(5))
+            {
+                if (LastNotificationUtc.TryUpdate(periodKey, now, previous))
+                    return true;
+                previous = LastNotificationUtc.GetOrAdd(periodKey, DateTime.MinValue);
+            }
+
+            return false;
         }
 
         // Kimliğin user: ile başlaması yeterli değildir.

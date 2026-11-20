@@ -34,6 +34,7 @@ class ApiConstants {
 
   // Leaderboard
   static const String leaderboardEndpoint = '/api/leaderboard';
+  static const String updateCountryEndpoint = '/api/users/me';
 
   // Authentication
   static const String registerEndpoint = '/api/auth/register';

@@ -9,10 +9,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <application
-        android:label="daily_chess_puzzle"
+        android:label="Daily Chess Puzzle"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        >
 
         <activity
             android:name=".MainActivity"

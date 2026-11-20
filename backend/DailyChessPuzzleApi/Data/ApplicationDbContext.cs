@@ -206,23 +206,23 @@ namespace DailyChessPuzzleApi.Data
                     .HasForeignKey(x => x.UserId)
                     .OnDelete(DeleteBehavior.Restrict);
 
-                // Kayıtlı kullanıcıların günlük oturumlarını sorgulamayı hızlandırır.
-                // Unique değildir; aynı gün birden fazla oturum açılabilir.
+                // Kullanıcı ve gün başına tek aktif oturum.
                 entity.HasIndex(x => new
                 {
                     x.UserId,
                     x.PuzzleDate
                 })
-                .HasFilter("\"UserId\" IS NOT NULL");
+                .IsUnique()
+                .HasFilter("\"UserId\" IS NOT NULL AND \"IsCompleted\" = FALSE");
 
-                // Misafirlerin günlük oturumlarını sorgulamayı hızlandırır.
-                // Unique değildir; aynı gün birden fazla oturum açılabilir.
+                // Misafir kimliği ve gün başına tek aktif oturum.
                 entity.HasIndex(x => new
                 {
                     x.ClientId,
                     x.PuzzleDate
                 })
-                .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL");
+                .IsUnique()
+                .HasFilter("\"UserId\" IS NULL AND \"ClientId\" IS NOT NULL AND \"IsCompleted\" = FALSE");
             });
 
             // PUZZLE ATTEMPT

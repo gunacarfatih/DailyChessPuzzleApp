@@ -25,11 +25,13 @@ class ProfilePage extends StatefulWidget {
 
 class ProfilePageState extends State<ProfilePage> {
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
+  final TextEditingController _countryController = TextEditingController();
 
   bool _isLoading = true;
   bool _isLoggedIn = false;
   bool _isLoggingOut = false;
   bool _hasPassword = false;
+  bool _isSavingCountry = false;
 
   String? _errorMessage;
 
@@ -86,6 +88,7 @@ class ProfilePageState extends State<ProfilePage> {
       final lastName = authProvider.lastName;
       final userId = authProvider.userId;
       final hasPassword = authProvider.hasPassword;
+      final countryCode = authProvider.countryCode;
 
       if (!mounted) return;
 
@@ -141,6 +144,7 @@ class ProfilePageState extends State<ProfilePage> {
         _lastName = lastName;
         _userId = userId;
         _hasPassword = hasPassword;
+        _countryController.text = countryCode ?? '';
         _profileData = currentUser;
         _isLoading = false;
       });
@@ -154,6 +158,84 @@ class ProfilePageState extends State<ProfilePage> {
         'Profil bilgileri alınırken bir hata oluştu.';
         _isLoading = false;
       });
+    }
+  }
+
+  Future<void> _saveCountryCode() async {
+    final value = _countryController.text.trim().toUpperCase();
+    if (value.isNotEmpty && !RegExp(r'^[A-Z]{2}$').hasMatch(value)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('İki harfli ülke kodu gir. Örn: TR')),
+      );
+      return;
+    }
+
+    setState(() => _isSavingCountry = true);
+    try {
+      final result = await context.read<AuthProvider>().updateCountryCode(
+            value.isEmpty ? null : value,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.success
+              ? 'Ülke bilgisi güncellendi.'
+              : result.message ?? 'Ülke bilgisi güncellenemedi.'),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ülke bilgisi güncellenemedi.')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSavingCountry = false);
+    }
+  }
+
+  Future<void> _linkGoogleAccount() async {
+    final passwordController = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Google hesabını bağla'),
+        content: TextField(
+          controller: passwordController,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'Mevcut şifren'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('İptal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, passwordController.text),
+            child: const Text('Devam et'),
+          ),
+        ],
+      ),
+    );
+    passwordController.dispose();
+    if (password == null || password.isEmpty || !mounted) return;
+
+    try {
+      final result = await context.read<AuthProvider>().linkGoogleAccount(
+            currentPassword: password,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.success
+              ? 'Google hesabı bağlandı.'
+              : result.message ?? 'Google hesabı bağlanamadı.'),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Google hesabı bağlanamadı.')),
+      );
     }
   }
 
@@ -388,10 +470,56 @@ class ProfilePageState extends State<ProfilePage> {
         _buildSectionTitle('Oyuncu Bilgileri'),
         const SizedBox(height: 14),
         _buildPlayerInformation(),
+        if (_isLoggedIn) ...[
+          const SizedBox(height: 16),
+          _buildCountryEditor(),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _linkGoogleAccount,
+            icon: const Icon(Icons.link),
+            label: const Text('Google hesabını bağla'),
+          ),
+        ],
         const SizedBox(height: 24),
         _buildInformationCard(),
       ],
     );
+  }
+
+  Widget _buildCountryEditor() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _countryController,
+            textCapitalization: TextCapitalization.characters,
+            maxLength: 2,
+            decoration: const InputDecoration(
+              labelText: 'Ülke kodu',
+              hintText: 'TR',
+              counterText: '',
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        FilledButton(
+          onPressed: _isSavingCountry ? null : _saveCountryCode,
+          child: _isSavingCountry
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Kaydet'),
+        ),
+      ],
+    );
+  }
+
+  @override
+  void dispose() {
+    _countryController.dispose();
+    super.dispose();
   }
 
   Widget _buildProfileHeader() {

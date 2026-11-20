@@ -5,6 +5,7 @@ using System.Text;
 
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.DTOs;
+using DailyChessPuzzleApi.Exceptions;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
 
@@ -85,6 +86,11 @@ namespace DailyChessPuzzleApi.Services
                 {
                     throw new ArgumentException(
                         "EndDate cannot be in the future.");
+                }
+
+                if (endDate.Value.DayNumber - startDate.Value.DayNumber > 91)
+                {
+                    throw new AppException(400, "LEADERBOARD_RANGE_TOO_LARGE");
                 }
             }
 

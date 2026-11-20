@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.gunacarfatih.repos"
+    namespace = "com.gunacarfatih.dailychesspuzzle"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.gunacarfatih.repos"
+        applicationId = "com.gunacarfatih.dailychesspuzzle"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -29,11 +29,25 @@ android {
         versionName = flutter.versionName
     }
 
+    val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+    val keyAliasValue = System.getenv("ANDROID_KEY_ALIAS")
+    val keyPasswordValue = System.getenv("ANDROID_KEY_PASSWORD")
+    val storePasswordValue = System.getenv("ANDROID_STORE_PASSWORD")
+    val hasReleaseKey = listOf(keystorePath, keyAliasValue, keyPasswordValue, storePasswordValue)
+        .all { !it.isNullOrBlank() }
+
+    if (hasReleaseKey) {
+        signingConfigs.create("release") {
+            storeFile = file(keystorePath!!)
+            keyAlias = keyAliasValue
+            keyPassword = keyPasswordValue
+            storePassword = storePasswordValue
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else null
         }
     }
 }

@@ -6,6 +6,7 @@ class AuthStorage {
   AuthStorage._();
 
   static final AuthStorage instance = AuthStorage._();
+  static Future<void> Function()? onSessionExpired;
 
   static const FlutterSecureStorage _storage =
   FlutterSecureStorage();
@@ -82,11 +83,17 @@ class AuthStorage {
       if (expiryDate == null ||
           !expiryDate.isAfter(DateTime.now().toUtc())) {
         await clearSession();
+        await onSessionExpired?.call();
         return null;
       }
     }
 
     return token;
+  }
+
+  Future<bool> hasStoredAccessToken() async {
+    final token = await _storage.read(key: _tokenKey);
+    return token != null && token.isNotEmpty;
   }
 
   Future<bool> isLoggedIn() async {
@@ -116,6 +123,14 @@ class AuthStorage {
 
   Future<String?> getCountryCode() async {
     return _storage.read(key: _countryCodeKey);
+  }
+
+  Future<void> updateCountryCode(String? countryCode) async {
+    if (countryCode == null || countryCode.isEmpty) {
+      await _storage.delete(key: _countryCodeKey);
+    } else {
+      await _storage.write(key: _countryCodeKey, value: countryCode);
+    }
   }
 
   Future<bool> getHasPassword() async {

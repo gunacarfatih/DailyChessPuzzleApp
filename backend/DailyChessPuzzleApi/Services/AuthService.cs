@@ -3,6 +3,7 @@ using DailyChessPuzzleApi.DTOs.Auth;
 using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
+using DailyChessPuzzleApi.Exceptions;
 using Google.Apis.Auth;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -48,7 +49,7 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
 
             if (usernameExists)
-                throw new InvalidOperationException("USERNAME_ALREADY_EXISTS");
+                throw new AppException(409, "USERNAME_ALREADY_EXISTS");
 
             bool emailExists = await _context.Users
                 .AnyAsync(
@@ -56,7 +57,7 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
 
             if (emailExists)
-                throw new InvalidOperationException("EMAIL_ALREADY_EXISTS");
+                throw new AppException(409, "EMAIL_ALREADY_EXISTS");
 
             var user = new User
             {
@@ -93,8 +94,7 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
 
             if (user == null || string.IsNullOrEmpty(user.PasswordHash))
-                throw new UnauthorizedAccessException(
-                    "INVALID_CREDENTIALS");
+                throw new AppException(401, "INVALID_CREDENTIALS");
 
             var verificationResult = _passwordHasher.VerifyHashedPassword(
                 user,
@@ -102,8 +102,7 @@ namespace DailyChessPuzzleApi.Services
                 request.Password);
 
             if (verificationResult == PasswordVerificationResult.Failed)
-                throw new UnauthorizedAccessException(
-                    "INVALID_CREDENTIALS");
+                throw new AppException(401, "INVALID_CREDENTIALS");
 
             if (verificationResult ==
                 PasswordVerificationResult.SuccessRehashNeeded)
@@ -146,8 +145,7 @@ namespace DailyChessPuzzleApi.Services
             }
             catch (InvalidJwtException)
             {
-                throw new UnauthorizedAccessException(
-                    "INVALID_GOOGLE_TOKEN");
+                throw new AppException(401, "INVALID_GOOGLE_TOKEN");
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -156,8 +154,7 @@ namespace DailyChessPuzzleApi.Services
                 string.IsNullOrWhiteSpace(payload.Email) ||
                 !payload.EmailVerified)
             {
-                throw new UnauthorizedAccessException(
-                    "GOOGLE_EMAIL_NOT_VERIFIED");
+                throw new AppException(401, "GOOGLE_EMAIL_NOT_VERIFIED");
             }
 
             string googleId = payload.Subject;
@@ -178,8 +175,7 @@ namespace DailyChessPuzzleApi.Services
 
             if (existingUser != null)
             {
-                throw new InvalidOperationException(
-                    "GOOGLE_ACCOUNT_LINK_REQUIRED");
+                throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
             }
 
             string username = await GenerateGoogleUsernameAsync(
@@ -205,6 +201,64 @@ namespace DailyChessPuzzleApi.Services
             return CreateAuthResponse(user);
         }
 
+        public async Task LinkGoogleAccountAsync(
+            int userId,
+            LinkGoogleAccountRequest request,
+            CancellationToken cancellationToken)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(
+                x => x.Id == userId,
+                cancellationToken);
+            if (user == null)
+                throw new AppException(404, "USER_NOT_FOUND");
+
+            if (string.IsNullOrWhiteSpace(user.PasswordHash))
+                throw new AppException(409, "PASSWORD_NOT_SET");
+
+            if (_passwordHasher.VerifyHashedPassword(
+                    user,
+                    user.PasswordHash,
+                    request.CurrentPassword) == PasswordVerificationResult.Failed)
+            {
+                throw new AppException(401, "INVALID_CREDENTIALS");
+            }
+
+            var clientId = _configuration["GoogleAuth:WebClientId"];
+            if (string.IsNullOrWhiteSpace(clientId))
+                throw new InvalidOperationException("Google client ID is not configured.");
+
+            GoogleJsonWebSignature.Payload payload;
+            try
+            {
+                payload = await GoogleJsonWebSignature.ValidateAsync(
+                    request.IdToken,
+                    new GoogleJsonWebSignature.ValidationSettings
+                    {
+                        Audience = new[] { clientId }
+                    });
+            }
+            catch (InvalidJwtException)
+            {
+                throw new AppException(401, "INVALID_GOOGLE_TOKEN");
+            }
+
+            if (!payload.EmailVerified ||
+                !string.Equals(payload.Email?.Trim(), user.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new AppException(403, "GOOGLE_EMAIL_MISMATCH");
+            }
+
+            var alreadyLinked = await _context.Users.AnyAsync(
+                x => x.Id != userId && x.GoogleId == payload.Subject,
+                cancellationToken);
+            if (alreadyLinked)
+                throw new AppException(409, "GOOGLE_ACCOUNT_ALREADY_LINKED");
+
+            user.GoogleId = payload.Subject;
+            user.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
         public async Task SetPasswordAsync(
             int userId,
             SetPasswordRequest request,
@@ -220,8 +274,7 @@ namespace DailyChessPuzzleApi.Services
 
             if (!string.IsNullOrWhiteSpace(user.PasswordHash))
             {
-                throw new InvalidOperationException(
-                    "PASSWORD_ALREADY_SET");
+                throw new AppException(409, "PASSWORD_ALREADY_SET");
             }
 
             user.PasswordHash = _passwordHasher.HashPassword(
@@ -248,8 +301,7 @@ namespace DailyChessPuzzleApi.Services
 
             if (string.IsNullOrWhiteSpace(user.PasswordHash))
             {
-                throw new InvalidOperationException(
-                    "PASSWORD_NOT_SET");
+                throw new AppException(409, "PASSWORD_NOT_SET");
             }
 
             var verificationResult =

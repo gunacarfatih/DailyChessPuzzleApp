@@ -27,7 +27,10 @@ class ApiResponse<T> {
 
     return ApiResponse<T>(
       success: json['success'] == true,
-      message: json['message']?.toString(),
+      message: _localizedMessage(
+        json['errorCode']?.toString(),
+        json['message']?.toString(),
+      ),
       status: (json['status'] as num?)?.toInt(),
       data: rawData == null
           ? null
@@ -43,5 +46,20 @@ class ApiResponse<T> {
         json['timestamp']?.toString() ?? '',
       ),
     );
+
+  static String? _localizedMessage(String? code, String? fallback) {
+    return switch (code) {
+      'INVALID_CREDENTIALS' => 'E-posta veya şifre hatalı.',
+      'GOOGLE_ACCOUNT_LINK_REQUIRED' =>
+        'Bu e-posta başka bir hesapta kayıtlı. E-posta ve şifrenizle giriş yapıp hesabınızı bağlayın.',
+      'GOOGLE_EMAIL_NOT_VERIFIED' => 'Google e-posta adresi doğrulanmamış.',
+      'USERNAME_ALREADY_EXISTS' => 'Bu kullanıcı adı zaten kullanılıyor.',
+      'EMAIL_ALREADY_EXISTS' => 'Bu e-posta adresi zaten kullanılıyor.',
+      'AUTHENTICATION_REQUIRED' || 'UNAUTHORIZED' =>
+        'Oturumunuz sona erdi. Lütfen yeniden giriş yapın.',
+      'RATE_LIMIT_EXCEEDED' => 'Çok fazla istek gönderdiniz. Biraz sonra tekrar deneyin.',
+      _ => fallback,
+    };
+  }
   }
 }

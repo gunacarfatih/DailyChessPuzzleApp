@@ -7,6 +7,10 @@ import '../features/auth/models/auth_response.dart';
 import '../features/auth/services/auth_api_service.dart';
 
 class AuthProvider extends ChangeNotifier {
+  AuthProvider() {
+    AuthStorage.onSessionExpired = _handleSessionExpired;
+  }
+
   final AuthApiService _authApiService = AuthApiService();
   final AuthStorage _authStorage = AuthStorage.instance;
 
@@ -74,6 +78,34 @@ class AuthProvider extends ChangeNotifier {
     _hasPassword = await _authStorage.getHasPassword();
 
     notifyListeners();
+  }
+
+  Future<void> _handleSessionExpired() async {
+    _clearUserData();
+    notifyListeners();
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> updateCountryCode(
+    String? countryCode,
+  ) async {
+    final normalized = countryCode?.trim().toUpperCase();
+    final result = await _authApiService.updateCountryCode(
+      normalized == null || normalized.isEmpty ? null : normalized,
+    );
+    if (result.success) {
+      _countryCode = normalized;
+      await _authStorage.updateCountryCode(normalized);
+      notifyListeners();
+    }
+    return result;
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> linkGoogleAccount({
+    required String currentPassword,
+  }) {
+    return _authApiService.linkGoogleAccount(
+      currentPassword: currentPassword,
+    );
   }
 
   // Ortak loading yönetimi.
@@ -204,5 +236,11 @@ class AuthProvider extends ChangeNotifier {
     _lastName = null;
     _countryCode = null;
     _hasPassword = false;
+  }
+
+  @override
+  void dispose() {
+    AuthStorage.onSessionExpired = null;
+    super.dispose();
   }
 }

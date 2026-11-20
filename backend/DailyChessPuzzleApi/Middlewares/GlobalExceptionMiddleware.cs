@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Runtime.ExceptionServices;
 using DailyChessPuzzleApi.Responses;
+using DailyChessPuzzleApi.Exceptions;
 
 namespace DailyChessPuzzleApi.Middlewares
 {
@@ -39,19 +40,16 @@ namespace DailyChessPuzzleApi.Middlewares
                     ex,
                     HttpStatusCode.Unauthorized);
             }
+            catch (AppException ex)
+            {
+                await HandleAppExceptionAsync(context, ex);
+            }
             catch (KeyNotFoundException ex)
             {
                 await HandleExceptionAsync(
                     context,
                     ex,
                     HttpStatusCode.NotFound);
-            }
-            catch (InvalidOperationException ex)
-            {
-                await HandleExceptionAsync(
-                    context,
-                    ex,
-                    HttpStatusCode.Conflict);
             }
             catch (ArgumentException ex)
             {
@@ -88,27 +86,25 @@ namespace DailyChessPuzzleApi.Middlewares
                 context.Request.Path,
                 (int)statusCode);
 
-            var isInternalServerError =
-                statusCode == HttpStatusCode.InternalServerError;
-
-            var message = isInternalServerError
-                ? "An unexpected error occurred."
-                : exception.Message;
+            var message = statusCode switch
+            {
+                HttpStatusCode.Unauthorized => "Authentication is required or invalid.",
+                HttpStatusCode.NotFound => "The requested resource was not found.",
+                HttpStatusCode.BadRequest => "The request is invalid.",
+                _ => "An unexpected error occurred."
+            };
 
             var errorCode = statusCode switch
             {
                 HttpStatusCode.BadRequest => "BAD_REQUEST",
                 HttpStatusCode.Unauthorized => "UNAUTHORIZED",
                 HttpStatusCode.NotFound => "RESOURCE_NOT_FOUND",
-                HttpStatusCode.Conflict => "CONFLICT",
                 HttpStatusCode.InternalServerError =>
                     "INTERNAL_SERVER_ERROR",
                 _ => "UNKNOWN_ERROR"
             };
 
-            var errors = isInternalServerError
-                ? null
-                : new List<string> { exception.Message };
+            var errors = (List<string>?)null;
 
             var response = ResponseFactory.Failure<object>(
                 context,
@@ -121,6 +117,28 @@ namespace DailyChessPuzzleApi.Middlewares
             context.Response.StatusCode = (int)statusCode;
             context.Response.ContentType = "application/json";
 
+            await context.Response.WriteAsJsonAsync(response);
+        }
+
+        private async Task HandleAppExceptionAsync(
+            HttpContext context,
+            AppException exception)
+        {
+            if (context.Response.HasStarted)
+            {
+                ExceptionDispatchInfo.Capture(exception).Throw();
+                return;
+            }
+
+            _logger.LogInformation(exception, "Request rejected with {ErrorCode}", exception.ErrorCode);
+            var response = ResponseFactory.Failure<object>(
+                context,
+                "The request could not be completed.",
+                exception.StatusCode,
+                exception.ErrorCode);
+            context.Response.Clear();
+            context.Response.StatusCode = exception.StatusCode;
+            context.Response.ContentType = "application/json";
             await context.Response.WriteAsJsonAsync(response);
         }
     }

@@ -14,6 +14,8 @@ using DailyChessPuzzleApi.Hubs;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -21,6 +23,7 @@ using Microsoft.OpenApi;
 using ReusableCaching.Extensions;
 using Serilog;
 using StackExchange.Redis;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -122,6 +125,48 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            success = false,
+            status = StatusCodes.Status429TooManyRequests,
+            errorCode = "RATE_LIMIT_EXCEEDED",
+            message = "Too many requests. Please try again later."
+        }, cancellationToken);
+    };
+
+    AddIpPolicy(options, "auth", permitLimit: 10, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "puzzle-write", permitLimit: 60, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "puzzle-read", permitLimit: 60, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "leaderboard", permitLimit: 30, window: TimeSpan.FromMinutes(1));
+});
+
+static void AddIpPolicy(
+    RateLimiterOptions options,
+    string name,
+    int permitLimit,
+    TimeSpan window)
+{
+    options.AddPolicy(name, context =>
+    {
+        var key = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            key,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = permitLimit,
+                Window = window,
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
+}
+
 // --------------------------------------------------
 // AUTH SERVİSLERİ
 // --------------------------------------------------
@@ -179,25 +224,29 @@ builder.Services
 // SERILOG
 // --------------------------------------------------
 
-var logDirectory = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-    ? "C:/DailyChess/logs"
-    : "/var/log/dailychess";
+var logDirectory = builder.Configuration["Logging:Directory"];
 
-Directory.CreateDirectory(logDirectory);
-
-var logFilePath = Path.Combine(logDirectory, "log-.txt");
+var logFilePath = string.IsNullOrWhiteSpace(logDirectory)
+    ? null
+    : Path.Combine(logDirectory, "log-.txt");
 
 builder.Host.UseSerilog((context, configuration) =>
 {
     configuration
         .ReadFrom.Configuration(context.Configuration)
-        .WriteTo.File(
-            path: logFilePath,
-            rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 10,
-            outputTemplate:
-                "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}"
-        );
+        .WriteTo.Console()
+        .WriteTo.Logger(fileLogger =>
+        {
+            if (!string.IsNullOrWhiteSpace(logFilePath))
+            {
+                Directory.CreateDirectory(logDirectory!);
+                fileLogger.WriteTo.File(
+                    path: logFilePath,
+                    rollingInterval: RollingInterval.Day,
+                    retainedFileCountLimit: 10,
+                    outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}");
+            }
+        });
 });
 
 // --------------------------------------------------
@@ -304,6 +353,19 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+var forwardedHeaders = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+                       Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+    ForwardLimit = 1
+};
+foreach (var proxy in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+{
+    if (System.Net.IPAddress.TryParse(proxy, out var address))
+        forwardedHeaders.KnownProxies.Add(address);
+}
+app.UseForwardedHeaders(forwardedHeaders);
+
 app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
@@ -316,9 +378,15 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+    app.UseHsts();
+}
 
+app.UseRouting();
 app.UseAuthentication();
+app.UseRateLimiter();
 
 app.UseAuthorization();
 

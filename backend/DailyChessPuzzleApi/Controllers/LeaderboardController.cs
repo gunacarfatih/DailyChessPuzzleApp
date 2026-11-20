@@ -3,6 +3,7 @@ using System.Security.Claims;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Responses;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace DailyChessPuzzleApi.Controllers
 {
@@ -24,6 +25,7 @@ namespace DailyChessPuzzleApi.Controllers
         // Günlük, haftalık, aylık, tüm zamanlar
         // ve isteğe bağlı özel tarih aralığı leaderboard verilerini getirir.
         [HttpGet]
+        [EnableRateLimiting("leaderboard")]
         public async Task<IActionResult> GetLeaderboard(
             [FromQuery] string? country = null,
             [FromQuery] int limit = 0,

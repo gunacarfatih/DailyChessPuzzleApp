@@ -33,16 +33,36 @@ class ApiClient {
           options.path.startsWith('/api/auth/');
 
           if (!isAuthEndpoint) {
+            final hadStoredToken =
+                await AuthStorage.instance.hasStoredAccessToken();
             final token =
             await AuthStorage.instance.getAccessToken();
 
             if (token != null) {
               options.headers['Authorization'] =
               'Bearer $token';
+            } else if (hadStoredToken) {
+              handler.reject(DioException(
+                requestOptions: options,
+                error: 'AUTH_SESSION_EXPIRED',
+              ));
+              return;
             }
           }
 
           handler.next(options);
+        },
+        onResponse: (response, handler) async {
+          final hadBearer = response.requestOptions.headers
+              .keys
+              .any((key) => key.toLowerCase() == 'authorization');
+          final isAuthEndpoint =
+              response.requestOptions.path.startsWith('/api/auth/');
+          if (response.statusCode == 401 && hadBearer && !isAuthEndpoint) {
+            await AuthStorage.instance.clearSession();
+            await AuthStorage.onSessionExpired?.call();
+          }
+          handler.next(response);
         },
       ),
     );

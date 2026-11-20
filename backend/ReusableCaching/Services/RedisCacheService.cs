@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Caching.Distributed;
 using ReusableCaching.Interfaces;
 using ReusableCaching.Models;
@@ -74,10 +74,4 @@ namespace ReusableCaching.Services
             return data != null;
         }
     }
-}
-
-
-public class A
-{
-    public int Name { get; set; }
 }

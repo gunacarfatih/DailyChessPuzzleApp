@@ -26,6 +26,7 @@ namespace DailyChessPuzzleApi.Services
 
             while (!stoppingToken.IsCancellationRequested)
             {
+                var retryAfterFailure = false;
                 try
                 {
                     // Bugünün tarihini UTC üzerinden hesapla.
@@ -50,6 +51,7 @@ namespace DailyChessPuzzleApi.Services
                 }
                 catch (Exception ex)
                 {
+                    retryAfterFailure = true;
                     _logger.LogError(
                         ex,
                         "An error occurred while assigning the daily puzzle."
@@ -59,11 +61,13 @@ namespace DailyChessPuzzleApi.Services
                 // Bir sonraki UTC gece yarısına kadar bekle.
                 var now = DateTime.UtcNow;
                 var nextMidnight = now.Date.AddDays(1);
-                var delay = nextMidnight - now;
+                var delay = retryAfterFailure
+                    ? TimeSpan.FromSeconds(30)
+                    : nextMidnight - now;
 
                 _logger.LogInformation(
                     "Next daily puzzle assignment check: {NextRun}",
-                    nextMidnight
+                    retryAfterFailure ? now.Add(delay) : nextMidnight
                 );
 
                 try

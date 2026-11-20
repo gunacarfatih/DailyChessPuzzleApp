@@ -169,6 +169,30 @@ class AuthApiService {
     return result;
   }
 
+  Future<ApiResponse<Map<String, dynamic>>> linkGoogleAccount({
+    required String currentPassword,
+  }) async {
+    await _initializeGoogleSignIn();
+    final account = await _googleSignIn.authenticate();
+    final idToken = account.authentication.idToken;
+    if (idToken == null || idToken.isEmpty) {
+      throw Exception('Google ID Token alınamadı.');
+    }
+
+    final response = await _dio.post(
+      '/api/auth/link-google',
+      data: {
+        'idToken': idToken,
+        'currentPassword': currentPassword,
+      },
+      options: await _getAuthenticatedOptions(),
+    );
+    return ApiResponse<Map<String, dynamic>>.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+    );
+  }
+
   // Google hesabı olan ve henüz şifresi bulunmayan kullanıcı
   // için ilk şifreyi belirler.
   Future<ApiResponse<Map<String, dynamic>>> setPassword({
@@ -222,6 +246,24 @@ class AuthApiService {
     }
 
     return result;
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> updateCountryCode(
+    String? countryCode,
+  ) async {
+    final token = await _authStorage.getAccessToken();
+    if (token == null || token.isEmpty) {
+      throw Exception('AUTH_SESSION_EXPIRED');
+    }
+
+    final response = await _dio.patch(
+      ApiConstants.updateCountryEndpoint,
+      data: {'countryCode': countryCode},
+    );
+    return ApiResponse<Map<String, dynamic>>.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+    );
   }
 
   // Kullanıcı oturumunu kapatır.

@@ -22,6 +22,8 @@ namespace DailyChessPuzzleApi.Services
                 "Leaderboard Outbox Background Service başlatıldı."
             );
 
+            DateOnly? lastCleanupDate = null;
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
@@ -34,7 +36,16 @@ namespace DailyChessPuzzleApi.Services
                         .GetRequiredService<ILeaderboardOutboxService>();
 
                     // Bekleyen görevler işlenir.
-                    await outboxService.ProcessPendingAsync(stoppingToken);
+                    var hasMore = await outboxService.ProcessPendingAsync(stoppingToken);
+                    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+                    if (lastCleanupDate != today)
+                    {
+                        await outboxService.CleanupCompletedAsync(stoppingToken);
+                        lastCleanupDate = today;
+                    }
+
+                    if (hasMore)
+                        continue;
                 }
                 catch (OperationCanceledException)
                     when (stoppingToken.IsCancellationRequested)

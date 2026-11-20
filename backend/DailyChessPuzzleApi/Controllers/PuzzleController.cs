@@ -4,6 +4,7 @@ using DailyChessPuzzleApi.DTOs;
 using DailyChessPuzzleApi.Responses;
 using DailyChessPuzzleApi.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace DailyChessPuzzleApi.Controllers
 {
@@ -23,6 +24,7 @@ namespace DailyChessPuzzleApi.Controllers
         // ---------------------------------------------------------
 
         [HttpGet("today")]
+        [EnableRateLimiting("puzzle-read")]
         public async Task<IActionResult> GetToday(
             [FromQuery] string? clientId,
             CancellationToken cancellationToken)
@@ -66,6 +68,7 @@ namespace DailyChessPuzzleApi.Controllers
         // ---------------------------------------------------------
 
         [HttpPost("session/start")]
+        [EnableRateLimiting("puzzle-write")]
         public async Task<IActionResult> StartSession(
             [FromQuery] string? clientId,
             CancellationToken cancellationToken)
@@ -100,6 +103,7 @@ namespace DailyChessPuzzleApi.Controllers
         // ---------------------------------------------------------
 
         [HttpPost("move")]
+        [EnableRateLimiting("puzzle-write")]
         public async Task<IActionResult> SubmitMove(
             [FromBody] PuzzleMoveRequest request,
             CancellationToken cancellationToken)
@@ -158,6 +162,7 @@ namespace DailyChessPuzzleApi.Controllers
         // ---------------------------------------------------------
 
         [HttpPost("hint")]
+        [EnableRateLimiting("puzzle-write")]
         public async Task<IActionResult> UseHint(
             [FromQuery] int? sessionId,
             [FromQuery] string? clientId,
@@ -202,6 +207,7 @@ namespace DailyChessPuzzleApi.Controllers
         // ---------------------------------------------------------
 
         [HttpGet("bonus")]
+        [EnableRateLimiting("puzzle-read")]
         public async Task<IActionResult> GetBonus(
             CancellationToken cancellationToken)
         {
@@ -221,6 +227,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("bonus/start")]
+        [EnableRateLimiting("puzzle-write")]
         public async Task<IActionResult> StartBonus(
             CancellationToken cancellationToken)
         {
@@ -240,6 +247,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("bonus/move")]
+        [EnableRateLimiting("puzzle-write")]
         public async Task<IActionResult> SubmitBonusMove(
             [FromBody] PuzzleMoveRequest request,
             CancellationToken cancellationToken)
@@ -275,6 +283,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("bonus/hint")]
+        [EnableRateLimiting("puzzle-write")]
         public async Task<IActionResult> UseBonusHint(
             CancellationToken cancellationToken)
         {
@@ -294,6 +303,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("bonus/submit")]
+        [EnableRateLimiting("puzzle-write")]
         public async Task<IActionResult> SubmitBonus(
             CancellationToken cancellationToken)
         {
