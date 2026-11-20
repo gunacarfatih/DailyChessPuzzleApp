@@ -55,6 +55,9 @@ namespace DailyChessPuzzleApi.Data
                     .HasMaxLength(254)
                     .IsRequired();
 
+                entity.Property(x => x.EmailVerificationCodeHash)
+                    .HasMaxLength(64);
+
                 entity.Property(x => x.PasswordHash)
                     .IsRequired(false);
 
@@ -282,6 +285,8 @@ namespace DailyChessPuzzleApi.Data
 
                 entity.HasIndex(x => x.PuzzleAttemptId);
 
+                entity.HasIndex(x => x.UserId);
+
                 entity.HasIndex(x => x.CreatedAtUtc);
 
                 entity.HasOne<PuzzleAttempt>()
@@ -289,6 +294,11 @@ namespace DailyChessPuzzleApi.Data
                     .HasForeignKey(x => x.PuzzleAttemptId)
                     .IsRequired(false)
                     .OnDelete(DeleteBehavior.Restrict);
+
+                entity.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
             // LEADERBOARD CACHE OUTBOX DELIVERY
@@ -336,6 +346,13 @@ namespace DailyChessPuzzleApi.Data
                     x.NextRetryAtUtc,
                     x.CreatedAtUtc
                 });
+
+                entity.HasIndex(x => x.TargetUserId);
+
+                entity.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(x => x.TargetUserId)
+                    .OnDelete(DeleteBehavior.SetNull);
 
                 entity.HasIndex(x => new
                 {
@@ -414,6 +431,19 @@ namespace DailyChessPuzzleApi.Data
                     x.TotalScore,
                     x.SolvedCount
                 });
+
+                entity.HasIndex(x => new
+                {
+                    x.UserId,
+                    x.Period,
+                    x.PeriodKey,
+                    x.CountryCode
+                });
+
+                entity.HasOne<User>()
+                    .WithMany()
+                    .HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
         }
     }

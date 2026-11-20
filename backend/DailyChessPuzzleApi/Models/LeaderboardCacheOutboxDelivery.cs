@@ -12,6 +12,8 @@ namespace DailyChessPuzzleApi.Models
         // İşlemin uygulanacağı leaderboard kimliği.
         public string TargetClientId { get; set; } = string.Empty;
 
+        public int? TargetUserId { get; set; }
+
         // true ise ilgili kimlik leaderboard'dan kaldırılır.
         public bool IsRemoval { get; set; }
 

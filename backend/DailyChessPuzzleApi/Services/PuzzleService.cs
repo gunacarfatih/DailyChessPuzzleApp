@@ -1067,7 +1067,7 @@ namespace DailyChessPuzzleApi.Services
                 return;
             }
 
-            var candidateIds = await _context.Puzzles
+            var candidates = _context.Puzzles
                 .AsNoTracking()
                 .Where(p =>
                     p.IsActive &&
@@ -1078,11 +1078,11 @@ namespace DailyChessPuzzleApi.Services
                         a.PuzzleId == p.Id) &&
                     !_context.PuzzleGameSessions.Any(s =>
                         s.UserId == userId &&
-                        s.PuzzleId == p.Id))
-                .Select(p => p.Id)
-                .ToListAsync(cancellationToken);
+                        s.PuzzleId == p.Id));
 
-            if (candidateIds.Count == 0)
+            var candidateCount = await candidates.CountAsync(cancellationToken);
+
+            if (candidateCount == 0)
             {
                 _logger.LogWarning(
                     "No available bonus candidates. UserId: {UserId}",
@@ -1091,8 +1091,11 @@ namespace DailyChessPuzzleApi.Services
                 return;
             }
 
-            var selectedId = candidateIds[
-                Random.Shared.Next(candidateIds.Count)];
+            var selectedId = await candidates
+                .OrderBy(p => p.Id)
+                .Skip(Random.Shared.Next(candidateCount))
+                .Select(p => p.Id)
+                .FirstAsync(cancellationToken);
 
             var assignment = new BonusPuzzleAssignment
             {
@@ -1145,6 +1148,7 @@ namespace DailyChessPuzzleApi.Services
             {
                 PuzzleAttemptId = puzzleAttemptId,
                 ClientId = leaderboardIdentity,
+                UserId = userId,
                 CreatedAtUtc = DateTime.UtcNow
             };
 
@@ -1259,6 +1263,7 @@ namespace DailyChessPuzzleApi.Services
             {
                 Outbox = outboxEntry,
                 TargetClientId = $"user:{userId}",
+                TargetUserId = userId,
                 IsRemoval = false,
                 Period = period,
                 PeriodKey = periodKey,

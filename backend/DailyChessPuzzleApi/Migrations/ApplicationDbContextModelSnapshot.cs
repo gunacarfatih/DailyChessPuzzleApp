@@ -75,6 +75,8 @@ namespace DailyChessPuzzleApi.Migrations
 
                     b.HasIndex("PuzzleAttemptId");
 
+                    b.HasIndex("UserId");
+
                     b.HasIndex("PuzzleId");
 
                     b.HasIndex("UserId", "PuzzleDate")
@@ -129,11 +131,16 @@ namespace DailyChessPuzzleApi.Migrations
                     b.Property<int?>("PuzzleAttemptId")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("UserId")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAtUtc");
 
                     b.HasIndex("PuzzleAttemptId");
+
+                    b.HasIndex("UserId");
 
                     b.ToTable("LeaderboardCacheOutboxes");
                 });
@@ -207,12 +214,17 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasMaxLength(105)
                         .HasColumnType("character varying(105)");
 
+                    b.Property<int?>("TargetUserId")
+                        .HasColumnType("integer");
+
                     b.Property<int>("TotalScore")
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
 
                     b.HasIndex("Status", "NextRetryAtUtc", "CreatedAtUtc");
+
+                    b.HasIndex("TargetUserId");
 
                     b.HasIndex("OutboxId", "TargetClientId", "IsRemoval", "Period", "PeriodKey")
                         .IsUnique()
@@ -253,6 +265,9 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
+                    b.Property<int?>("UserId")
+                        .HasColumnType("integer");
+
                     b.Property<long>("Revision")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
@@ -278,6 +293,8 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasFilter("\"CountryCode\" IS NOT NULL");
 
                     b.HasIndex("Period", "PeriodKey", "CountryCode", "TotalScore", "SolvedCount");
+
+                    b.HasIndex("UserId", "Period", "PeriodKey", "CountryCode");
 
                     b.ToTable("LeaderboardScores");
                 });
@@ -468,6 +485,16 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)");
 
+                    b.Property<bool>("EmailVerified")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("EmailVerificationCodeHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("EmailVerificationCodeExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("FirstName")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -551,6 +578,11 @@ namespace DailyChessPuzzleApi.Migrations
                         .WithMany()
                         .HasForeignKey("PuzzleAttemptId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DailyChessPuzzleApi.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.LeaderboardCacheOutboxDelivery", b =>
@@ -561,7 +593,20 @@ namespace DailyChessPuzzleApi.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("DailyChessPuzzleApi.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("TargetUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.Navigation("Outbox");
+                });
+
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.LeaderboardScore", b =>
+                {
+                    b.HasOne("DailyChessPuzzleApi.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.PuzzleAttempt", b =>

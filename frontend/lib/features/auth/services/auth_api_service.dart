@@ -55,7 +55,7 @@ class AuthApiService {
   // Yeni kullanıcı kaydı oluşturur.
   // Misafir ClientId gönderilmez.
   // Yeni hesap bağımsız olarak oluşturulur.
-  Future<ApiResponse<AuthResponse>> register({
+  Future<ApiResponse<Map<String, dynamic>>> register({
     required String username,
     required String firstName,
     required String lastName,
@@ -72,23 +72,44 @@ class AuthApiService {
       'countryCode': countryCode,
     };
 
-    final response = await _dio.post(
-      ApiConstants.registerEndpoint,
-      data: requestData,
-    );
+    return _postMap(ApiConstants.registerEndpoint, requestData);
+  }
 
-    final result = ApiResponse<AuthResponse>.fromJson(
-      Map<String, dynamic>.from(response.data as Map),
-      fromJsonT: (json) => AuthResponse.fromJson(
-        Map<String, dynamic>.from(json as Map),
-      ),
-    );
+  Future<ApiResponse<Map<String, dynamic>>> verifyEmail({
+    required String email,
+    required String code,
+  }) async {
+    return _postMap(ApiConstants.verifyEmailEndpoint, {
+      'email': email.trim(),
+      'code': code.trim(),
+    });
+  }
 
-    if (result.success && result.data != null) {
-      await _authStorage.saveSession(result.data!);
+  Future<ApiResponse<Map<String, dynamic>>> resendVerification({
+    required String email,
+  }) async {
+    return _postMap(ApiConstants.resendVerificationEndpoint, {
+      'email': email.trim(),
+    });
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> _postMap(
+    String path,
+    Map<String, dynamic> data,
+  ) async {
+    dynamic responseData;
+    try {
+      final response = await _dio.post(path, data: data);
+      responseData = response.data;
+    } on DioException catch (exception) {
+      responseData = exception.response?.data;
+      if (responseData is! Map) rethrow;
     }
 
-    return result;
+    return ApiResponse<Map<String, dynamic>>.fromJson(
+      Map<String, dynamic>.from(responseData as Map),
+      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+    );
   }
 
   // Mevcut kullanıcıyla e-posta ve şifre üzerinden giriş yapar.

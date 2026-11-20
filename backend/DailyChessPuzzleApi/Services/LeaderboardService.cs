@@ -182,6 +182,18 @@ namespace DailyChessPuzzleApi.Services
             };
         }
 
+        public Task<LeaderboardEntryDto?> GetUserStatsAsync(
+            int userId,
+            CancellationToken cancellationToken = default)
+        {
+            return GetCurrentUserFromDatabaseAsync(
+                "alltime",
+                "all",
+                country: null,
+                userId,
+                cancellationToken);
+        }
+
         private async Task<LeaderboardPeriodDto> GetFixedPeriodAsync(
             string period,
             string periodKey,
@@ -485,7 +497,7 @@ namespace DailyChessPuzzleApi.Services
                 await (
                     from score in _context.LeaderboardScores.AsNoTracking()
                     join user in _context.Users.AsNoTracking()
-                        on score.ClientId equals "user:" + user.Id
+                        on score.UserId equals user.Id
                     where
                         score.Period == "daily" &&
                         score.PeriodKey == date.ToString("yyyy-MM-dd") &&
@@ -774,7 +786,7 @@ namespace DailyChessPuzzleApi.Services
             var query =
                 from score in _context.LeaderboardScores.AsNoTracking()
                 join user in _context.Users.AsNoTracking()
-                    on score.ClientId equals "user:" + user.Id
+                    on score.UserId equals user.Id
                 where
                     score.Period == period &&
                     score.PeriodKey == periodKey &&
@@ -830,7 +842,7 @@ namespace DailyChessPuzzleApi.Services
             var entries = await (
                 from score in _context.LeaderboardScores.AsNoTracking()
                 join user in _context.Users.AsNoTracking()
-                    on score.ClientId equals "user:" + user.Id
+                    on score.UserId equals user.Id
                 where
                     score.Period == period &&
                     score.PeriodKey == periodKey &&
@@ -867,7 +879,7 @@ namespace DailyChessPuzzleApi.Services
             var entries = await (
                 from score in _context.LeaderboardScores.AsNoTracking()
                 join user in _context.Users.AsNoTracking()
-                    on score.ClientId equals "user:" + user.Id
+                    on score.UserId equals user.Id
                 where
                     score.Period == period &&
                     score.PeriodKey == periodKey &&

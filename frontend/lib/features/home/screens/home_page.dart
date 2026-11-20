@@ -1,7 +1,10 @@
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../../leaderboard/services/leaderboard_api_service.dart';
+import '../../../providers/auth_provider.dart';
+import '../../leaderboard/models/leaderboard_entry.dart';
+import '../../profile/services/user_stats_api_service.dart';
 
 class HomePage extends StatefulWidget {
   final VoidCallback onOpenPuzzle;
@@ -18,8 +21,7 @@ class HomePage extends StatefulWidget {
 }
 
 class HomePageState extends State<HomePage> {
-  final LeaderboardApiService _leaderboardApiService =
-  LeaderboardApiService();
+  final UserStatsApiService _userStatsApiService = UserStatsApiService();
 
   bool _isLoadingStats = true;
 
@@ -46,14 +48,26 @@ class HomePageState extends State<HomePage> {
     });
 
     try {
-      final response = await _leaderboardApiService.getLeaderboard(
-        limit: 10,
-      );
+      final authProvider = context.read<AuthProvider>();
+      await authProvider.initialize();
+
+      if (!authProvider.isLoggedIn) {
+        if (!mounted) return;
+        setState(() {
+          _totalScore = 0;
+          _solvedCount = 0;
+          _rank = null;
+          _isLoadingStats = false;
+        });
+        return;
+      }
+
+      final response = await _userStatsApiService.getMyStats();
 
       if (!mounted) return;
 
       if (response.success && response.data != null) {
-        final user = response.data!.allTime.currentUser;
+        final LeaderboardEntry? user = response.data;
 
         setState(() {
           _totalScore = user?.totalScore ?? 0;

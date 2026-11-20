@@ -11,6 +11,8 @@ namespace DailyChessPuzzleApi.Models
 
         public string ClientId { get; set; } = string.Empty;
 
+        public int? UserId { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
         public ICollection<LeaderboardCacheOutboxDelivery> Deliveries { get; set; }

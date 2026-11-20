@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace DailyChessPuzzleApi.Services
@@ -21,23 +22,27 @@ namespace DailyChessPuzzleApi.Services
         private readonly IPasswordHasher<User> _passwordHasher;
         private readonly JwtSettings _jwtSettings;
         private readonly IConfiguration _configuration;
+        private readonly IEmailSender _emailSender;
 
         public AuthService(
             ApplicationDbContext context,
             IPasswordHasher<User> passwordHasher,
             IOptions<JwtSettings> jwtOptions,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IEmailSender emailSender)
         {
             _context = context;
             _passwordHasher = passwordHasher;
             _jwtSettings = jwtOptions.Value;
             _configuration = configuration;
+            _emailSender = emailSender;
         }
 
-        public async Task<AuthResponse> RegisterAsync(
+        public async Task<RegistrationResponse> RegisterAsync(
             RegisterRequest request,
             CancellationToken cancellationToken)
         {
+            _emailSender.EnsureConfigured();
             string username = request.Username.Trim();
             string firstName = request.FirstName.Trim();
             string lastName = request.LastName.Trim();
@@ -59,6 +64,7 @@ namespace DailyChessPuzzleApi.Services
             if (emailExists)
                 throw new AppException(409, "EMAIL_ALREADY_EXISTS");
 
+            var verificationCode = GenerateEmailVerificationCode();
             var user = new User
             {
                 Username = username,
@@ -68,6 +74,9 @@ namespace DailyChessPuzzleApi.Services
                 CountryCode = request.CountryCode?
                     .Trim()
                     .ToUpperInvariant(),
+                EmailVerified = false,
+                EmailVerificationCodeHash = HashEmailVerificationCode(email, verificationCode),
+                EmailVerificationCodeExpiresAtUtc = DateTime.UtcNow.AddMinutes(15),
                 CreatedAtUtc = DateTime.UtcNow
             };
 
@@ -79,7 +88,83 @@ namespace DailyChessPuzzleApi.Services
 
             await _context.SaveChangesAsync(cancellationToken);
 
-            return CreateAuthResponse(user);
+            try
+            {
+                await _emailSender.SendVerificationCodeAsync(
+                    email,
+                    verificationCode,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                throw new AppException(503, "EMAIL_DELIVERY_FAILED");
+            }
+
+            return new RegistrationResponse { Email = email };
+        }
+
+        public async Task VerifyEmailAsync(
+            EmailVerificationRequest request,
+            CancellationToken cancellationToken)
+        {
+            var email = request.Email.Trim().ToLowerInvariant();
+            var user = await _context.Users.FirstOrDefaultAsync(
+                x => x.Email == email,
+                cancellationToken);
+
+            if (user == null || user.EmailVerified ||
+                user.EmailVerificationCodeHash == null ||
+                !user.EmailVerificationCodeExpiresAtUtc.HasValue ||
+                user.EmailVerificationCodeExpiresAtUtc.Value <= DateTime.UtcNow ||
+                !CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(user.EmailVerificationCodeHash),
+                    Convert.FromHexString(HashEmailVerificationCode(email, request.Code))))
+            {
+                throw new AppException(400, "EMAIL_VERIFICATION_CODE_INVALID");
+            }
+
+            user.EmailVerified = true;
+            user.EmailVerificationCodeHash = null;
+            user.EmailVerificationCodeExpiresAtUtc = null;
+            user.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        public async Task ResendVerificationAsync(
+            ResendVerificationRequest request,
+            CancellationToken cancellationToken)
+        {
+            _emailSender.EnsureConfigured();
+
+            var email = request.Email.Trim().ToLowerInvariant();
+            var user = await _context.Users.FirstOrDefaultAsync(
+                x => x.Email == email,
+                cancellationToken);
+
+            if (user == null || user.EmailVerified)
+                return;
+
+            var code = GenerateEmailVerificationCode();
+            user.EmailVerificationCodeHash = HashEmailVerificationCode(email, code);
+            user.EmailVerificationCodeExpiresAtUtc = DateTime.UtcNow.AddMinutes(15);
+            user.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await _emailSender.SendVerificationCodeAsync(email, code, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                throw new AppException(503, "EMAIL_DELIVERY_FAILED");
+            }
         }
 
         public async Task<AuthResponse> LoginAsync(
@@ -103,6 +188,9 @@ namespace DailyChessPuzzleApi.Services
 
             if (verificationResult == PasswordVerificationResult.Failed)
                 throw new AppException(401, "INVALID_CREDENTIALS");
+
+            if (!user.EmailVerified)
+                throw new AppException(403, "EMAIL_NOT_VERIFIED");
 
             if (verificationResult ==
                 PasswordVerificationResult.SuccessRehashNeeded)
@@ -175,6 +263,17 @@ namespace DailyChessPuzzleApi.Services
 
             if (existingUser != null)
             {
+                if (!existingUser.EmailVerified)
+                {
+                    existingUser.GoogleId = googleId;
+                    existingUser.EmailVerified = true;
+                    existingUser.EmailVerificationCodeHash = null;
+                    existingUser.EmailVerificationCodeExpiresAtUtc = null;
+                    existingUser.UpdatedAtUtc = DateTime.UtcNow;
+                    await _context.SaveChangesAsync(cancellationToken);
+                    return CreateAuthResponse(existingUser);
+                }
+
                 throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
             }
 
@@ -189,6 +288,7 @@ namespace DailyChessPuzzleApi.Services
                 LastName = payload.FamilyName?.Trim() ?? string.Empty,
                 Email = email,
                 GoogleId = googleId,
+                EmailVerified = true,
                 PasswordHash = null,
                 CountryCode = null,
                 CreatedAtUtc = DateTime.UtcNow
@@ -255,6 +355,7 @@ namespace DailyChessPuzzleApi.Services
                 throw new AppException(409, "GOOGLE_ACCOUNT_ALREADY_LINKED");
 
             user.GoogleId = payload.Subject;
+            user.EmailVerified = true;
             user.UpdatedAtUtc = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
         }
@@ -413,6 +514,16 @@ namespace DailyChessPuzzleApi.Services
                     .WriteToken(token),
                 ExpiresAtUtc = expiresAtUtc
             };
+        }
+
+        private static string GenerateEmailVerificationCode() =>
+            RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+
+        private string HashEmailVerificationCode(string email, string code)
+        {
+            var key = Encoding.UTF8.GetBytes(_jwtSettings.Secret);
+            var value = Encoding.UTF8.GetBytes($"{email}:{code}");
+            return Convert.ToHexString(HMACSHA256.HashData(key, value));
         }
     }
 }

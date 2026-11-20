@@ -37,6 +37,30 @@ namespace DailyChessPuzzleApi.Controllers
                     result));
         }
 
+        [HttpPost("verify-email")]
+        public async Task<IActionResult> VerifyEmail(
+            [FromBody] EmailVerificationRequest request,
+            CancellationToken cancellationToken)
+        {
+            await _authService.VerifyEmailAsync(request, cancellationToken);
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Email address verified successfully.",
+                new { emailVerified = true }));
+        }
+
+        [HttpPost("verification/resend")]
+        public async Task<IActionResult> ResendVerification(
+            [FromBody] ResendVerificationRequest request,
+            CancellationToken cancellationToken)
+        {
+            await _authService.ResendVerificationAsync(request, cancellationToken);
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "If the account needs verification, a new code has been sent.",
+                new { accepted = true }));
+        }
+
         [HttpPost("login")]
         public async Task<IActionResult> Login(
             [FromBody] LoginRequest request,

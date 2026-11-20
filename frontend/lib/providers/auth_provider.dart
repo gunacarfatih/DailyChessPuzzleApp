@@ -141,7 +141,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // Yeni kullanıcı kaydı.
-  Future<ApiResponse<AuthResponse>> register({
+  Future<ApiResponse<Map<String, dynamic>>> register({
     required String username,
     required String firstName,
     required String lastName,
@@ -159,12 +159,24 @@ class AuthProvider extends ChangeNotifier {
         countryCode: countryCode,
       );
 
-      if (result.success && result.data != null) {
-        await _loadSession();
-      }
-
       return result;
     });
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> verifyEmail({
+    required String email,
+    required String code,
+  }) {
+    return _withLoading(() => _authApiService.verifyEmail(
+          email: email,
+          code: code,
+        ));
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> resendVerification({
+    required String email,
+  }) {
+    return _withLoading(() => _authApiService.resendVerification(email: email));
   }
 
   // Google ile giriş.

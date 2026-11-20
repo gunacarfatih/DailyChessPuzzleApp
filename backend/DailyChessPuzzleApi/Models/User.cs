@@ -13,6 +13,12 @@ namespace DailyChessPuzzleApi.Models
 
         public string Email { get; set; } = string.Empty;
 
+        public bool EmailVerified { get; set; }
+
+        public string? EmailVerificationCodeHash { get; set; }
+
+        public DateTime? EmailVerificationCodeExpiresAtUtc { get; set; }
+
         // Normal kayıt olan kullanıcılarda parola hash'i bulunur.
         // Google ile kayıt olan kullanıcılarda null olur.
         public string? PasswordHash { get; set; }

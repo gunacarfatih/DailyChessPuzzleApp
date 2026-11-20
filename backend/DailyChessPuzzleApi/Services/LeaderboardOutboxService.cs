@@ -214,6 +214,7 @@ namespace DailyChessPuzzleApi.Services
                             var tombstoneScore = new LeaderboardScore
                             {
                                 ClientId = targetClientId,
+                                UserId = delivery.TargetUserId,
                                 Period = delivery.Period,
                                 PeriodKey = delivery.PeriodKey,
                                 CountryCode = delivery.CountryCode,
@@ -256,6 +257,7 @@ namespace DailyChessPuzzleApi.Services
                             var newScore = new LeaderboardScore
                             {
                                 ClientId = targetClientId,
+                                UserId = delivery.TargetUserId,
                                 Period = delivery.Period,
                                 PeriodKey = delivery.PeriodKey,
                                 CountryCode = delivery.CountryCode,

@@ -35,8 +35,12 @@ class ApiConstants {
   // Leaderboard
   static const String leaderboardEndpoint = '/api/leaderboard';
   static const String updateCountryEndpoint = '/api/users/me';
+  static const String myStatsEndpoint = '/api/users/me/stats';
 
   // Authentication
   static const String registerEndpoint = '/api/auth/register';
   static const String loginEndpoint = '/api/auth/login';
+  static const String verifyEmailEndpoint = '/api/auth/verify-email';
+  static const String resendVerificationEndpoint =
+      '/api/auth/verification/resend';
 }

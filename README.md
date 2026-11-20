@@ -24,6 +24,23 @@ Set Xcode build settings `GOOGLE_IOS_CLIENT_ID` and
 web OAuth client ID used by the API is not a substitute for the iOS client.
 Register the Android package ID and signing certificate with Google as well.
 
+## Email verification (SMTP)
+
+Email/password registration requires SMTP settings. Configure these values with
+User Secrets or environment variables before registering accounts:
+
+- `Email__Smtp__Host`
+- `Email__Smtp__Port` (usually `587`)
+- `Email__Smtp__Username`
+- `Email__Smtp__Password`
+- `Email__Smtp__FromEmail`
+- `Email__Smtp__FromName` (optional)
+- `Email__Smtp__EnableSsl` (defaults to `true`)
+
+Existing accounts stay verified after the migration. New password accounts
+must verify the emailed six-digit code before they can log in. Google accounts
+are already email-verified by Google.
+
 ## Database migrations
 
 Apply pending migrations during deployment, before starting API instances:

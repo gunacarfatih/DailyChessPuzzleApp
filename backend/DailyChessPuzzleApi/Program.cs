@@ -142,6 +142,7 @@ builder.Services.AddRateLimiter(options =>
 
     AddIpPolicy(options, "auth", permitLimit: 10, window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "puzzle-write", permitLimit: 60, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "puzzle-move", permitLimit: 30, window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "puzzle-read", permitLimit: 60, window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "leaderboard", permitLimit: 30, window: TimeSpan.FromMinutes(1));
 });
@@ -176,6 +177,7 @@ builder.Services.AddScoped<
     PasswordHasher<User>>();
 
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 
 // --------------------------------------------------
 // CACHE
@@ -232,21 +234,17 @@ var logFilePath = string.IsNullOrWhiteSpace(logDirectory)
 
 builder.Host.UseSerilog((context, configuration) =>
 {
-    configuration
-        .ReadFrom.Configuration(context.Configuration)
-        .WriteTo.Console()
-        .WriteTo.Logger(fileLogger =>
-        {
-            if (!string.IsNullOrWhiteSpace(logFilePath))
-            {
-                Directory.CreateDirectory(logDirectory!);
-                fileLogger.WriteTo.File(
-                    path: logFilePath,
-                    rollingInterval: RollingInterval.Day,
-                    retainedFileCountLimit: 10,
-                    outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}");
-            }
-        });
+    configuration.ReadFrom.Configuration(context.Configuration);
+
+    if (!string.IsNullOrWhiteSpace(logFilePath))
+    {
+        Directory.CreateDirectory(logDirectory!);
+        configuration.WriteTo.File(
+            path: logFilePath,
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 10,
+            outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}");
+    }
 });
 
 // --------------------------------------------------

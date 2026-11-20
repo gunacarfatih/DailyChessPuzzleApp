@@ -26,6 +26,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  String? _pendingVerificationEmail;
 
   @override
   void dispose() {
@@ -40,6 +41,11 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   Future<void> _register() async {
+    if (_pendingVerificationEmail != null) {
+      await _verifyEmail();
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -60,14 +66,17 @@ class _RegisterPageState extends State<RegisterPage> {
       if (!mounted) return;
 
       if (response.success && response.data != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Hesabın başarıyla oluşturuldu!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        Navigator.pop(context, true);
+        setState(() {
+          _pendingVerificationEmail =
+              response.data!['email']?.toString() ??
+              _emailController.text.trim();
+        });
+        _showInfo('Doğrulama kodunu e-postana gönderdik.');
+      } else if (response.errorCode == 'EMAIL_DELIVERY_FAILED') {
+        setState(() {
+          _pendingVerificationEmail = _emailController.text.trim();
+        });
+        _showError('Hesap oluşturuldu, ancak e-posta gönderilemedi. Kodu yeniden iste.');
       } else {
         _showError(response.message ?? 'Kayıt işlemi başarısız.');
       }
@@ -81,11 +90,100 @@ class _RegisterPageState extends State<RegisterPage> {
     }
   }
 
+  Future<void> _verifyEmail() async {
+    final email = _pendingVerificationEmail;
+    if (email == null) return;
+
+    final codeController = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('E-posta doğrulama'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('6 haneli kodu $email adresinden al.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: codeController,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: const InputDecoration(labelText: 'Doğrulama kodu'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Daha sonra'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, codeController.text),
+            child: const Text('Doğrula'),
+          ),
+        ],
+      ),
+    );
+    codeController.dispose();
+    if (code == null || !mounted) return;
+
+    try {
+      final result = await context.read<AuthProvider>().verifyEmail(
+            email: email,
+            code: code,
+          );
+      if (!mounted) return;
+      if (!result.success) {
+        _showError(result.message ?? 'E-posta doğrulanamadı.');
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('E-posta doğrulandı. Şimdi giriş yapabilirsin.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pop(context, true);
+    } catch (_) {
+      if (mounted) _showError('E-posta doğrulanırken bir hata oluştu.');
+    }
+  }
+
+  Future<void> _resendVerification() async {
+    final email = _pendingVerificationEmail;
+    if (email == null) return;
+
+    try {
+      final result = await context.read<AuthProvider>().resendVerification(
+            email: email,
+          );
+      if (!mounted) return;
+      if (result.success) {
+        _showInfo('Kod gönderme isteği alındı. Gelen kutunu kontrol et.');
+      } else {
+        _showError(result.message ?? 'Kod yeniden gönderilemedi.');
+      }
+    } catch (_) {
+      if (mounted) _showError('Kod yeniden gönderilemedi.');
+    }
+  }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.red,
+      ),
+    );
+  }
+
+  void _showInfo(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
       ),
     );
   }
@@ -353,12 +451,22 @@ class _RegisterPageState extends State<RegisterPage> {
                           strokeWidth: 2,
                         ),
                       )
-                          : const Text(
-                        'Hesap Oluştur',
-                        style: TextStyle(fontSize: 16),
+                          : Text(
+                        _pendingVerificationEmail == null
+                            ? 'Hesap Oluştur'
+                            : 'E-postayı Doğrula',
+                        style: const TextStyle(fontSize: 16),
                       ),
                     ),
                   ),
+
+                  if (_pendingVerificationEmail != null) ...[
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: isLoading ? null : _resendVerification,
+                      child: const Text('Doğrulama kodunu yeniden gönder'),
+                    ),
+                  ],
 
                   const SizedBox(height: 16),
 

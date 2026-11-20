@@ -5,8 +5,16 @@ namespace DailyChessPuzzleApi.Services.Interfaces
 {
     public interface IAuthService
     {
-        Task<AuthResponse> RegisterAsync(
+        Task<RegistrationResponse> RegisterAsync(
             RegisterRequest request,
+            CancellationToken cancellationToken);
+
+        Task VerifyEmailAsync(
+            EmailVerificationRequest request,
+            CancellationToken cancellationToken);
+
+        Task ResendVerificationAsync(
+            ResendVerificationRequest request,
             CancellationToken cancellationToken);
 
         Task<AuthResponse> LoginAsync(

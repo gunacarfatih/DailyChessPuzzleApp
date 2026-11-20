@@ -103,7 +103,7 @@ namespace DailyChessPuzzleApi.Controllers
         // ---------------------------------------------------------
 
         [HttpPost("move")]
-        [EnableRateLimiting("puzzle-write")]
+        [EnableRateLimiting("puzzle-move")]
         public async Task<IActionResult> SubmitMove(
             [FromBody] PuzzleMoveRequest request,
             CancellationToken cancellationToken)
@@ -247,7 +247,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("bonus/move")]
-        [EnableRateLimiting("puzzle-write")]
+        [EnableRateLimiting("puzzle-move")]
         public async Task<IActionResult> SubmitBonusMove(
             [FromBody] PuzzleMoveRequest request,
             CancellationToken cancellationToken)

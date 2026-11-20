@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/auth_provider.dart';
-import '../../../providers/leaderboard_provider.dart';
 
 import '../../../core/storage/client_id_storage.dart';
 import '../../auth/screens/login_page.dart';
 import '../../auth/screens/register_page.dart';
 import '../../leaderboard/models/leaderboard_entry.dart';
+import '../services/user_stats_api_service.dart';
 import 'password_management_page.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -26,6 +26,7 @@ class ProfilePage extends StatefulWidget {
 class ProfilePageState extends State<ProfilePage> {
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
   final TextEditingController _countryController = TextEditingController();
+  final UserStatsApiService _userStatsApiService = UserStatsApiService();
 
   bool _isLoading = true;
   bool _isLoggedIn = false;
@@ -51,17 +52,14 @@ class ProfilePageState extends State<ProfilePage> {
   }
 
   // Profil ekranını yeniler.
-  // Global leaderboard verisini de zorla yeniler.
   Future<void> refreshProfile() async {
     if (!mounted || _isLoading || _isLoggingOut) return;
 
-    await _loadProfile(forceRefresh: true);
+    await _loadProfile();
   }
 
   // Oturum ve profil bilgilerini yükler.
-  Future<void> _loadProfile({
-    bool forceRefresh = false,
-  }) async {
+  Future<void> _loadProfile() async {
     if (!mounted) return;
 
     setState(() {
@@ -72,8 +70,6 @@ class ProfilePageState extends State<ProfilePage> {
     try {
       // Provider referanslarını asenkron işlemlerden önce al.
       final authProvider = context.read<AuthProvider>();
-      final leaderboardProvider =
-      context.read<LeaderboardProvider>();
 
       // Uygulama açılışındaki oturum yüklemesinin tamamlanmasını bekle.
       await authProvider.initialize();
@@ -97,21 +93,11 @@ class ProfilePageState extends State<ProfilePage> {
       // Yalnızca kayıtlı kullanıcıların leaderboard istatistikleri bulunur.
       // Misafir kullanıcılar leaderboard sistemine dahil edilmez.
       if (isLoggedIn) {
-        if (forceRefresh) {
-          await leaderboardProvider.refreshLeaderboard();
-        } else {
-          await leaderboardProvider.loadLeaderboard();
-        }
+        final statsResponse = await _userStatsApiService.getMyStats();
 
         if (!mounted) return;
 
-        final leaderboard =
-        leaderboardProvider.leaderboardFor(null);
-
-        final leaderboardError =
-        leaderboardProvider.errorFor(null);
-
-        if (leaderboard == null) {
+        if (!statsResponse.success && statsResponse.data == null) {
           setState(() {
             _clientId = clientId;
             _isLoggedIn = isLoggedIn;
@@ -121,7 +107,7 @@ class ProfilePageState extends State<ProfilePage> {
             _lastName = lastName;
             _userId = userId;
             _hasPassword = hasPassword;
-            _errorMessage = leaderboardError ??
+            _errorMessage = statsResponse.message ??
                 'Profil bilgileri alınamadı.';
             _isLoading = false;
           });
@@ -129,8 +115,7 @@ class ProfilePageState extends State<ProfilePage> {
           return;
         }
 
-        // Profil istatistikleri için tüm zamanlar verisini kullan.
-        currentUser = leaderboard.allTime.currentUser;
+        currentUser = statsResponse.data;
       }
 
       if (!mounted) return;
@@ -394,7 +379,7 @@ class ProfilePageState extends State<ProfilePage> {
       );
 
       // Çıkış sonrasında misafir profilini yükle.
-      await _loadProfile(forceRefresh: true);
+      await _loadProfile();
     } catch (error) {
       if (!mounted) return;
 
