@@ -68,7 +68,13 @@ class LeaderboardSignalRService {
     final connection = _connection;
     if (connection?.state != HubConnectionState.Connected) return;
     final countryCode = await AuthStorage.instance.getCountryCode();
-    await connection!.invoke('JoinLeaderboard', args: ['daily', countryCode]);
+    await connection!.invoke(
+      'JoinLeaderboard',
+      args: <Object>[
+        'daily',
+        ?countryCode,
+      ],
+    );
   }
 
 

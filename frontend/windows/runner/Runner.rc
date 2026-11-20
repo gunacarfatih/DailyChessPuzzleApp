@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.gunacarfatih" "\0"
-            VALUE "FileDescription", "repos" "\0"
+            VALUE "FileDescription", "dailychesspuzzle" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "repos" "\0"
+            VALUE "InternalName", "dailychesspuzzle" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.gunacarfatih. All rights reserved." "\0"
-            VALUE "OriginalFilename", "repos.exe" "\0"
-            VALUE "ProductName", "repos" "\0"
+            VALUE "OriginalFilename", "dailychesspuzzle.exe" "\0"
+            VALUE "ProductName", "dailychesspuzzle" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

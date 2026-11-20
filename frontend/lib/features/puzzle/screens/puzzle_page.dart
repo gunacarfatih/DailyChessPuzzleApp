@@ -245,17 +245,6 @@ class PuzzlePageState extends State<PuzzlePage> {
         _readInt(map, 'totalScore');
   }
 
-  DateTime? _readDateTime(
-      Map<String, dynamic> data,
-      String key,
-      ) {
-    final value = _value(data, key);
-
-    if (value == null) return null;
-
-    return DateTime.tryParse(value.toString())?.toUtc();
-  }
-
   List<String> _readPlayedMoves(
       Map<String, dynamic> data,
       ) {

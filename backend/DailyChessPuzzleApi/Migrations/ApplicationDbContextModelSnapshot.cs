@@ -22,21 +22,6 @@ namespace DailyChessPuzzleApi.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("DailyChessPuzzleApi.Models.RefreshToken", b =>
-                {
-                    b.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("integer");
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-                    b.Property<DateTime>("CreatedAtUtc").HasColumnType("timestamp with time zone");
-                    b.Property<DateTime>("ExpiresAtUtc").HasColumnType("timestamp with time zone");
-                    b.Property<DateTime?>("RevokedAtUtc").HasColumnType("timestamp with time zone");
-                    b.Property<string>("TokenHash").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
-                    b.Property<int>("UserId").HasColumnType("integer");
-                    b.HasKey("Id");
-                    b.HasIndex("TokenHash").IsUnique();
-                    b.HasIndex("UserId", "ExpiresAtUtc");
-                    b.ToTable("RefreshTokens");
-                });
-
             modelBuilder.Entity("DailyChessPuzzleApi.Models.BonusPuzzleAssignment", b =>
                 {
                     b.Property<int>("Id")
@@ -89,8 +74,6 @@ namespace DailyChessPuzzleApi.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("PuzzleAttemptId");
-
-                    b.HasIndex("UserId");
 
                     b.HasIndex("PuzzleId");
 
@@ -237,9 +220,9 @@ namespace DailyChessPuzzleApi.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Status", "NextRetryAtUtc", "CreatedAtUtc");
-
                     b.HasIndex("TargetUserId");
+
+                    b.HasIndex("Status", "NextRetryAtUtc", "CreatedAtUtc");
 
                     b.HasIndex("OutboxId", "TargetClientId", "IsRemoval", "Period", "PeriodKey")
                         .IsUnique()
@@ -280,9 +263,6 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
-                    b.Property<int?>("UserId")
-                        .HasColumnType("integer");
-
                     b.Property<long>("Revision")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint")
@@ -297,6 +277,9 @@ namespace DailyChessPuzzleApi.Migrations
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("UserId")
+                        .HasColumnType("integer");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ClientId", "Period", "PeriodKey")
@@ -307,9 +290,9 @@ namespace DailyChessPuzzleApi.Migrations
                         .IsUnique()
                         .HasFilter("\"CountryCode\" IS NOT NULL");
 
-                    b.HasIndex("Period", "PeriodKey", "CountryCode", "TotalScore", "SolvedCount");
-
                     b.HasIndex("UserId", "Period", "PeriodKey", "CountryCode");
+
+                    b.HasIndex("Period", "PeriodKey", "CountryCode", "TotalScore", "SolvedCount");
 
                     b.ToTable("LeaderboardScores");
                 });
@@ -480,6 +463,41 @@ namespace DailyChessPuzzleApi.Migrations
                     b.ToTable("PuzzleGameSessions");
                 });
 
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.RefreshToken", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "ExpiresAtUtc");
+
+                    b.ToTable("RefreshTokens");
+                });
+
             modelBuilder.Entity("DailyChessPuzzleApi.Models.User", b =>
                 {
                     b.Property<int>("Id")
@@ -500,15 +518,15 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)");
 
-                    b.Property<bool>("EmailVerified")
-                        .HasColumnType("boolean");
+                    b.Property<DateTime?>("EmailVerificationCodeExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("EmailVerificationCodeHash")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<DateTime?>("EmailVerificationCodeExpiresAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                    b.Property<bool>("EmailVerified")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("FirstName")
                         .IsRequired()
@@ -574,15 +592,6 @@ namespace DailyChessPuzzleApi.Migrations
                     b.Navigation("PuzzleAttempt");
 
                     b.Navigation("User");
-                });
-
-            modelBuilder.Entity("DailyChessPuzzleApi.Models.RefreshToken", b =>
-                {
-                    b.HasOne("DailyChessPuzzleApi.Models.User", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.DailyPuzzle", b =>
@@ -667,6 +676,15 @@ namespace DailyChessPuzzleApi.Migrations
                     b.Navigation("Puzzle");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.RefreshToken", b =>
+                {
+                    b.HasOne("DailyChessPuzzleApi.Models.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.LeaderboardCacheOutbox", b =>
