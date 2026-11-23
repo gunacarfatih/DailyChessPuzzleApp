@@ -10,7 +10,6 @@ namespace DailyChessPuzzleApi.Controllers
 {
     [ApiController]
     [Route("api/auth")]
-    [EnableRateLimiting("auth")]
     public class AuthController : ControllerBase
     {
         private readonly IAuthService _authService;
@@ -21,6 +20,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("register")]
+        [EnableRateLimiting("auth-register")]
         public async Task<IActionResult> Register(
             [FromBody] RegisterRequest request,
             CancellationToken cancellationToken)
@@ -38,6 +38,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("verify-email")]
+        [EnableRateLimiting("auth-verification")]
         public async Task<IActionResult> VerifyEmail(
             [FromBody] EmailVerificationRequest request,
             CancellationToken cancellationToken)
@@ -50,6 +51,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("verification/resend")]
+        [EnableRateLimiting("auth-verification")]
         public async Task<IActionResult> ResendVerification(
             [FromBody] ResendVerificationRequest request,
             CancellationToken cancellationToken)
@@ -62,6 +64,7 @@ namespace DailyChessPuzzleApi.Controllers
         }
 
         [HttpPost("login")]
+        [EnableRateLimiting("auth-login")]
         public async Task<IActionResult> Login(
             [FromBody] LoginRequest request,
             CancellationToken cancellationToken)
@@ -78,6 +81,7 @@ namespace DailyChessPuzzleApi.Controllers
 
         [AllowAnonymous]
         [HttpPost("refresh")]
+        [EnableRateLimiting("auth-refresh")]
         public async Task<IActionResult> Refresh(
             [FromBody] RefreshTokenRequest request,
             CancellationToken cancellationToken)
@@ -89,7 +93,25 @@ namespace DailyChessPuzzleApi.Controllers
                 result));
         }
 
+        [AllowAnonymous]
+        [HttpPost("logout")]
+        [EnableRateLimiting("auth-sensitive")]
+        public async Task<IActionResult> Logout(
+            [FromBody] RefreshTokenRequest request,
+            CancellationToken cancellationToken)
+        {
+            await _authService.LogoutAsync(
+                request,
+                cancellationToken);
+
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Session logged out successfully.",
+                new { LoggedOut = true }));
+        }
+
         [HttpPost("google")]
+        [EnableRateLimiting("auth-google")]
         public async Task<IActionResult> GoogleLogin(
             [FromBody] GoogleLoginRequest request,
             CancellationToken cancellationToken)
@@ -106,6 +128,7 @@ namespace DailyChessPuzzleApi.Controllers
 
         [Authorize]
         [HttpPost("link-google")]
+        [EnableRateLimiting("auth-sensitive")]
         public async Task<IActionResult> LinkGoogleAccount(
             [FromBody] LinkGoogleAccountRequest request,
             CancellationToken cancellationToken)
@@ -120,6 +143,7 @@ namespace DailyChessPuzzleApi.Controllers
 
         [Authorize]
         [HttpPost("set-password")]
+        [EnableRateLimiting("auth-sensitive")]
         public async Task<IActionResult> SetPassword(
             [FromBody] SetPasswordRequest request,
             CancellationToken cancellationToken)
@@ -139,6 +163,7 @@ namespace DailyChessPuzzleApi.Controllers
 
         [Authorize]
         [HttpPost("change-password")]
+        [EnableRateLimiting("auth-sensitive")]
         public async Task<IActionResult> ChangePassword(
             [FromBody] ChangePasswordRequest request,
             CancellationToken cancellationToken)

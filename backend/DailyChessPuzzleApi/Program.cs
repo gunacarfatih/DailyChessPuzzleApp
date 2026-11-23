@@ -1,5 +1,6 @@
 
 using System.Runtime.InteropServices;
+using System.Security.Claims;
 using System.Text;
 
 using DailyChessPuzzleApi.Data;
@@ -112,7 +113,8 @@ builder.Services
         {
             OnMessageReceived = context =>
             {
-                var accessToken = context.Request.Query["access_token"];
+                var accessToken =
+                    context.Request.Query["access_token"];
 
                 var path = context.HttpContext.Request.Path;
 
@@ -123,6 +125,43 @@ builder.Services
                 }
 
                 return Task.CompletedTask;
+            },
+
+            OnTokenValidated = async context =>
+            {
+                var userIdValue = context.Principal?
+                    .FindFirst(ClaimTypes.NameIdentifier)?
+                    .Value;
+
+                var tokenVersionValue = context.Principal?
+                    .FindFirst("token_version")?
+                    .Value;
+
+                if (!int.TryParse(userIdValue, out var userId) ||
+                    !int.TryParse(
+                        tokenVersionValue,
+                        out var tokenVersion))
+                {
+                    context.Fail("INVALID_TOKEN_CLAIMS");
+                    return;
+                }
+
+                var dbContext = context.HttpContext
+                    .RequestServices
+                    .GetRequiredService<ApplicationDbContext>();
+
+                var currentTokenVersion = await dbContext.Users
+                    .AsNoTracking()
+                    .Where(user => user.Id == userId)
+                    .Select(user => (int?)user.TokenVersion)
+                    .SingleOrDefaultAsync(
+                        context.HttpContext.RequestAborted);
+
+                if (!currentTokenVersion.HasValue ||
+                    currentTokenVersion.Value != tokenVersion)
+                {
+                    context.Fail("TOKEN_REVOKED");
+                }
             }
         };
     });
@@ -144,7 +183,41 @@ builder.Services.AddRateLimiter(options =>
         }, cancellationToken);
     };
 
-    AddIpPolicy(options, "auth", permitLimit: 10, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(
+    options,
+    "auth-register",
+    permitLimit: 5,
+    window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-login",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-refresh",
+        permitLimit: 30,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-verification",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-google",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-sensitive",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "puzzle-write", permitLimit: 60, window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "puzzle-move", permitLimit: 30, window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "puzzle-read", permitLimit: 60, window: TimeSpan.FromMinutes(1));
@@ -314,6 +387,8 @@ builder.Services.AddScoped<IDailyPuzzleService, DailyPuzzleService>();
 builder.Services.AddHostedService<DailyPuzzleBackgroundService>();
 
 builder.Services.AddHostedService<LeaderboardOutboxBackgroundService>();
+
+builder.Services.AddHostedService<RefreshTokenCleanupBackgroundService>();
 
 // --------------------------------------------------
 // SWAGGER

@@ -29,6 +29,10 @@ namespace DailyChessPuzzleApi.Models
         // ISO 3166-1 alpha-2 ülke kodu (TR, DE, US vb.).
         public string? CountryCode { get; set; }
 
+        // Şifre gibi güvenlik bilgileri değiştiğinde artırılır.
+        // Eski JWT access token'larının reddedilmesini sağlar.
+        public int TokenVersion { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 
         public DateTime? UpdatedAtUtc { get; set; }

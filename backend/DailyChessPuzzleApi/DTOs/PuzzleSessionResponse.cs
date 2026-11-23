@@ -9,6 +9,8 @@ namespace DailyChessPuzzleApi.DTOs
 
         public int PuzzleId { get; set; }
 
+        public string? Fen { get; set; }
+
         public List<string> PlayedMoves { get; set; } = new();
 
         public int CurrentMoveIndex { get; set; }

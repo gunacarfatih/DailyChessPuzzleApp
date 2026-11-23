@@ -314,8 +314,19 @@ class ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
 
     if (result == true) {
+      final authProvider = context.read<AuthProvider>();
+
+      if (!authProvider.isLoggedIn) {
+        await widget.onAuthChanged?.call();
+
+        if (!mounted) return;
+
+        await _loadProfile();
+        return;
+      }
+
       setState(() {
-        _hasPassword = context.read<AuthProvider>().hasPassword;
+        _hasPassword = authProvider.hasPassword;
       });
     }
   }

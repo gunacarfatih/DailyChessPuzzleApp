@@ -399,19 +399,12 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       final puzzle = response.data!;
-      final initialPosition = Chess.fromSetup(
-        Setup.parseFen(puzzle.fen),
-      );
 
       if (!_isCurrentGeneration(generation)) return;
 
       _puzzle = puzzle;
-      _position = initialPosition;
+      _position = null;
       _startingPosition = null;
-
-      _controller = ChessboardController(
-        game: _buildGame(initialPosition),
-      );
 
       setState(() {
         _isLoading = false;
@@ -505,9 +498,9 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       final data = response.data!;
-      final puzzle = _puzzle!;
 
       final sessionId = data.sessionId;
+      final fen = data.fen;
 
       if (sessionId == null) {
         throw Exception(
@@ -515,18 +508,23 @@ class PuzzlePageState extends State<PuzzlePage> {
         );
       }
 
+      if (fen == null || fen.trim().isEmpty) {
+        throw Exception(
+          'Sunucu bulmaca oturumu için FEN bilgisi döndürmedi.',
+        );
+      }
+
       final playedMoves = data.playedMoves;
 
       final currentPosition = _buildPositionFromPlayedMoves(
-        puzzle.fen,
+        fen,
         playedMoves,
       );
 
-      _debugLog("PUZZLE INITIAL FEN: ${puzzle.fen}");
-      _debugLog("POSITION AFTER OPPONENT MOVE: ${currentPosition.fen}");
+      _debugLog('POSITION AFTER OPPONENT MOVE: ${currentPosition.fen}');
 
       final startingPosition = _positionAfterFirstMove(
-        puzzle.fen,
+        fen,
         playedMoves,
       );
 
@@ -1095,24 +1093,68 @@ class PuzzlePageState extends State<PuzzlePage> {
         return;
       }
 
-      if (bonus.fen == null || bonus.fen!.isEmpty) {
-        throw Exception('Bonus bulmacanın FEN bilgisi bulunamadı.');
+      final isStarted = bonus.startedAtUtc != null;
+
+      _stopBonusTimer();
+      _controller?.dispose();
+      _controller = null;
+
+      // Bonus henüz başlamadıysa hazırlık ekranını aç.
+      // Bu aşamada sunucunun FEN döndürmemesi gerekir.
+      if (!isStarted) {
+        _bonusPuzzle = bonus;
+        _bonusPosition = null;
+        _bonusStartingPosition = null;
+        _bonusLastMove = null;
+        _bonusNextMoveIndex = 0;
+        _bonusWrongMoves = bonus.wrongMoves;
+        _bonusRemainingSeconds =
+            bonus.remainingSeconds ?? _bonusDurationSeconds;
+        _bonusScore = bonus.score;
+        _bonusHintSquare = bonus.hintSquare;
+
+        setState(() {
+          _isBonusMode = true;
+          _isBonusStarted = false;
+          _isBonusCompleted = false;
+          _isBonusExpired = false;
+          _isBonusLoading = false;
+          _bonusFeedback =
+          'Hazır olduğunda bonus bulmacaya başlayabilirsin.';
+        });
+
+        return;
       }
 
-      final initialPosition = Chess.fromSetup(
-        Setup.parseFen(bonus.fen!),
+      // Daha önce başlatılmış bonus oturumuna devam ediliyor.
+      // Bu durumda GET /bonus FEN dönebilir.
+      final fen = bonus.fen;
+
+      if (fen == null || fen.trim().isEmpty) {
+        throw Exception(
+          'Başlatılmış bonus bulmaca için FEN bilgisi bulunamadı.',
+        );
+      }
+
+      final playedMoves = bonus.playedMoves;
+
+      final currentPosition = _buildPositionFromPlayedMoves(
+        fen,
+        playedMoves,
+      );
+
+      final startingPosition = _positionAfterFirstMove(
+        fen,
+        playedMoves,
       );
 
       if (!_isCurrentGeneration(generation)) return;
 
-      _stopBonusTimer();
-      _controller?.dispose();
-
       _bonusPuzzle = bonus;
-      _bonusPosition = initialPosition;
-      _bonusStartingPosition = null;
-      _bonusLastMove = null;
-      _bonusNextMoveIndex = bonus.playedMoves.length;
+      _bonusPosition = currentPosition;
+      _bonusStartingPosition = startingPosition;
+      _bonusLastMove = _lastPlayedMove(playedMoves);
+      _bonusNextMoveIndex = playedMoves.length;
       _bonusWrongMoves = bonus.wrongMoves;
       _bonusRemainingSeconds =
           bonus.remainingSeconds ?? _bonusDurationSeconds;
@@ -1120,41 +1162,19 @@ class PuzzlePageState extends State<PuzzlePage> {
       _bonusHintSquare = bonus.hintSquare;
 
       _controller = ChessboardController(
-        game: _buildBonusGame(initialPosition),
+        game: _buildBonusGame(currentPosition),
       );
 
       setState(() {
         _isBonusMode = true;
-        _isBonusStarted = bonus.startedAtUtc != null;
-        _isBonusCompleted = bonus.isCompleted;
-        _isBonusExpired = bonus.isExpired;
+        _isBonusStarted = true;
+        _isBonusCompleted = false;
+        _isBonusExpired = false;
         _isBonusLoading = false;
-        _bonusFeedback = _isBonusStarted
-            ? 'Bonus denemen daha önce başlatılmış.'
-            : 'Hazır olduğunda bonus bulmacaya başlayabilirsin.';
+        _bonusFeedback = 'Bonus denemen kaldığı yerden devam ediyor.';
       });
 
-      if (_isBonusStarted) {
-        final playedMoves = bonus.playedMoves;
-
-        final currentPosition = _buildPositionFromPlayedMoves(
-          bonus.fen!,
-          playedMoves,
-        );
-
-        _bonusPosition = currentPosition;
-        _bonusStartingPosition = _positionAfterFirstMove(
-          bonus.fen!,
-          playedMoves,
-        );
-        _bonusLastMove = _lastPlayedMove(playedMoves);
-
-        _controller?.updatePosition(
-          _buildBonusGame(currentPosition),
-        );
-
-        _startBonusTimer();
-      }
+      _startBonusTimer();
     } catch (error, stackTrace) {
       _debugLog('Bonus hazırlama hatası: $error');
       _debugLog('$stackTrace');
@@ -1220,19 +1240,23 @@ class PuzzlePageState extends State<PuzzlePage> {
         );
       }
 
-      if (bonus.fen == null || bonus.fen!.isEmpty) {
-        throw Exception('Bonus FEN bilgisi bulunamadı.');
+      final fen = bonus.fen;
+
+      if (fen == null || fen.trim().isEmpty) {
+        throw Exception(
+          'Sunucu başlatılan bonus bulmaca için FEN bilgisi döndürmedi.',
+        );
       }
 
       final playedMoves = bonus.playedMoves;
 
       final currentPosition = _buildPositionFromPlayedMoves(
-        bonus.fen!,
+        fen,
         playedMoves,
       );
 
       final startingPosition = _positionAfterFirstMove(
-        bonus.fen!,
+        fen,
         playedMoves,
       );
 
@@ -1762,11 +1786,20 @@ class PuzzlePageState extends State<PuzzlePage> {
       return _buildBonusPuzzleBody();
     }
 
-    if (_puzzle == null ||
-        _position == null ||
-        _controller == null) {
+    if (_puzzle == null) {
       return const Center(
         child: Text('Bulmaca bulunamadı.'),
+      );
+    }
+
+    if (!_hasStarted &&
+        (_position == null || _controller == null)) {
+      return _buildStartOverlay();
+    }
+
+    if (_position == null || _controller == null) {
+      return const Center(
+        child: Text('Bulmaca tahtası oluşturulamadı.'),
       );
     }
 
@@ -1916,6 +1949,12 @@ class PuzzlePageState extends State<PuzzlePage> {
   Widget _buildBonusPuzzleBody() {
     final position = _bonusPosition;
     final controller = _controller;
+
+    if (!_isBonusStarted &&
+        position == null &&
+        controller == null) {
+      return _buildBonusStartOverlay();
+    }
 
     if (position == null || controller == null) {
       return Center(

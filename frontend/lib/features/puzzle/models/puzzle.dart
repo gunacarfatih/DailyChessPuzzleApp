@@ -1,14 +1,11 @@
-
 class Puzzle {
   final int id;
-  final String fen;
   final String difficulty;
   final bool isSolved;
   final int? previousScore;
 
   const Puzzle({
     required this.id,
-    required this.fen,
     required this.difficulty,
     required this.isSolved,
     this.previousScore,
@@ -30,7 +27,6 @@ class Puzzle {
 
     return Puzzle(
       id: ((json['id'] ?? json['Id']) as num).toInt(),
-      fen: (json['fen'] ?? json['Fen']) as String,
       difficulty:
       (json['difficulty'] ?? json['Difficulty'])?.toString() ??
           'Bilinmiyor',

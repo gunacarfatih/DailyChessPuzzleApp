@@ -104,7 +104,6 @@ namespace DailyChessPuzzleApi.Services
             return new PuzzleTodayResponse
             {
                 Id = puzzle.Id,
-                Fen = puzzle.Fen,
                 Difficulty = GetDifficulty(puzzle.Rating),
                 IsSolved = previousAttempt != null,
                 PreviousScore = previousAttempt?.Score
@@ -1430,6 +1429,7 @@ namespace DailyChessPuzzleApi.Services
             {
                 SessionId = session.Id,
                 PuzzleId = session.PuzzleId,
+                Fen = session.Puzzle.Fen,
                 PlayedMoves = moves.Take(playedMoveCount).ToList(),
                 CurrentMoveIndex = session.CurrentMoveIndex,
                 WrongMoves = session.WrongMoves,
@@ -1531,7 +1531,9 @@ namespace DailyChessPuzzleApi.Services
                 IsCompleted = assignment.IsCompleted,
                 IsExpired = isExpired,
                 PuzzleId = assignment.PuzzleId,
-                Fen = assignment.Puzzle.Fen,
+                Fen = assignment.StartedAtUtc.HasValue
+                    ? assignment.Puzzle.Fen
+                    : null,
                 PlayedMoves = moves.Take(playedMoveCount).ToList(),
                 CurrentMoveIndex = assignment.CurrentMoveIndex,
                 WrongMoves = assignment.WrongMoves,

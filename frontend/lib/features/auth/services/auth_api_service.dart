@@ -240,10 +240,6 @@ class AuthApiService {
       fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
     );
 
-    if (result.success) {
-      await _authStorage.updateHasPassword(true);
-    }
-
     return result;
   }
 
@@ -295,6 +291,31 @@ class AuthApiService {
 
   // Kullanıcı oturumunu kapatır.
   Future<void> logout() async {
+    final refreshToken =
+    await _authStorage.getRefreshToken();
+
+    // Yerel oturumda refresh token yoksa temizlenecek
+    // sunucu oturumu da bulunmaz.
+    if (refreshToken == null || refreshToken.isEmpty) {
+      await _authStorage.clearSession();
+      return;
+    }
+
+    final response = await _dio.post(
+      ApiConstants.logoutEndpoint,
+      data: {
+        'refreshToken': refreshToken,
+      },
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Sunucu oturumu kapatamadı. Lütfen tekrar deneyin.',
+      );
+    }
+
+    // Sunucu refresh token'ı iptal ettikten sonra
+    // cihazdaki oturum bilgilerini temizle.
     await _authStorage.clearSession();
   }
 }

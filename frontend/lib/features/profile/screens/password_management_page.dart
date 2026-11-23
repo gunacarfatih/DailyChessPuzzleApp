@@ -94,7 +94,7 @@ class _PasswordManagementPageState
         SnackBar(
           content: Text(
             widget.hasPassword
-                ? 'Şifren başarıyla değiştirildi.'
+                ? 'Şifren değiştirildi. Lütfen yeniden giriş yap.'
                 : 'Şifren başarıyla oluşturuldu.',
           ),
           backgroundColor: Colors.green,

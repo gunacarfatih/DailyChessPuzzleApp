@@ -70,6 +70,10 @@ namespace DailyChessPuzzleApi.Data
                 entity.Property(x => x.CountryCode)
                     .HasMaxLength(2);
 
+                entity.Property(x => x.TokenVersion)
+                    .HasDefaultValue(0)
+                    .IsRequired();
+
                 entity.HasIndex(x => x.Username)
                     .IsUnique();
 
@@ -87,6 +91,12 @@ namespace DailyChessPuzzleApi.Data
                 entity.Property(x => x.TokenHash)
                     .HasMaxLength(64)
                     .IsRequired();
+                entity.Property(x => x.FamilyId)
+                    .HasDefaultValueSql("gen_random_uuid()")
+                    .IsRequired();
+                entity.Property(x => x.ReplacedByTokenHash)
+                    .HasMaxLength(64);
+                entity.HasIndex(x => x.FamilyId);
                 entity.HasIndex(x => x.TokenHash).IsUnique();
                 entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
                 entity.HasOne<User>()

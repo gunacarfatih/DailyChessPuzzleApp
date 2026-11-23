@@ -208,39 +208,137 @@ namespace DailyChessPuzzleApi.Services
         }
 
         public async Task<AuthResponse> RefreshAsync(
-            RefreshTokenRequest request,
-            CancellationToken cancellationToken)
+    RefreshTokenRequest request,
+    CancellationToken cancellationToken)
         {
-            await using var transaction = await _context.Database
-                .BeginTransactionAsync(cancellationToken);
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
 
-            var tokenHash = HashRefreshToken(request.RefreshToken);
+            var tokenHash =
+                HashRefreshToken(request.RefreshToken);
+
             var refreshToken = await _context.RefreshTokens
                 .FromSqlInterpolated($"""
-                    SELECT * FROM "RefreshTokens"
-                    WHERE "TokenHash" = {tokenHash}
-                    FOR UPDATE
-                    """)
+            SELECT *
+            FROM "RefreshTokens"
+            WHERE "TokenHash" = {tokenHash}
+            FOR UPDATE
+            """)
                 .SingleOrDefaultAsync(cancellationToken);
+
             var now = DateTime.UtcNow;
 
             if (refreshToken == null ||
-                refreshToken.RevokedAtUtc.HasValue ||
                 refreshToken.ExpiresAtUtc <= now)
             {
-                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+                throw new AppException(
+                    401,
+                    "INVALID_REFRESH_TOKEN");
             }
 
-            var user = await _context.Users.FirstOrDefaultAsync(
-                x => x.Id == refreshToken.UserId,
-                cancellationToken);
-            if (user == null)
-                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+            // Yerine başka token oluşturulmuş, iptal edilmiş bir
+            // token tekrar sunulduysa token hırsızlığı ihtimali vardır.
+            if (refreshToken.RevokedAtUtc.HasValue &&
+                !string.IsNullOrWhiteSpace(
+                    refreshToken.ReplacedByTokenHash))
+            {
+                var user = await _context.Users
+                    .FirstOrDefaultAsync(
+                        x => x.Id == refreshToken.UserId,
+                        cancellationToken);
 
+                if (user != null)
+                {
+                    // Bu ailede hâlâ aktif olan yeni token'ları iptal et.
+                    await _context.RefreshTokens
+                        .Where(token =>
+                            token.FamilyId == refreshToken.FamilyId &&
+                            token.RevokedAtUtc == null)
+                        .ExecuteUpdateAsync(
+                            setters => setters.SetProperty(
+                                token => token.RevokedAtUtc,
+                                now),
+                            cancellationToken);
+
+                    // Bu aileden üretilmiş mevcut access token'ı da reddet.
+                    // Diğer cihazlar geçerli refresh token ile tekrar
+                    // yenileme yaparak yeni sürüme geçebilir.
+                    user.TokenVersion++;
+                    user.UpdatedAtUtc = now;
+
+                    await _context.SaveChangesAsync(
+                        cancellationToken);
+                }
+
+                await transaction.CommitAsync(
+                    cancellationToken);
+
+                throw new AppException(
+                    401,
+                    "REFRESH_TOKEN_REUSE_DETECTED");
+            }
+
+            // Logout veya şifre değişimi nedeniyle iptal edilmiş,
+            // fakat yerine başka token oluşturulmamış token.
+            if (refreshToken.RevokedAtUtc.HasValue)
+            {
+                throw new AppException(
+                    401,
+                    "INVALID_REFRESH_TOKEN");
+            }
+
+            var currentUser = await _context.Users
+                .FirstOrDefaultAsync(
+                    x => x.Id == refreshToken.UserId,
+                    cancellationToken);
+
+            if (currentUser == null)
+            {
+                throw new AppException(
+                    401,
+                    "INVALID_REFRESH_TOKEN");
+            }
+
+            // Kullanılmış refresh token'ı iptal et.
             refreshToken.RevokedAtUtc = now;
-            var response = await CreateAuthResponseAsync(user, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+
+            // Aynı token ailesinde yeni access ve refresh token oluştur.
+            var response = await CreateAuthResponseAsync(
+                currentUser,
+                cancellationToken,
+                refreshToken.FamilyId);
+
+            refreshToken.ReplacedByTokenHash =
+                HashRefreshToken(response.RefreshToken!);
+
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            await transaction.CommitAsync(
+                cancellationToken);
+
             return response;
+        }
+
+        public async Task LogoutAsync(
+            RefreshTokenRequest request,
+            CancellationToken cancellationToken)
+        {
+            var tokenHash = HashRefreshToken(
+                request.RefreshToken);
+
+            var now = DateTime.UtcNow;
+
+            await _context.RefreshTokens
+                .Where(token =>
+                    token.TokenHash == tokenHash &&
+                    token.RevokedAtUtc == null)
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(
+                        token => token.RevokedAtUtc,
+                        now),
+                    cancellationToken);
         }
 
         public async Task<AuthResponse> GoogleLoginAsync(
@@ -301,16 +399,60 @@ namespace DailyChessPuzzleApi.Services
             {
                 if (!existingUser.EmailVerified)
                 {
-                    existingUser.GoogleId = googleId;
-                    existingUser.EmailVerified = true;
-                    existingUser.EmailVerificationCodeHash = null;
-                    existingUser.EmailVerificationCodeExpiresAtUtc = null;
-                    existingUser.UpdatedAtUtc = DateTime.UtcNow;
-                    await _context.SaveChangesAsync(cancellationToken);
-                    return await CreateAuthResponseAsync(existingUser, cancellationToken);
+                    await using var transaction =
+                        await _context.Database.BeginTransactionAsync(
+                            cancellationToken);
+
+                    try
+                    {
+                        var now = DateTime.UtcNow;
+
+                        existingUser.GoogleId = googleId;
+                        existingUser.EmailVerified = true;
+
+                        // Doğrulanmamış hesap oluşturulurken belirlenen şifreye
+                        // artık güvenilemez. Google doğrulamasından sonra silinir.
+                        existingUser.PasswordHash = null;
+
+                        existingUser.EmailVerificationCodeHash = null;
+                        existingUser.EmailVerificationCodeExpiresAtUtc = null;
+                        existingUser.UpdatedAtUtc = now;
+                        existingUser.TokenVersion++;
+
+                        // Bu kullanıcı için daha önce oluşmuş olabilecek bütün
+                        // aktif refresh token'ları geçersiz kıl.
+                        await _context.RefreshTokens
+                            .Where(token =>
+                                token.UserId == existingUser.Id &&
+                                token.RevokedAtUtc == null)
+                            .ExecuteUpdateAsync(
+                                setters => setters.SetProperty(
+                                    token => token.RevokedAtUtc,
+                                    now),
+                                cancellationToken);
+
+                        await _context.SaveChangesAsync(cancellationToken);
+
+                        // Google ile giriş yapan gerçek kullanıcı için yeni
+                        // access token ve refresh token oluşturulur.
+                        var response = await CreateAuthResponseAsync(
+                            existingUser,
+                            cancellationToken);
+
+                        await transaction.CommitAsync(cancellationToken);
+
+                        return response;
+                    }
+                    catch
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        throw;
+                    }
                 }
 
-                throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
+                throw new AppException(
+                    409,
+                    "GOOGLE_ACCOUNT_LINK_REQUIRED");
             }
 
             string username = await GenerateGoogleUsernameAsync(
@@ -438,7 +580,9 @@ namespace DailyChessPuzzleApi.Services
 
             if (string.IsNullOrWhiteSpace(user.PasswordHash))
             {
-                throw new AppException(409, "PASSWORD_NOT_SET");
+                throw new AppException(
+                    409,
+                    "PASSWORD_NOT_SET");
             }
 
             var verificationResult =
@@ -447,19 +591,47 @@ namespace DailyChessPuzzleApi.Services
                     user.PasswordHash,
                     request.CurrentPassword);
 
-            if (verificationResult == PasswordVerificationResult.Failed)
+            if (verificationResult ==
+                PasswordVerificationResult.Failed)
             {
                 throw new UnauthorizedAccessException(
                     "INVALID_CURRENT_PASSWORD");
             }
 
-            user.PasswordHash = _passwordHasher.HashPassword(
-                user,
-                request.NewPassword);
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
 
-            user.UpdatedAtUtc = DateTime.UtcNow;
+            try
+            {
+                var now = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync(cancellationToken);
+                user.PasswordHash = _passwordHasher.HashPassword(
+                    user,
+                    request.NewPassword);
+
+                user.UpdatedAtUtc = now;
+                user.TokenVersion++;
+
+                await _context.RefreshTokens
+                    .Where(token =>
+                        token.UserId == userId &&
+                        token.RevokedAtUtc == null)
+                    .ExecuteUpdateAsync(
+                        setters => setters.SetProperty(
+                            token => token.RevokedAtUtc,
+                            now),
+                        cancellationToken);
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
         }
 
         private async Task<string> GenerateGoogleUsernameAsync(
@@ -500,7 +672,8 @@ namespace DailyChessPuzzleApi.Services
 
         private async Task<AuthResponse> CreateAuthResponseAsync(
             User user,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Guid? refreshTokenFamilyId = null)
         {
             DateTime expiresAtUtc = DateTime.UtcNow.AddMinutes(
                 _jwtSettings.ExpirationMinutes);
@@ -521,7 +694,11 @@ namespace DailyChessPuzzleApi.Services
 
                 new Claim(
                     JwtRegisteredClaimNames.Email,
-                    user.Email)
+                    user.Email),
+
+                new Claim(
+                    "token_version",
+                    user.TokenVersion.ToString())
             };
 
             var key = new SymmetricSecurityKey(
@@ -548,6 +725,7 @@ namespace DailyChessPuzzleApi.Services
             {
                 UserId = user.Id,
                 TokenHash = HashRefreshToken(refreshToken),
+                FamilyId = refreshTokenFamilyId ?? Guid.NewGuid(),
                 CreatedAtUtc = DateTime.UtcNow,
                 ExpiresAtUtc = refreshTokenExpiresAtUtc
             });

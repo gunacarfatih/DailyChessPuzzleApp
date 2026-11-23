@@ -1,6 +1,7 @@
 class PuzzleSession {
   final int? sessionId;
   final int puzzleId;
+  final String? fen;
   final List<String> playedMoves;
   final int currentMoveIndex;
   final int wrongMoves;
@@ -14,6 +15,7 @@ class PuzzleSession {
   const PuzzleSession({
     required this.sessionId,
     required this.puzzleId,
+    required this.fen,
     required this.playedMoves,
     required this.currentMoveIndex,
     required this.wrongMoves,
@@ -38,6 +40,7 @@ class PuzzleSession {
     return PuzzleSession(
       sessionId: int.tryParse('${read('sessionId')}'),
       puzzleId: asInt('puzzleId'),
+      fen: read('fen')?.toString(),
       playedMoves: moves is List
           ? moves.map((move) => move.toString()).toList()
           : const [],

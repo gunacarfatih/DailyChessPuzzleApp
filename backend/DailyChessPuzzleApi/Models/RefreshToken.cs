@@ -8,6 +8,13 @@ public sealed class RefreshToken
 
     public string TokenHash { get; set; } = string.Empty;
 
+    // Aynı giriş oturumunda döndürülen bütün yenilenmiş
+    // token'lar aynı aile kimliğini taşır.
+    public Guid FamilyId { get; set; } = Guid.NewGuid();
+
+    // Bu token yenilendiğinde yerine oluşturulan token'ın hash'i.
+    public string? ReplacedByTokenHash { get; set; }
+
     public DateTime CreatedAtUtc { get; set; }
 
     public DateTime ExpiresAtUtc { get; set; }

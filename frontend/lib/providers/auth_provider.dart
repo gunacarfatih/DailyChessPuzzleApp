@@ -224,7 +224,12 @@ class AuthProvider extends ChangeNotifier {
       );
 
       if (result.success) {
-        _hasPassword = true;
+        // Backend bütün refresh token'ları iptal etti.
+        // Mevcut cihazdaki access ve refresh token'ları da temizle.
+        await _authStorage.clearSession();
+
+        _initializationFuture = null;
+        _clearUserData();
         notifyListeners();
       }
 
