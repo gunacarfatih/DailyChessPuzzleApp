@@ -219,7 +219,8 @@ class PuzzlePageState extends State<PuzzlePage> {
   Position _buildPositionFromPlayedMoves(
       String fen,
       List<String> playedMoves,
-      ) {
+      )
+  {
     Position position = Chess.fromSetup(Setup.parseFen(fen));
 
     for (final uci in playedMoves) {
@@ -232,6 +233,9 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       position = position.play(move);
+      debugPrint('APPLIED MOVE: $uci');
+      debugPrint('POSITION AFTER MOVE: ${position.fen}');
+      debugPrint('TURN AFTER MOVE: ${position.turn}');
     }
 
     return position;
@@ -741,6 +745,9 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       final playedMoves = data.playedMoves;
+      debugPrint('SERVER PLAYED MOVES: $playedMoves');
+      debugPrint('OLD MOVE INDEX: $_nextMoveIndex');
+      debugPrint('NEW MOVE INDEX: ${data.currentMoveIndex}');
       final serverMoveIndex = data.currentMoveIndex ?? playedMoves.length;
       final serverWrongMoves = data.wrongMoves ?? _wrongMoves;
       final serverUsedHint = data.usedHint;
@@ -768,15 +775,13 @@ class PuzzlePageState extends State<PuzzlePage> {
         if (!_isCurrentGeneration(generation)) return;
       }
 
-      final puzzle = _puzzle!;
-
       final playerMoves = playedMoves
           .take(oldMoveCount + 1)
           .toList();
 
       final playerPosition = _buildPositionFromPlayedMoves(
-        puzzle.fen,
-        playerMoves,
+        _startingPosition!.fen,
+        playedMoves.skip(1).toList(),
       );
 
       _position = playerPosition;
@@ -798,11 +803,14 @@ class PuzzlePageState extends State<PuzzlePage> {
 
         if (!_isCurrentGeneration(generation)) return;
       }
-
+      debugPrint('STARTING POSITION FEN: ${_startingPosition!.fen}');
+      debugPrint('REPLAYED MOVES: ${playedMoves.skip(1).toList()}');
       final newPosition = _buildPositionFromPlayedMoves(
-        puzzle.fen,
-        playedMoves,
+        _startingPosition!.fen,
+        playedMoves.skip(1).toList(),
       );
+      debugPrint('FINAL BOARD FEN: ${newPosition.fen}');
+      debugPrint('FINAL BOARD TURN: ${newPosition.turn}');
 
       _position = newPosition;
       _lastMove = _lastPlayedMove(playedMoves);

@@ -17,7 +17,6 @@ class LeaderboardSignalRService {
   // SignalR yeniden bağlandığında çalışır.
   VoidCallback? onConnectionRestored;
 
-
   Future<void> connect() async {
     _debugLog('SignalR: connect() çağrıldı.');
 
@@ -27,7 +26,8 @@ class LeaderboardSignalRService {
     }
 
     try {
-      final hubUrl = '${ApiConstants.baseUrl}/hubs/leaderboard';
+      final hubUrl =
+          '${ApiConstants.baseUrl}/hubs/leaderboard';
 
       _debugLog('SignalR: Hub URL: $hubUrl');
 
@@ -37,7 +37,10 @@ class LeaderboardSignalRService {
           .build();
 
       _connection!.on('LeaderboardUpdated', (arguments) {
-        _debugLog('SignalR: LeaderboardUpdated alındı: $arguments');
+        _debugLog(
+          'SignalR: LeaderboardUpdated alındı: $arguments',
+        );
+
         onLeaderboardUpdated?.call();
       });
 
@@ -46,9 +49,11 @@ class LeaderboardSignalRService {
       });
 
       _connection!.onreconnected(({connectionId}) {
-        _debugLog('SignalR yeniden bağlandı: $connectionId');
-        _joinDefaultLeaderboard();
-        onConnectionRestored?.call();
+        _debugLog(
+          'SignalR yeniden bağlandı: $connectionId',
+        );
+
+        _rejoinAfterReconnect();
       });
 
       _debugLog('SignalR: Bağlantı başlatılıyor...');
@@ -66,17 +71,42 @@ class LeaderboardSignalRService {
 
   Future<void> _joinDefaultLeaderboard() async {
     final connection = _connection;
-    if (connection?.state != HubConnectionState.Connected) return;
-    final countryCode = await AuthStorage.instance.getCountryCode();
+
+    if (connection?.state != HubConnectionState.Connected) {
+      return;
+    }
+
+    final countryCode =
+    await AuthStorage.instance.getCountryCode();
+
+    _debugLog(
+      'SignalR: JoinLeaderboard çağrılıyor. '
+          'period=daily, country=$countryCode',
+    );
+
     await connection!.invoke(
       'JoinLeaderboard',
       args: <Object>[
         'daily',
-        ?countryCode,
+        countryCode ?? '',
       ],
     );
+
+    _debugLog('SignalR: JoinLeaderboard başarılı.');
   }
 
+  Future<void> _rejoinAfterReconnect() async {
+    try {
+      await _joinDefaultLeaderboard();
+
+      onConnectionRestored?.call();
+    } catch (e, stackTrace) {
+      _debugLog(
+        'SignalR yeniden gruba katılma hatası: $e',
+      );
+      _debugLog('$stackTrace');
+    }
+  }
 
   Future<void> disconnect() async {
     final connection = _connection;
@@ -87,13 +117,18 @@ class LeaderboardSignalRService {
 
     try {
       await connection.stop();
+
       _debugLog('SignalR bağlantısı kapatıldı.');
     } catch (e) {
-      _debugLog('SignalR bağlantısı kapatılırken hata: $e');
+      _debugLog(
+        'SignalR bağlantısı kapatılırken hata: $e',
+      );
     }
   }
 }
 
 void _debugLog(Object? message) {
-  if (kDebugMode) debugPrint(message.toString());
+  if (kDebugMode) {
+    debugPrint(message.toString());
+  }
 }

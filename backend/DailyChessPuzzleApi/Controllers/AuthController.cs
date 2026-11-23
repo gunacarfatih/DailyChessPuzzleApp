@@ -181,6 +181,8 @@ namespace DailyChessPuzzleApi.Controllers
                 new { HasPassword = true }));
         }
 
+
+
         private int GetAuthenticatedUserId()
         {
             string? userIdValue = User.FindFirstValue(
