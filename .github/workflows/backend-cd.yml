@@ -1,0 +1,139 @@
+
+name: Backend CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to deploy (40 characters)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dailychess-production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Backend to Production
+
+    if: github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Validate commit SHA
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$COMMIT_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Invalid commit SHA."
+            exit 1
+          fi
+
+          echo "Commit SHA validated."
+
+      - name: Verify successful CI run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          RUN_ID=$(gh api \
+            --method GET \
+            "repos/$REPOSITORY/actions/workflows/backend-ci.yml/runs" \
+            -f branch="fix/production-readiness" \
+            -f head_sha="$COMMIT_SHA" \
+            -f event="push" \
+            -f status="success" \
+            --jq '.workflow_runs[0].id // empty')
+
+          if [[ -z "$RUN_ID" ]]; then
+            echo "No successful CI run found for this commit."
+            exit 1
+          fi
+
+          echo "Successful CI run found: $RUN_ID"
+
+          JOBS=$(gh api --paginate \
+            "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs")
+
+          if ! printf '%s\n' "$JOBS" | jq -es '
+            [.[].jobs[]] |
+            any(
+              .name == "Build and Test Backend"
+              and .conclusion == "success"
+            )
+            and
+            any(
+              .name == "Publish ARM64 Docker Image"
+              and .conclusion == "success"
+            )
+          ' > /dev/null; then
+            echo "Required CI jobs did not complete successfully."
+            exit 1
+          fi
+
+          echo "Build, tests and image publishing verified."
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          umask 077
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          printf '%s\n' "$DEPLOY_SSH_KEY" \
+            > "$HOME/.ssh/dailychess_deploy"
+
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" \
+            > "$HOME/.ssh/known_hosts"
+
+          chmod 600 "$HOME/.ssh/dailychess_deploy"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy API via SSH
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$HOME/.ssh/dailychess_deploy" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            -T \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "deploy $COMMIT_SHA"
+
+      - name: Cleanup SSH credentials
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$HOME/.ssh/dailychess_deploy"
+          rm -f "$HOME/.ssh/known_hosts"
