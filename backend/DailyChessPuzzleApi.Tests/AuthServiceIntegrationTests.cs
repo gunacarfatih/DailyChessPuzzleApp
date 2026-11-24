@@ -93,7 +93,15 @@ public sealed class AuthServiceIntegrationTests
             service.RefreshAsync(
                 new RefreshTokenRequest { RefreshToken = login.RefreshToken },
                 CancellationToken.None));
-        Assert.Equal("INVALID_REFRESH_TOKEN", replayedRefresh.ErrorCode);
+        Assert.Equal("REFRESH_TOKEN_REUSE_DETECTED", replayedRefresh.ErrorCode);
+
+        // Eski token tekrar kullanildiginda yeni token da iptal edilmelidir.
+        var revokedRefresh = await Assert.ThrowsAsync<AppException>(() =>
+            service.RefreshAsync(
+                new RefreshTokenRequest { RefreshToken = refresh.RefreshToken },
+                CancellationToken.None));
+
+        Assert.Equal("INVALID_REFRESH_TOKEN", revokedRefresh.ErrorCode);
     }
 
     private sealed class RecordingEmailSender : IEmailSender
