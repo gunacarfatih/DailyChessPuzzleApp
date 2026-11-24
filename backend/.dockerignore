@@ -1,0 +1,35 @@
+
+# Derleme dosyalari
+**/bin/
+**/obj/
+
+# IDE dosyalari
+**/.vs/
+**/.vscode/
+**/.idea/
+**/*.user
+**/*.suo
+
+# Git dosyalari
+**/.git/
+**/.gitignore
+
+# Log dosyalari
+**/Logs/
+**/logs/
+**/*.log
+
+# Yerel ayarlar ve gizli bilgiler
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/.env
+**/.env.*
+
+# Test ciktilari
+**/TestResults/
+**/coverage/
+
+# API imaji icin gerekli olmayan projeler
+DailyChessPuzzle.DataImporter/
+DailyChessPuzzle.SignalRTester/
+DailyChessPuzzleApi.Tests/
