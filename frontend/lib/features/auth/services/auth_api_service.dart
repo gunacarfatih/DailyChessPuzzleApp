@@ -1,3 +1,4 @@
+
 import 'package:dio/dio.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -43,17 +44,40 @@ class AuthApiService {
     await _googleInitialization;
   }
 
-  // JWT gerektiren isteklerde kullanılacak Authorization başlığı.
-  Future<Options> _getAuthenticatedOptions() async {
+  // İsteğin ait olduğu oturum neslini belirler.
+  Options _getSessionOptions(int generation) {
+    _authStorage.ensureCurrentGeneration(generation);
+
+    return Options(
+      extra: {
+        ApiClient.sessionGenerationKey: generation,
+      },
+    );
+  }
+
+  // JWT gerektiren isteklerde Authorization başlığı
+  // ve ilgili oturum nesli birlikte gönderilir.
+  Future<Options> _getAuthenticatedOptions(
+      int generation,
+      ) async {
+    _authStorage.ensureCurrentGeneration(generation);
+
     final token = await _authStorage.getAccessToken();
 
+    _authStorage.ensureCurrentGeneration(generation);
+
     if (token == null || token.isEmpty) {
-      throw Exception('Oturum süresi dolmuş. Lütfen tekrar giriş yap.');
+      throw Exception(
+        'Oturum süresi dolmuş. Lütfen tekrar giriş yap.',
+      );
     }
 
     return Options(
       headers: {
         'Authorization': 'Bearer $token',
+      },
+      extra: {
+        ApiClient.sessionGenerationKey: generation,
       },
     );
   }
@@ -78,58 +102,93 @@ class AuthApiService {
       'countryCode': countryCode,
     };
 
-    return _postMap(ApiConstants.registerEndpoint, requestData);
+    return _postMap(
+      ApiConstants.registerEndpoint,
+      requestData,
+    );
   }
 
   Future<ApiResponse<Map<String, dynamic>>> verifyEmail({
     required String email,
     required String code,
   }) async {
-    return _postMap(ApiConstants.verifyEmailEndpoint, {
-      'email': email.trim(),
-      'code': code.trim(),
-    });
+    return _postMap(
+      ApiConstants.verifyEmailEndpoint,
+      {
+        'email': email.trim(),
+        'code': code.trim(),
+      },
+    );
   }
 
   Future<ApiResponse<Map<String, dynamic>>> resendVerification({
     required String email,
   }) async {
-    return _postMap(ApiConstants.resendVerificationEndpoint, {
-      'email': email.trim(),
-    });
+    return _postMap(
+      ApiConstants.resendVerificationEndpoint,
+      {
+        'email': email.trim(),
+      },
+    );
   }
 
   Future<ApiResponse<Map<String, dynamic>>> _postMap(
-    String path,
-    Map<String, dynamic> data,
-  ) async {
+      String path,
+      Map<String, dynamic> data,
+      ) async {
+    final generation = _authStorage.sessionGeneration;
+
     dynamic responseData;
+
     try {
-      final response = await _dio.post(path, data: data);
+      final response = await _dio.post(
+        path,
+        data: data,
+        options: _getSessionOptions(generation),
+      );
+
       responseData = response.data;
     } on DioException catch (exception) {
+      _authStorage.ensureCurrentGeneration(generation);
+
       responseData = exception.response?.data;
+
       if (responseData is! Map) rethrow;
     }
 
+    _authStorage.ensureCurrentGeneration(generation);
+
     return ApiResponse<Map<String, dynamic>>.fromJson(
       Map<String, dynamic>.from(responseData as Map),
-      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+      fromJsonT: (json) =>
+      Map<String, dynamic>.from(json as Map),
     );
   }
 
   // Mevcut kullanıcıyla e-posta ve şifre üzerinden giriş yapar.
+  //
+  // Oturum değişikliği AuthProvider tarafından başlatılır.
+  // Giriş sonucu yalnızca ilgili oturum nesline kaydedilir.
   Future<ApiResponse<AuthResponse>> login({
     required String email,
     required String password,
+    int? expectedGeneration,
   }) async {
+    final generation = expectedGeneration ??
+        await _authStorage.beginSessionChange();
+
+    _authStorage.ensureCurrentGeneration(generation);
+
     final response = await _dio.post(
       ApiConstants.loginEndpoint,
       data: {
         'email': email.trim(),
         'password': password,
       },
+      options: _getSessionOptions(generation),
     );
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     final result = ApiResponse<AuthResponse>.fromJson(
       Map<String, dynamic>.from(response.data as Map),
@@ -139,8 +198,13 @@ class AuthApiService {
     );
 
     if (result.success && result.data != null) {
-      await _authStorage.saveSession(result.data!);
+      await _authStorage.saveSession(
+        result.data!,
+        expectedGeneration: generation,
+      );
     }
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     return result;
   }
@@ -152,12 +216,25 @@ class AuthApiService {
   // 3. Google ID Token alınır.
   // 4. Token backend'e gönderilir.
   // 5. Backend JWT'si güvenli şekilde saklanır.
-  Future<ApiResponse<AuthResponse>> loginWithGoogle() async {
+  //
+  // Her asenkron aşamadan sonra oturum nesli kontrol edilir.
+  Future<ApiResponse<AuthResponse>> loginWithGoogle({
+    int? expectedGeneration,
+  }) async {
+    final generation = expectedGeneration ??
+        await _authStorage.beginSessionChange();
+
+    _authStorage.ensureCurrentGeneration(generation);
+
     await _initializeGoogleSignIn();
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     // Google hesap seçim ekranını aç.
     final GoogleSignInAccount account =
     await _googleSignIn.authenticate();
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     // Google ID Token al.
     final GoogleSignInAuthentication authentication =
@@ -172,6 +249,8 @@ class AuthApiService {
     // Mevcut misafir ClientId değerini al.
     final clientId = await _clientIdStorage.getClientId();
 
+    _authStorage.ensureCurrentGeneration(generation);
+
     // Google ID Token'ı backend'e gönder.
     final response = await _dio.post(
       _googleLoginEndpoint,
@@ -179,7 +258,10 @@ class AuthApiService {
         'idToken': idToken,
         'clientId': clientId,
       },
+      options: _getSessionOptions(generation),
     );
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     final result = ApiResponse<AuthResponse>.fromJson(
       Map<String, dynamic>.from(response.data as Map),
@@ -190,21 +272,43 @@ class AuthApiService {
 
     // Google token'ı değil, backend'in ürettiği JWT saklanır.
     if (result.success && result.data != null) {
-      await _authStorage.saveSession(result.data!);
+      await _authStorage.saveSession(
+        result.data!,
+        expectedGeneration: generation,
+      );
     }
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     return result;
   }
 
+  // Mevcut kullanıcı hesabına Google hesabı bağlar.
   Future<ApiResponse<Map<String, dynamic>>> linkGoogleAccount({
     required String currentPassword,
   }) async {
+    final generation = _authStorage.sessionGeneration;
+
     await _initializeGoogleSignIn();
+
+    _authStorage.ensureCurrentGeneration(generation);
+
     final account = await _googleSignIn.authenticate();
+
+    // Google hesap seçimi sırasında oturum değişmiş olabilir.
+    _authStorage.ensureCurrentGeneration(generation);
+
     final idToken = account.authentication.idToken;
+
     if (idToken == null || idToken.isEmpty) {
       throw Exception('Google ID Token alınamadı.');
     }
+
+    final options = await _getAuthenticatedOptions(
+      generation,
+    );
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     final response = await _dio.post(
       '/api/auth/link-google',
@@ -212,11 +316,15 @@ class AuthApiService {
         'idToken': idToken,
         'currentPassword': currentPassword,
       },
-      options: await _getAuthenticatedOptions(),
+      options: options,
     );
+
+    _authStorage.ensureCurrentGeneration(generation);
+
     return ApiResponse<Map<String, dynamic>>.fromJson(
       Map<String, dynamic>.from(response.data as Map),
-      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+      fromJsonT: (json) =>
+      Map<String, dynamic>.from(json as Map),
     );
   }
 
@@ -225,7 +333,13 @@ class AuthApiService {
   Future<ApiResponse<Map<String, dynamic>>> setPassword({
     required String newPassword,
   }) async {
-    final options = await _getAuthenticatedOptions();
+    final generation = _authStorage.sessionGeneration;
+
+    final options = await _getAuthenticatedOptions(
+      generation,
+    );
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     final response = await _dio.post(
       _setPasswordEndpoint,
@@ -235,10 +349,22 @@ class AuthApiService {
       options: options,
     );
 
+    _authStorage.ensureCurrentGeneration(generation);
+
     final result = ApiResponse<Map<String, dynamic>>.fromJson(
       Map<String, dynamic>.from(response.data as Map),
-      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+      fromJsonT: (json) =>
+      Map<String, dynamic>.from(json as Map),
     );
+
+    if (result.success) {
+      await _authStorage.updateHasPassword(
+        true,
+        expectedGeneration: generation,
+      );
+    }
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     return result;
   }
@@ -248,7 +374,13 @@ class AuthApiService {
     required String currentPassword,
     required String newPassword,
   }) async {
-    final options = await _getAuthenticatedOptions();
+    final generation = _authStorage.sessionGeneration;
+
+    final options = await _getAuthenticatedOptions(
+      generation,
+    );
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     final response = await _dio.post(
       _changePasswordEndpoint,
@@ -259,63 +391,114 @@ class AuthApiService {
       options: options,
     );
 
+    _authStorage.ensureCurrentGeneration(generation);
+
     final result = ApiResponse<Map<String, dynamic>>.fromJson(
       Map<String, dynamic>.from(response.data as Map),
-      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+      fromJsonT: (json) =>
+      Map<String, dynamic>.from(json as Map),
     );
 
-    if (result.success) {
-      await _authStorage.updateHasPassword(true);
-    }
+    // Backend başarılı parola değişikliğinde refresh
+    // token'ları iptal eder.
+    //
+    // Yerel oturumun temizlenmesi AuthProvider tarafından
+    // ilgili oturum nesli kontrol edilerek gerçekleştirilir.
 
     return result;
   }
 
+  // Kullanıcının ülke bilgisini günceller.
   Future<ApiResponse<Map<String, dynamic>>> updateCountryCode(
-    String? countryCode,
-  ) async {
-    final token = await _authStorage.getAccessToken();
-    if (token == null || token.isEmpty) {
-      throw Exception('AUTH_SESSION_EXPIRED');
-    }
+      String? countryCode,
+      ) async {
+    final generation = _authStorage.sessionGeneration;
+
+    final options = await _getAuthenticatedOptions(
+      generation,
+    );
+
+    _authStorage.ensureCurrentGeneration(generation);
 
     final response = await _dio.patch(
       ApiConstants.updateCountryEndpoint,
-      data: {'countryCode': countryCode},
+      data: {
+        'countryCode': countryCode,
+      },
+      options: options,
     );
+
+    _authStorage.ensureCurrentGeneration(generation);
+
     return ApiResponse<Map<String, dynamic>>.fromJson(
       Map<String, dynamic>.from(response.data as Map),
-      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+      fromJsonT: (json) =>
+      Map<String, dynamic>.from(json as Map),
     );
   }
 
   // Kullanıcı oturumunu kapatır.
+  //
+  // Yerel oturum, sunucu yanıtı beklenmeden geçersiz kılınır.
+  // Böylece devam eden eski refresh işlemleri oturumu
+  // yeniden oluşturamaz.
   Future<void> logout() async {
-    final refreshToken =
-    await _authStorage.getRefreshToken();
+    final generation = _authStorage.sessionGeneration;
+
+    final refreshToken = await _authStorage.getRefreshToken();
+
+    _authStorage.ensureCurrentGeneration(generation);
+
+    // Önce yerel oturumu geçersiz kıl ve temizle.
+    await _authStorage.clearSession(
+      expectedGeneration: generation,
+    );
 
     // Yerel oturumda refresh token yoksa temizlenecek
     // sunucu oturumu da bulunmaz.
     if (refreshToken == null || refreshToken.isEmpty) {
-      await _authStorage.clearSession();
       return;
     }
 
-    final response = await _dio.post(
-      ApiConstants.logoutEndpoint,
-      data: {
-        'refreshToken': refreshToken,
-      },
+    // Logout isteği mevcut kullanıcı oturumundan bağımsızdır.
+    // Yalnızca çıkış yapılan hesabın refresh token'ı gönderilir.
+    final logoutDio = Dio(
+      BaseOptions(
+        baseUrl: ApiConstants.baseUrl,
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 15),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        validateStatus: (status) {
+          return status != null && status < 500;
+        },
+      ),
     );
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Sunucu oturumu kapatamadı. Lütfen tekrar deneyin.',
+    try {
+      final response = await logoutDio.post(
+        ApiConstants.logoutEndpoint,
+        data: {
+          'refreshToken': refreshToken,
+        },
       );
+
+      // Token zaten geçersizse sunucuda aktif bir
+      // oturum bulunmadığı kabul edilir.
+      if (response.statusCode != 200 &&
+          response.statusCode != 401) {
+        throw Exception(
+          'Sunucu oturumu kapatamadı. Yerel oturum kapatıldı.',
+        );
+      }
+    } finally {
+      logoutDio.close();
     }
 
-    // Sunucu refresh token'ı iptal ettikten sonra
-    // cihazdaki oturum bilgilerini temizle.
-    await _authStorage.clearSession();
+    // Burada tekrar clearSession çağrılmaz.
+    // Kullanıcı bu sırada başka bir hesaba giriş yapmış olabilir.
   }
 }

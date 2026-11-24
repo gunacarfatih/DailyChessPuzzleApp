@@ -1,3 +1,4 @@
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../features/auth/models/auth_response.dart';
@@ -6,10 +7,50 @@ class AuthStorage {
   AuthStorage._();
 
   static final AuthStorage instance = AuthStorage._();
-  static Future<void> Function()? onSessionExpired;
+
+  // Oturum sona erdiğinde Provider'a bildirim gönderilir.
+  static Future<void> Function(int generation)? onSessionExpired;
+
+  // Her oturum değişikliğinde artırılan nesil numarası.
+  int _sessionGeneration = 0;
+
+  int get sessionGeneration => _sessionGeneration;
+
+  // İşlemin hâlâ aynı oturuma ait olup olmadığını kontrol eder.
+  bool isCurrentGeneration(int generation) {
+    return _sessionGeneration == generation;
+  }
+
+  // Önceki oturuma ait asenkron işlemleri geçersiz kılar.
+  int advanceSessionGeneration() {
+    return ++_sessionGeneration;
+  }
+
+  // Eski oturuma ait işlemlerin devam etmesini engeller.
+  void ensureCurrentGeneration(int generation) {
+    if (!isCurrentGeneration(generation)) {
+      throw StateError('AUTH_SESSION_CHANGED');
+    }
+  }
+
+  // Güvenli depolama işlemlerinin sırasını korur.
+  Future<void> _operationQueue = Future<void>.value();
+
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final result = _operationQueue.then<T>(
+          (_) => operation(),
+    );
+
+    _operationQueue = result.then<void>(
+          (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+
+    return result;
+  }
 
   static const FlutterSecureStorage _storage =
-      FlutterSecureStorage();
+  FlutterSecureStorage();
 
   static const String _tokenKey = 'auth_access_token';
   static const String _refreshTokenKey = 'auth_refresh_token';
@@ -22,76 +63,105 @@ class AuthStorage {
   static const String _hasPasswordKey = 'auth_has_password';
   static const String _expiresAtKey = 'auth_expires_at';
 
-  Future<void> saveSession(AuthResponse response) async {
-    await _storage.write(
-      key: _tokenKey,
-      value: response.accessToken,
-    );
-    if (response.refreshToken != null && response.refreshToken!.isNotEmpty) {
-      await _storage.write(
-        key: _refreshTokenKey,
-        value: response.refreshToken,
-      );
-    }
+  // Yeni bir oturum başlatır ve önceki oturumu geçersiz kılar.
+  Future<int> beginSessionChange() async {
+    final generation = advanceSessionGeneration();
 
-    await _storage.write(
-      key: _userIdKey,
-      value: response.userId.toString(),
-    );
+    await _enqueue(() async {
+      ensureCurrentGeneration(generation);
+      await _deleteSessionData();
+    });
 
-    await _storage.write(
-      key: _usernameKey,
-      value: response.username,
-    );
+    ensureCurrentGeneration(generation);
 
-    await _storage.write(
-      key: _emailKey,
-      value: response.email,
-    );
+    return generation;
+  }
 
-    await _storage.write(
-      key: _firstNameKey,
-      value: response.firstName ?? '',
-    );
+  // Oturum bilgilerini yalnızca ilgili oturum hâlâ geçerliyse kaydeder.
+  Future<void> saveSession(
+      AuthResponse response, {
+        required int expectedGeneration,
+      }) {
+    return _enqueue(() async {
+      ensureCurrentGeneration(expectedGeneration);
 
-    await _storage.write(
-      key: _lastNameKey,
-      value: response.lastName ?? '',
-    );
+      final values = <String, String>{
+        _tokenKey: response.accessToken,
+        _userIdKey: response.userId.toString(),
+        _usernameKey: response.username,
+        _emailKey: response.email,
+        _firstNameKey: response.firstName ?? '',
+        _lastNameKey: response.lastName ?? '',
+        _countryCodeKey: response.countryCode ?? '',
+        _hasPasswordKey: response.hasPassword.toString(),
+        _expiresAtKey: response.expiresAtUtc.toIso8601String(),
+      };
 
-    await _storage.write(
-      key: _countryCodeKey,
-      value: response.countryCode ?? '',
-    );
+      final refreshToken = response.refreshToken;
 
-    await _storage.write(
-      key: _hasPasswordKey,
-      value: response.hasPassword.toString(),
-    );
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        values[_refreshTokenKey] = refreshToken;
+      }
 
-    await _storage.write(
-      key: _expiresAtKey,
-      value: response.expiresAtUtc.toIso8601String(),
-    );
+      try {
+        for (final entry in values.entries) {
+          ensureCurrentGeneration(expectedGeneration);
+
+          await _storage.write(
+            key: entry.key,
+            value: entry.value,
+          );
+        }
+
+        ensureCurrentGeneration(expectedGeneration);
+      } catch (_) {
+        // Kısmen yazılmış oturum bilgilerinin kullanılmasını engeller.
+        await _deleteSessionData();
+        rethrow;
+      }
+    });
+  }
+
+  // Depolama okumalarını da işlem kuyruğundan geçirir.
+  Future<String?> _read(String key) {
+    final generation = sessionGeneration;
+
+    return _enqueue(() async {
+      ensureCurrentGeneration(generation);
+
+      final value = await _storage.read(key: key);
+
+      ensureCurrentGeneration(generation);
+
+      return value;
+    });
   }
 
   Future<String?> getAccessToken() async {
-    final token = await _storage.read(key: _tokenKey);
+    final token = await _read(_tokenKey);
+
     return token == null || token.isEmpty ? null : token;
   }
 
-  Future<String?> getRefreshToken() => _storage.read(key: _refreshTokenKey);
+  Future<String?> getRefreshToken() async {
+    final token = await _read(_refreshTokenKey);
+
+    return token == null || token.isEmpty ? null : token;
+  }
 
   Future<bool> isAccessTokenExpired() async {
-    final expiresAt = await _storage.read(key: _expiresAtKey);
+    final expiresAt = await _read(_expiresAtKey);
+
     if (expiresAt == null) return false;
+
     final expiryDate = DateTime.tryParse(expiresAt);
-    return expiryDate == null || !expiryDate.isAfter(DateTime.now().toUtc());
+
+    return expiryDate == null ||
+        !expiryDate.isAfter(DateTime.now().toUtc());
   }
 
   Future<bool> hasStoredAccessToken() async {
-    final token = await _storage.read(key: _tokenKey);
-    return token != null && token.isNotEmpty;
+    return await getAccessToken() != null;
   }
 
   Future<bool> isLoggedIn() async {
@@ -99,51 +169,109 @@ class AuthStorage {
   }
 
   Future<int?> getUserId() async {
-    final value = await _storage.read(key: _userIdKey);
+    final value = await _read(_userIdKey);
+
     return int.tryParse(value ?? '');
   }
 
-  Future<String?> getUsername() async {
-    return _storage.read(key: _usernameKey);
+  Future<String?> getUsername() {
+    return _read(_usernameKey);
   }
 
-  Future<String?> getEmail() async {
-    return _storage.read(key: _emailKey);
+  Future<String?> getEmail() {
+    return _read(_emailKey);
   }
 
-  Future<String?> getFirstName() async {
-    return _storage.read(key: _firstNameKey);
+  Future<String?> getFirstName() {
+    return _read(_firstNameKey);
   }
 
-  Future<String?> getLastName() async {
-    return _storage.read(key: _lastNameKey);
+  Future<String?> getLastName() {
+    return _read(_lastNameKey);
   }
 
-  Future<String?> getCountryCode() async {
-    return _storage.read(key: _countryCodeKey);
+  Future<String?> getCountryCode() {
+    return _read(_countryCodeKey);
   }
 
-  Future<void> updateCountryCode(String? countryCode) async {
-    if (countryCode == null || countryCode.isEmpty) {
-      await _storage.delete(key: _countryCodeKey);
-    } else {
-      await _storage.write(key: _countryCodeKey, value: countryCode);
-    }
+  // Ülke bilgisi yalnızca ilgili oturum için güncellenir.
+  Future<void> updateCountryCode(
+      String? countryCode, {
+        required int expectedGeneration,
+      }) {
+    return _enqueue(() async {
+      ensureCurrentGeneration(expectedGeneration);
+
+      if (countryCode == null || countryCode.isEmpty) {
+        await _storage.delete(key: _countryCodeKey);
+      } else {
+        await _storage.write(
+          key: _countryCodeKey,
+          value: countryCode,
+        );
+      }
+
+      ensureCurrentGeneration(expectedGeneration);
+    });
   }
 
   Future<bool> getHasPassword() async {
-    final value = await _storage.read(key: _hasPasswordKey);
+    final value = await _read(_hasPasswordKey);
+
     return value == 'true';
   }
 
-  Future<void> updateHasPassword(bool hasPassword) async {
-    await _storage.write(
-      key: _hasPasswordKey,
-      value: hasPassword.toString(),
-    );
+  // Şifre durumu yalnızca ilgili oturum için güncellenir.
+  Future<void> updateHasPassword(
+      bool hasPassword, {
+        required int expectedGeneration,
+      }) {
+    return _enqueue(() async {
+      ensureCurrentGeneration(expectedGeneration);
+
+      await _storage.write(
+        key: _hasPasswordKey,
+        value: hasPassword.toString(),
+      );
+
+      ensureCurrentGeneration(expectedGeneration);
+    });
   }
 
-  Future<void> clearSession() async {
+  // Oturumu geçersiz kılar ve güvenli depolamayı temizler.
+  Future<void> clearSession({
+    required int expectedGeneration,
+  }) async {
+    ensureCurrentGeneration(expectedGeneration);
+
+    final generation = advanceSessionGeneration();
+
+    await _enqueue(() async {
+      if (!isCurrentGeneration(generation)) return;
+
+      await _deleteSessionData();
+    });
+  }
+
+  // Yalnızca belirtilen oturumun süresini sona erdirir.
+  Future<void> expireSession(int expectedGeneration) async {
+    if (!isCurrentGeneration(expectedGeneration)) return;
+
+    final generation = advanceSessionGeneration();
+
+    await _enqueue(() async {
+      if (!isCurrentGeneration(generation)) return;
+
+      await _deleteSessionData();
+    });
+
+    if (!isCurrentGeneration(generation)) return;
+
+    await onSessionExpired?.call(generation);
+  }
+
+  // Depolama kuyruğu içerisinden çağrılmalıdır.
+  Future<void> _deleteSessionData() async {
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _userIdKey);
