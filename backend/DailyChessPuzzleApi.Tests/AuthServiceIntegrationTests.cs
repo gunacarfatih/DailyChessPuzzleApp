@@ -82,26 +82,52 @@ public sealed class AuthServiceIntegrationTests
         Assert.False(string.IsNullOrWhiteSpace(login.AccessToken));
         Assert.False(string.IsNullOrWhiteSpace(login.RefreshToken));
 
+
         var refresh = await service.RefreshAsync(
-            new RefreshTokenRequest { RefreshToken = login.RefreshToken },
+            new RefreshTokenRequest
+            {
+                RefreshToken = login.RefreshToken
+            },
             CancellationToken.None);
 
         Assert.NotEqual(login.RefreshToken, refresh.RefreshToken);
         Assert.Equal(2, context.RefreshTokens.Count());
 
+        // Yeni API istegini simule etmek icin takip edilen entity'leri temizle.
+        context.ChangeTracker.Clear();
+
         var replayedRefresh = await Assert.ThrowsAsync<AppException>(() =>
             service.RefreshAsync(
-                new RefreshTokenRequest { RefreshToken = login.RefreshToken },
+                new RefreshTokenRequest
+                {
+                    RefreshToken = login.RefreshToken
+                },
                 CancellationToken.None));
-        Assert.Equal("REFRESH_TOKEN_REUSE_DETECTED", replayedRefresh.ErrorCode);
 
-        // Eski token tekrar kullanildiginda yeni token da iptal edilmelidir.
+        Assert.Equal(
+            "REFRESH_TOKEN_REUSE_DETECTED",
+            replayedRefresh.ErrorCode);
+
+        // Veritabaninda aktif refresh token kalmadigini dogrula.
+        Assert.Equal(
+            0,
+            context.RefreshTokens.Count(token => token.RevokedAtUtc == null));
+
+        // Eski entity durumlarinin kullanilmasini engelle.
+        context.ChangeTracker.Clear();
+
         var revokedRefresh = await Assert.ThrowsAsync<AppException>(() =>
             service.RefreshAsync(
-                new RefreshTokenRequest { RefreshToken = refresh.RefreshToken },
+                new RefreshTokenRequest
+                {
+                    RefreshToken = refresh.RefreshToken
+                },
                 CancellationToken.None));
 
-        Assert.Equal("INVALID_REFRESH_TOKEN", revokedRefresh.ErrorCode);
+        Assert.Equal(
+            "INVALID_REFRESH_TOKEN",
+            revokedRefresh.ErrorCode);
+
     }
 
     private sealed class RecordingEmailSender : IEmailSender
