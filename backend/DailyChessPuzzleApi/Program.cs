@@ -11,6 +11,7 @@ using DailyChessPuzzleApi.Services;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
 using DailyChessPuzzleApi.Hubs;
+using DailyChessPuzzleApi.HealthChecks;
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
@@ -20,6 +21,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 using ReusableCaching.Extensions;
 using Serilog;
@@ -339,7 +341,19 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 // --------------------------------------------------
 
 builder.Services.AddControllers();
-builder.Services.AddHealthChecks();
+
+// PostgreSQL ve Redis sağlık kontrolleri.
+builder.Services.AddHealthChecks()
+    .AddCheck<PostgreSqlHealthCheck>(
+        name: "PostgreSQL",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: new[] { "ready", "database" },
+        timeout: TimeSpan.FromSeconds(5))
+    .AddCheck<RedisHealthCheck>(
+        name: "Redis",
+        failureStatus: HealthStatus.Degraded,
+        tags: new[] { "ready", "cache" },
+        timeout: TimeSpan.FromSeconds(3));
 
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
@@ -471,7 +485,6 @@ app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHealthChecks("/health");
 
 app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 
