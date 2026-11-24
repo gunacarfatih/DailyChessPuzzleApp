@@ -335,6 +335,21 @@ namespace DailyChessPuzzleApi.Controllers
             bool isAuthenticated =
                 User.Identity?.IsAuthenticated == true;
 
+            bool hasAuthorizationHeader =
+                Request.Headers.ContainsKey("Authorization");
+
+            // Kimlik doğrulama bilgisi gönderilmiş ancak
+            // doğrulama başarısız olmuşsa misafir moduna geçme.
+            if (hasAuthorizationHeader && !isAuthenticated)
+            {
+                return Unauthorized(ResponseFactory.Failure<object>(
+                    HttpContext,
+                    "The access token is invalid, expired or revoked.",
+                    StatusCodes.Status401Unauthorized,
+                    "INVALID_ACCESS_TOKEN"));
+            }
+
+            // Bonus bulmacalar yalnızca kayıtlı kullanıcılara açıktır.
             if (!isAuthenticated && requireRegisteredUser)
             {
                 return Unauthorized(ResponseFactory.Failure<object>(
@@ -344,6 +359,7 @@ namespace DailyChessPuzzleApi.Controllers
                     "AUTHENTICATION_REQUIRED"));
             }
 
+            // Doğrulanmış kullanıcının kimliği belirlenebilmelidir.
             if (isAuthenticated && userId == null)
             {
                 return Unauthorized(ResponseFactory.Failure<object>(
