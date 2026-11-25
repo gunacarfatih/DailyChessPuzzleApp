@@ -824,9 +824,697 @@ public sealed class PostgresPuzzleServiceTests
         Assert.Equal(8, await verificationContext.LeaderboardCacheOutboxDeliveries.CountAsync());
     }
 
+    [PostgresFact]
+    public async Task Daily_session_preserves_country_after_country_change()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var userId = await SeedConcurrencyScenarioAsync(database);
+
+        await SetTestCountryAsync(database, userId, "TR");
+
+        var sessionId = await StartRegisteredSessionAsync(
+            database,
+            userId);
+
+        await using (var context = database.CreateContext())
+        {
+            var session = await context.PuzzleGameSessions
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == sessionId);
+
+            Assert.Equal("TR", session.CountryCode);
+        }
+
+        await SetTestCountryAsync(database, userId, "DE");
+
+        var resumedSessionId = await StartRegisteredSessionAsync(
+            database,
+            userId);
+
+        Assert.Equal(sessionId, resumedSessionId);
+
+        await using (var context = database.CreateContext())
+        {
+            var service = CreateService(context);
+
+            var result = await service.SubmitMoveAsync(
+                new PuzzleMoveRequest
+                {
+                    SessionId = sessionId,
+                    Uci = "e7e5"
+                },
+                userId);
+
+            Assert.True(result.IsCompleted);
+            Assert.NotNull(result.Score);
+        }
+
+        await using var verificationContext =
+            database.CreateContext();
+
+        var user = await verificationContext.Users
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == userId);
+
+        Assert.Equal("DE", user.CountryCode);
+
+        var completedSession =
+            await verificationContext.PuzzleGameSessions
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == sessionId);
+
+        Assert.True(completedSession.IsCompleted);
+        Assert.Equal("TR", completedSession.CountryCode);
+
+        var attempt = await verificationContext.PuzzleAttempts
+            .AsNoTracking()
+            .SingleAsync();
+
+        Assert.Equal(userId, attempt.UserId);
+        Assert.Equal("TR", attempt.CountryCode);
+
+        var deliveries =
+            await verificationContext.LeaderboardCacheOutboxDeliveries
+                .AsNoTracking()
+                .ToListAsync();
+
+        Assert.Equal(8, deliveries.Count);
+
+        Assert.Equal(
+            4,
+            deliveries.Count(x => x.CountryCode == null));
+
+        Assert.Equal(
+            4,
+            deliveries.Count(x => x.CountryCode == "TR"));
+
+        Assert.DoesNotContain(
+            deliveries,
+            x => x.CountryCode == "DE");
+
+        Assert.All(deliveries, delivery =>
+        {
+            Assert.Equal(attempt.Score, delivery.TotalScore);
+            Assert.Equal(1, delivery.SolvedCount);
+        });
+    }
+
+    [PostgresFact]
+    public async Task Daily_session_without_country_remains_global_only()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var userId = await SeedConcurrencyScenarioAsync(database);
+
+        var sessionId = await StartRegisteredSessionAsync(
+            database,
+            userId);
+
+        await using (var context = database.CreateContext())
+        {
+            var session = await context.PuzzleGameSessions
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == sessionId);
+
+            Assert.Null(session.CountryCode);
+        }
+
+        await SetTestCountryAsync(database, userId, "TR");
+
+        var resumedSessionId = await StartRegisteredSessionAsync(
+            database,
+            userId);
+
+        Assert.Equal(sessionId, resumedSessionId);
+
+        await using (var context = database.CreateContext())
+        {
+            var result = await CreateService(context)
+                .SubmitMoveAsync(
+                    new PuzzleMoveRequest
+                    {
+                        SessionId = sessionId,
+                        Uci = "e7e5"
+                    },
+                    userId);
+
+            Assert.True(result.IsCompleted);
+        }
+
+        await using var verificationContext =
+            database.CreateContext();
+
+        var user = await verificationContext.Users
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == userId);
+
+        Assert.Equal("TR", user.CountryCode);
+
+        var sessionAfterCompletion =
+            await verificationContext.PuzzleGameSessions
+                .AsNoTracking()
+                .SingleAsync(x => x.Id == sessionId);
+
+        Assert.Null(sessionAfterCompletion.CountryCode);
+
+        var attempt = await verificationContext.PuzzleAttempts
+            .AsNoTracking()
+            .SingleAsync();
+
+        Assert.Equal(userId, attempt.UserId);
+        Assert.Null(attempt.CountryCode);
+
+        var deliveries =
+            await verificationContext.LeaderboardCacheOutboxDeliveries
+                .AsNoTracking()
+                .ToListAsync();
+
+        Assert.Equal(4, deliveries.Count);
+
+        Assert.All(deliveries, delivery =>
+        {
+            Assert.Null(delivery.CountryCode);
+            Assert.Equal(attempt.Score, delivery.TotalScore);
+            Assert.Equal(1, delivery.SolvedCount);
+        });
+    }
+
+    [PostgresFact]
+    public async Task Guest_session_has_no_country_or_leaderboard_outbox()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        await database.SeedDailyPuzzleAsync(
+            PuzzleAudience.Guest);
+
+        const string clientId = "guest-country-test";
+
+        await using (var context = database.CreateContext())
+        {
+            var service = CreateService(context);
+
+            var session = await service.StartSessionAsync(
+                null,
+                clientId);
+
+            Assert.NotNull(session.SessionId);
+
+            var result = await service.SubmitMoveAsync(
+                new PuzzleMoveRequest
+                {
+                    SessionId = session.SessionId,
+                    ClientId = clientId,
+                    Uci = "e7e5"
+                },
+                userId: null);
+
+            Assert.True(result.IsCompleted);
+        }
+
+        await using var verificationContext =
+            database.CreateContext();
+
+        var savedSession =
+            await verificationContext.PuzzleGameSessions
+                .AsNoTracking()
+                .SingleAsync();
+
+        Assert.Null(savedSession.UserId);
+        Assert.Null(savedSession.CountryCode);
+        Assert.Equal(clientId, savedSession.ClientId);
+
+        var attempt = await verificationContext.PuzzleAttempts
+            .AsNoTracking()
+            .SingleAsync();
+
+        Assert.Null(attempt.UserId);
+        Assert.Null(attempt.CountryCode);
+
+        Assert.Equal(
+            0,
+            await verificationContext.LeaderboardCacheOutboxes
+                .CountAsync());
+
+        Assert.Equal(
+            0,
+            await verificationContext.LeaderboardCacheOutboxDeliveries
+                .CountAsync());
+    }
+
+    [PostgresFact]
+    public async Task Bonus_country_is_captured_at_start_not_assignment()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var userId =
+            await SeedConcurrencyScenarioAsync(database);
+
+        await SetTestCountryAsync(database, userId, "TR");
+
+        await CompleteRegisteredDailyPuzzleAsync(
+            database,
+            userId);
+
+        await using (var context = database.CreateContext())
+        {
+            var assignment = await context.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+            Assert.Null(assignment.CountryCode);
+            Assert.Null(assignment.StartedAtUtc);
+        }
+
+        await SetTestCountryAsync(database, userId, "DE");
+
+        await using (var context = database.CreateContext())
+        {
+            await CreateService(context)
+                .StartBonusAsync(userId);
+        }
+
+        await using var verificationContext =
+            database.CreateContext();
+
+        var startedAssignment =
+            await verificationContext.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+        Assert.Equal("DE", startedAssignment.CountryCode);
+        Assert.NotNull(startedAssignment.StartedAtUtc);
+        Assert.False(startedAssignment.IsCompleted);
+
+        var dailyAttempt =
+            await verificationContext.PuzzleAttempts
+                .AsNoTracking()
+                .SingleAsync();
+
+        Assert.Equal("TR", dailyAttempt.CountryCode);
+    }
+
+    [PostgresFact]
+    public async Task Bonus_session_preserves_country_after_country_change()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var userId =
+            await SeedConcurrencyScenarioAsync(database);
+
+        await SetTestCountryAsync(database, userId, "TR");
+
+        await CompleteRegisteredDailyPuzzleAsync(
+            database,
+            userId);
+
+        await using (var context = database.CreateContext())
+        {
+            await CreateService(context)
+                .StartBonusAsync(userId);
+        }
+
+        DateTime? originalStartedAt;
+
+        await using (var context = database.CreateContext())
+        {
+            var assignment = await context.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+            Assert.Equal("TR", assignment.CountryCode);
+
+            originalStartedAt = assignment.StartedAtUtc;
+
+            Assert.NotNull(originalStartedAt);
+        }
+
+        await SetTestCountryAsync(database, userId, "DE");
+
+        await using (var context = database.CreateContext())
+        {
+            await CreateService(context)
+                .StartBonusAsync(userId);
+        }
+
+        await using (var context = database.CreateContext())
+        {
+            var assignment = await context.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+            Assert.Equal("TR", assignment.CountryCode);
+
+            Assert.Equal(
+                originalStartedAt,
+                assignment.StartedAtUtc);
+        }
+
+        int bonusScore;
+
+        await using (var context = database.CreateContext())
+        {
+            var service = CreateService(context);
+
+            var moveResult = await service.SubmitBonusMoveAsync(
+                new PuzzleMoveRequest
+                {
+                    Uci = "e7e5",
+                    ExpectedMoveIndex = 1
+                },
+                userId);
+
+            Assert.True(moveResult.IsSolved);
+
+            var result = await service.SubmitBonusAsync(userId);
+
+            Assert.True(result.IsCompleted);
+
+            bonusScore = result.Score;
+        }
+
+        await using var verificationContext =
+            database.CreateContext();
+
+        var user = await verificationContext.Users
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == userId);
+
+        Assert.Equal("DE", user.CountryCode);
+
+        var completedAssignment =
+            await verificationContext.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+        Assert.True(completedAssignment.IsCompleted);
+        Assert.Equal("TR", completedAssignment.CountryCode);
+        Assert.NotNull(completedAssignment.PuzzleAttemptId);
+
+        var attempts = await verificationContext.PuzzleAttempts
+            .AsNoTracking()
+            .ToListAsync();
+
+        Assert.Equal(2, attempts.Count);
+
+        Assert.All(
+            attempts,
+            attempt => Assert.Equal("TR", attempt.CountryCode));
+
+        var bonusAttempt = Assert.Single(
+            attempts,
+            x => x.Id == completedAssignment.PuzzleAttemptId);
+
+        Assert.Equal(bonusScore, bonusAttempt.Score);
+
+        var deliveries =
+            await verificationContext.LeaderboardCacheOutboxDeliveries
+                .AsNoTracking()
+                .ToListAsync();
+
+        Assert.Equal(16, deliveries.Count);
+
+        Assert.Equal(
+            8,
+            deliveries.Count(x => x.CountryCode == null));
+
+        Assert.Equal(
+            8,
+            deliveries.Count(x => x.CountryCode == "TR"));
+
+        Assert.DoesNotContain(
+            deliveries,
+            x => x.CountryCode == "DE");
+    }
+
+    [PostgresFact]
+    public async Task Bonus_session_without_country_remains_global_only()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var userId =
+            await SeedConcurrencyScenarioAsync(database);
+
+        await CompleteRegisteredDailyPuzzleAsync(
+            database,
+            userId);
+
+        await using (var context = database.CreateContext())
+        {
+            await CreateService(context)
+                .StartBonusAsync(userId);
+        }
+
+        await using (var context = database.CreateContext())
+        {
+            var assignment = await context.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+            Assert.Null(assignment.CountryCode);
+            Assert.NotNull(assignment.StartedAtUtc);
+        }
+
+        await SetTestCountryAsync(database, userId, "TR");
+
+        await using (var context = database.CreateContext())
+        {
+            var service = CreateService(context);
+
+            await service.StartBonusAsync(userId);
+
+            var moveResult = await service.SubmitBonusMoveAsync(
+                new PuzzleMoveRequest
+                {
+                    Uci = "e7e5",
+                    ExpectedMoveIndex = 1
+                },
+                userId);
+
+            Assert.True(moveResult.IsSolved);
+
+            var result = await service.SubmitBonusAsync(userId);
+
+            Assert.True(result.IsCompleted);
+        }
+
+        await using var verificationContext =
+            database.CreateContext();
+
+        var user = await verificationContext.Users
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == userId);
+
+        Assert.Equal("TR", user.CountryCode);
+
+        var assignmentAfterCompletion =
+            await verificationContext.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+        Assert.True(assignmentAfterCompletion.IsCompleted);
+        Assert.Null(assignmentAfterCompletion.CountryCode);
+        Assert.NotNull(assignmentAfterCompletion.PuzzleAttemptId);
+
+        var attempts = await verificationContext.PuzzleAttempts
+            .AsNoTracking()
+            .ToListAsync();
+
+        Assert.Equal(2, attempts.Count);
+
+        Assert.All(
+            attempts,
+            attempt => Assert.Null(attempt.CountryCode));
+
+        var deliveries =
+            await verificationContext.LeaderboardCacheOutboxDeliveries
+                .AsNoTracking()
+                .ToListAsync();
+
+        Assert.Equal(8, deliveries.Count);
+
+        Assert.All(
+            deliveries,
+            delivery => Assert.Null(delivery.CountryCode));
+    }
+
+    [PostgresFact]
+    public async Task Daily_and_bonus_scores_remain_in_separate_countries()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var userId =
+            await SeedConcurrencyScenarioAsync(database);
+
+        await SetTestCountryAsync(database, userId, "TR");
+
+        await CompleteRegisteredDailyPuzzleAsync(
+            database,
+            userId);
+
+        await SetTestCountryAsync(database, userId, "DE");
+
+        int originalBonusScore;
+
+        await using (var context = database.CreateContext())
+        {
+            var service = CreateService(context);
+
+            await service.StartBonusAsync(userId);
+
+            var moveResult = await service.SubmitBonusMoveAsync(
+                new PuzzleMoveRequest
+                {
+                    Uci = "e7e5",
+                    ExpectedMoveIndex = 1
+                },
+                userId);
+
+            Assert.True(moveResult.IsSolved);
+
+            var result = await service.SubmitBonusAsync(userId);
+
+            Assert.True(result.IsCompleted);
+
+            originalBonusScore = result.Score;
+        }
+
+        await SetTestCountryAsync(database, userId, "GB");
+
+        await using (var context = database.CreateContext())
+        {
+            var repeated = await CreateService(context)
+                .SubmitBonusAsync(userId);
+
+            Assert.True(repeated.IsCompleted);
+
+            Assert.Equal(
+                originalBonusScore,
+                repeated.Score);
+        }
+
+        await using var verificationContext =
+            database.CreateContext();
+
+        var attempts = await verificationContext.PuzzleAttempts
+            .AsNoTracking()
+            .ToListAsync();
+
+        Assert.Equal(2, attempts.Count);
+
+        var dailyAttempt = Assert.Single(
+            attempts,
+            x => x.CountryCode == "TR");
+
+        var bonusAttempt = Assert.Single(
+            attempts,
+            x => x.CountryCode == "DE");
+
+        Assert.Equal(originalBonusScore, bonusAttempt.Score);
+
+        Assert.DoesNotContain(
+            attempts,
+            x => x.CountryCode == "GB");
+
+        var assignment =
+            await verificationContext.BonusPuzzleAssignments
+                .AsNoTracking()
+                .SingleAsync(x => x.UserId == userId);
+
+        Assert.Equal("DE", assignment.CountryCode);
+        Assert.Equal(bonusAttempt.Id, assignment.PuzzleAttemptId);
+
+        Assert.Equal(
+            2,
+            await verificationContext.LeaderboardCacheOutboxes
+                .CountAsync());
+
+        var deliveries =
+            await verificationContext.LeaderboardCacheOutboxDeliveries
+                .AsNoTracking()
+                .ToListAsync();
+
+        Assert.Equal(16, deliveries.Count);
+
+        var turkeyDeliveries = deliveries
+            .Where(x => x.CountryCode == "TR")
+            .ToList();
+
+        var germanyDeliveries = deliveries
+            .Where(x => x.CountryCode == "DE")
+            .ToList();
+
+        var globalDeliveries = deliveries
+            .Where(x => x.CountryCode == null)
+            .ToList();
+
+        Assert.Equal(4, turkeyDeliveries.Count);
+        Assert.Equal(4, germanyDeliveries.Count);
+        Assert.Equal(8, globalDeliveries.Count);
+
+        Assert.All(turkeyDeliveries, delivery =>
+        {
+            Assert.Equal(dailyAttempt.Score, delivery.TotalScore);
+            Assert.Equal(1, delivery.SolvedCount);
+        });
+
+        Assert.All(germanyDeliveries, delivery =>
+        {
+            Assert.Equal(bonusAttempt.Score, delivery.TotalScore);
+            Assert.Equal(1, delivery.SolvedCount);
+        });
+
+        var totalScore =
+            dailyAttempt.Score + bonusAttempt.Score;
+
+        var latestGlobalDeliveries = globalDeliveries
+            .Where(x => x.SolvedCount == 2)
+            .ToList();
+
+        Assert.Equal(4, latestGlobalDeliveries.Count);
+
+        Assert.All(latestGlobalDeliveries, delivery =>
+        {
+            Assert.Equal(totalScore, delivery.TotalScore);
+        });
+
+        Assert.DoesNotContain(
+            deliveries,
+            x => x.CountryCode == "GB");
+    }
+
     // ---------------------------------------------------------
     // CONCURRENCY TEST HELPERS
     // ---------------------------------------------------------
+
+    private static async Task SetTestCountryAsync(
+    PostgresTestDatabase database,
+    int userId,
+    string? countryCode)
+    {
+        await using var context = database.CreateContext();
+
+        var user = await context.Users
+            .SingleAsync(x => x.Id == userId);
+
+        var now = DateTime.UtcNow;
+
+        user.CountryCode = countryCode;
+        user.CountryChangedAtUtc = countryCode == null
+            ? null
+            : now;
+
+        user.UpdatedAtUtc = now;
+
+        await context.SaveChangesAsync();
+    }
 
     private static async Task<int> SeedConcurrencyScenarioAsync(
         PostgresTestDatabase database,

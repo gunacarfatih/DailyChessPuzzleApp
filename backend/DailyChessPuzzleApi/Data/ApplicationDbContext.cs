@@ -159,6 +159,10 @@ namespace DailyChessPuzzleApi.Data
             {
                 entity.HasKey(x => x.Id);
 
+                entity.Property(x => x.CountryCode)
+                    .HasMaxLength(2)
+                    .IsRequired(false);
+
                 // Kullanıcı başına günde yalnızca bir bonus.
                 entity.HasIndex(x => new
                 {
@@ -211,6 +215,10 @@ namespace DailyChessPuzzleApi.Data
             modelBuilder.Entity<PuzzleGameSession>(entity =>
             {
                 entity.HasKey(x => x.Id);
+
+                entity.Property(x => x.CountryCode)
+                    .HasMaxLength(2)
+                    .IsRequired(false);
 
                 entity.Property(x => x.ClientId)
                     .HasMaxLength(100);

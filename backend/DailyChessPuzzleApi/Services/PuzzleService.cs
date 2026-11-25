@@ -154,6 +154,19 @@ namespace DailyChessPuzzleApi.Services
             if (moves.Length == 0)
                 throw new AppException(500, "PUZZLE_MOVES_INVALID");
 
+            string? countryCode = null;
+
+            if (userId.HasValue)
+            {
+                countryCode = await _context.Users
+                    .AsNoTracking()
+                    .Where(x => x.Id == userId.Value)
+                    .Select(x => x.CountryCode)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                countryCode = NormalizeCountryCode(countryCode);
+            }
+
             var now = DateTime.UtcNow;
 
             var session = new PuzzleGameSession
@@ -162,6 +175,7 @@ namespace DailyChessPuzzleApi.Services
                 Puzzle = puzzle,
                 UserId = userId,
                 ClientId = userId.HasValue ? null : clientId,
+                CountryCode = countryCode,
                 PuzzleDate = today,
                 CurrentMoveIndex = 1,
                 WrongMoves = 0,
@@ -478,6 +492,18 @@ namespace DailyChessPuzzleApi.Services
                 if (!assignment.StartedAtUtc.HasValue &&
                     !assignment.IsCompleted)
                 {
+                    var user = await _context.Users
+                        .AsNoTracking()
+                        .Where(x => x.Id == userId)
+                        .Select(x => new { x.CountryCode })
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                    if (user == null)
+                        throw new UnauthorizedAccessException("USER_NOT_FOUND");
+
+                    assignment.CountryCode =
+                        NormalizeCountryCode(user.CountryCode);
+
                     assignment.StartedAtUtc = DateTime.UtcNow;
 
                     await _context.SaveChangesAsync(cancellationToken);
@@ -794,15 +820,15 @@ namespace DailyChessPuzzleApi.Services
                     assignment.WrongMoves,
                     assignment.UsedHint);
 
-                var user = await _context.Users
-                    .Where(x => x.Id == userId)
-                    .Select(x => new { x.CountryCode })
-                    .FirstOrDefaultAsync(cancellationToken);
+                var userExists = await _context.Users
+                    .AnyAsync(
+                        x => x.Id == userId,
+                        cancellationToken);
 
-                if (user == null)
+                if (!userExists)
                     throw new UnauthorizedAccessException("USER_NOT_FOUND");
 
-                var countryCode = NormalizeCountryCode(user.CountryCode);
+                var countryCode = assignment.CountryCode;
 
                 var attempt = new PuzzleAttempt
                 {
@@ -911,17 +937,9 @@ namespace DailyChessPuzzleApi.Services
             var seconds = CalculateDailySessionSeconds(session);
             var completedAt = session.CompletedAtUtc ?? DateTime.UtcNow;
 
-            string? countryCode = null;
-
-            if (session.UserId.HasValue)
-            {
-                countryCode = await _context.Users
-                    .Where(x => x.Id == session.UserId.Value)
-                    .Select(x => x.CountryCode)
-                    .FirstOrDefaultAsync(cancellationToken);
-
-                countryCode = NormalizeCountryCode(countryCode);
-            }
+            var countryCode = session.UserId.HasValue
+                ? session.CountryCode
+                : null;
 
             var attempt = new PuzzleAttempt
             {

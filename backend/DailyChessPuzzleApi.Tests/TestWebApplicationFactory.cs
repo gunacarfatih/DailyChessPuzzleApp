@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.AspNetCore.SignalR.StackExchangeRedis;
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -17,6 +18,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
 using Microsoft.IdentityModel.Tokens;
+
+using StackExchange.Redis;
 
 namespace DailyChessPuzzleApi.Tests;
 
@@ -32,15 +35,38 @@ internal sealed class TestWebApplicationFactory
     internal const string JwtAudience =
         "DailyChessPuzzleClient.Tests";
 
+    private const string DisabledRedisConnectionString =
+        "127.0.0.1:1,abortConnect=false,connectTimeout=500,connectRetry=0";
+
     private readonly string _connectionString;
 
+    private readonly string _redisConnectionString;
+
     private readonly IInterceptor[] _interceptors;
+
+    private readonly string _signalRChannelPrefix =
+        $"DailyChessPuzzle.Tests:{Guid.NewGuid():N}";
 
     public TestWebApplicationFactory(
         PostgresTestDatabase database,
         params IInterceptor[] interceptors)
+        : this(
+            database,
+            DisabledRedisConnectionString,
+            interceptors)
     {
+    }
+
+    public TestWebApplicationFactory(
+        PostgresTestDatabase database,
+        string redisConnectionString,
+        params IInterceptor[] interceptors)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            redisConnectionString);
+
         _connectionString = database.ConnectionString;
+        _redisConnectionString = redisConnectionString;
         _interceptors = interceptors;
     }
 
@@ -59,7 +85,7 @@ internal sealed class TestWebApplicationFactory
                             _connectionString,
 
                         ["ConnectionStrings:Redis"] =
-                            "127.0.0.1:1,abortConnect=false,connectTimeout=500,connectRetry=0",
+                            _redisConnectionString,
 
                         ["JwtSettings:Secret"] =
                             JwtSecret,
@@ -84,6 +110,15 @@ internal sealed class TestWebApplicationFactory
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
+
+            // SignalR Redis Backplane kanallarini
+            // her test sunucusu icin izole et.
+            services.PostConfigure<RedisOptions>(options =>
+            {
+                options.Configuration.ChannelPrefix =
+                    RedisChannel.Literal(
+                        _signalRChannelPrefix);
+            });
 
             // Gercek SMTP baglantisini engelle.
             services.RemoveAll<IEmailSender>();

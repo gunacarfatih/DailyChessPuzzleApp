@@ -473,14 +473,14 @@ public sealed class RegistrationHttpIntegrationTests
         Assert.Equal(2, gate.ArrivedCount);
 
         var successfulResponse = Assert.Single(
-            responses.Where(response =>
+            responses, response =>
                 response.StatusCode ==
-                HttpStatusCode.Created));
+                HttpStatusCode.Created);
 
         var conflictResponse = Assert.Single(
-            responses.Where(response =>
+            responses, response =>
                 response.StatusCode ==
-                HttpStatusCode.Conflict));
+                HttpStatusCode.Conflict);
 
         await AssertSuccessAsync(
             successfulResponse);

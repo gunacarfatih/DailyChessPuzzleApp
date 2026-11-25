@@ -1,5 +1,4 @@
-﻿
-namespace DailyChessPuzzleApi.Models
+﻿namespace DailyChessPuzzleApi.Models
 {
     public class PuzzleGameSession
     {
@@ -13,6 +12,9 @@ namespace DailyChessPuzzleApi.Models
         public User? User { get; set; }
 
         public string? ClientId { get; set; }
+
+        // Oturum başlangıcında sabitlenen ülke.
+        public string? CountryCode { get; set; }
 
         public DateOnly PuzzleDate { get; set; }
 

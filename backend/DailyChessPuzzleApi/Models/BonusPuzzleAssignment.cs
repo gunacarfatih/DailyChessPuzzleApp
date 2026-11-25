@@ -14,6 +14,9 @@
 
         public DateOnly PuzzleDate { get; set; }
 
+        // Bonus ilk başlatıldığında sabitlenen ülke.
+        public string? CountryCode { get; set; }
+
         public int CurrentMoveIndex { get; set; } = 1;
 
         public int WrongMoves { get; set; }
