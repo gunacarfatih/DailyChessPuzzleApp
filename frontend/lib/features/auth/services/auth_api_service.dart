@@ -1,4 +1,3 @@
-
 import 'package:dio/dio.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -8,8 +7,11 @@ import '../../../core/network/api_client.dart';
 import '../../../core/storage/auth_storage.dart';
 import '../../../core/storage/client_id_storage.dart';
 import '../models/auth_response.dart';
+import 'package:flutter/foundation.dart';
 
 class AuthApiService {
+  @visibleForTesting
+  static HttpClientAdapter Function()? logoutAdapterFactory;
   AuthApiService({
     Dio? dio,
     ClientIdStorage? clientIdStorage,
@@ -442,26 +444,45 @@ class AuthApiService {
   // Yerel oturum, sunucu yanıtı beklenmeden geçersiz kılınır.
   // Böylece devam eden eski refresh işlemleri oturumu
   // yeniden oluşturamaz.
-  Future<void> logout() async {
+  Future<void> logout({
+    bool forceSessionInvalidation = false,
+    VoidCallback? onLocalSessionCleared,
+  }) async {
     final generation = _authStorage.sessionGeneration;
 
     final refreshToken = await _authStorage.getRefreshToken();
 
     _authStorage.ensureCurrentGeneration(generation);
 
+    final accessToken = await _authStorage.getAccessToken();
+
+    _authStorage.ensureCurrentGeneration(generation);
+
+    // Aktif bir oturum bulunmuyorsa gereksiz yere
+    // oturum neslini artırma. Devam eden login varsa
+    // token bulunmasa bile nesli geçersiz kıl.
+    if (!forceSessionInvalidation &&
+        refreshToken == null &&
+        accessToken == null) {
+      onLocalSessionCleared?.call();
+      return;
+    }
+
     // Önce yerel oturumu geçersiz kıl ve temizle.
     await _authStorage.clearSession(
       expectedGeneration: generation,
     );
 
-    // Yerel oturumda refresh token yoksa temizlenecek
-    // sunucu oturumu da bulunmaz.
+    if (_authStorage.isCurrentGeneration(generation + 1)) {
+      onLocalSessionCleared?.call();
+    }
+
+    // Refresh token bulunmuyorsa sunucuya istek gönderilmez.
     if (refreshToken == null || refreshToken.isEmpty) {
       return;
     }
 
     // Logout isteği mevcut kullanıcı oturumundan bağımsızdır.
-    // Yalnızca çıkış yapılan hesabın refresh token'ı gönderilir.
     final logoutDio = Dio(
       BaseOptions(
         baseUrl: ApiConstants.baseUrl,
@@ -479,6 +500,12 @@ class AuthApiService {
     );
 
     try {
+      final adapterFactory = logoutAdapterFactory;
+
+      if (adapterFactory != null) {
+        logoutDio.httpClientAdapter = adapterFactory();
+      }
+
       final response = await logoutDio.post(
         ApiConstants.logoutEndpoint,
         data: {
@@ -486,8 +513,6 @@ class AuthApiService {
         },
       );
 
-      // Token zaten geçersizse sunucuda aktif bir
-      // oturum bulunmadığı kabul edilir.
       if (response.statusCode != 200 &&
           response.statusCode != 401) {
         throw Exception(
@@ -498,7 +523,7 @@ class AuthApiService {
       logoutDio.close();
     }
 
-    // Burada tekrar clearSession çağrılmaz.
-    // Kullanıcı bu sırada başka bir hesaba giriş yapmış olabilir.
+    // Yeni bir oturum açılmış olabileceğinden
+    // burada tekrar clearSession çağrılmaz.
   }
 }

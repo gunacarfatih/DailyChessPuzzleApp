@@ -23,19 +23,24 @@ namespace DailyChessPuzzleApi.Services
         private readonly JwtSettings _jwtSettings;
         private readonly IConfiguration _configuration;
         private readonly IEmailSender _emailSender;
+        private readonly IGoogleTokenValidator _googleTokenValidator;
 
         public AuthService(
             ApplicationDbContext context,
             IPasswordHasher<User> passwordHasher,
             IOptions<JwtSettings> jwtOptions,
             IConfiguration configuration,
-            IEmailSender emailSender)
+            IEmailSender emailSender,
+            IGoogleTokenValidator? googleTokenValidator = null)
         {
             _context = context;
             _passwordHasher = passwordHasher;
             _jwtSettings = jwtOptions.Value;
             _configuration = configuration;
             _emailSender = emailSender;
+
+            _googleTokenValidator = googleTokenValidator
+                ?? new GoogleTokenValidator(configuration);
         }
 
         public async Task<RegistrationResponse> RegisterAsync(
@@ -168,151 +173,78 @@ namespace DailyChessPuzzleApi.Services
         }
 
         public async Task<AuthResponse> LoginAsync(
-            LoginRequest request,
-            CancellationToken cancellationToken)
-        {
-            string email = request.Email.Trim().ToLowerInvariant();
-
-            var user = await _context.Users
-                .FirstOrDefaultAsync(
-                    x => x.Email == email,
-                    cancellationToken);
-
-            if (user == null || string.IsNullOrEmpty(user.PasswordHash))
-                throw new AppException(401, "INVALID_CREDENTIALS");
-
-            var verificationResult = _passwordHasher.VerifyHashedPassword(
-                user,
-                user.PasswordHash,
-                request.Password);
-
-            if (verificationResult == PasswordVerificationResult.Failed)
-                throw new AppException(401, "INVALID_CREDENTIALS");
-
-            if (!user.EmailVerified)
-                throw new AppException(403, "EMAIL_NOT_VERIFIED");
-
-            if (verificationResult ==
-                PasswordVerificationResult.SuccessRehashNeeded)
-            {
-                user.PasswordHash = _passwordHasher.HashPassword(
-                    user,
-                    request.Password);
-
-                user.UpdatedAtUtc = DateTime.UtcNow;
-
-                await _context.SaveChangesAsync(cancellationToken);
-            }
-
-            return await CreateAuthResponseAsync(user, cancellationToken);
-        }
-
-        public async Task<AuthResponse> RefreshAsync(
-    RefreshTokenRequest request,
+    LoginRequest request,
     CancellationToken cancellationToken)
         {
+            string email = request.Email
+                .Trim()
+                .ToLowerInvariant();
+
             await using var transaction =
                 await _context.Database.BeginTransactionAsync(
                     cancellationToken);
 
-            var tokenHash =
-                HashRefreshToken(request.RefreshToken);
-
-            var refreshToken = await _context.RefreshTokens
-                .FromSqlInterpolated($"""
-            SELECT *
-            FROM "RefreshTokens"
-            WHERE "TokenHash" = {tokenHash}
-            FOR UPDATE
-            """)
+            var userId = await _context.Users
+                .AsNoTracking()
+                .Where(x => x.Email == email)
+                .Select(x => (int?)x.Id)
                 .SingleOrDefaultAsync(cancellationToken);
 
-            var now = DateTime.UtcNow;
+            if (!userId.HasValue)
+                throw new AppException(
+                    401,
+                    "INVALID_CREDENTIALS");
 
-            if (refreshToken == null ||
-                refreshToken.ExpiresAtUtc <= now)
+            var user = await GetLockedUserAsync(
+                userId.Value,
+                cancellationToken);
+
+            if (user == null ||
+                user.Email != email ||
+                string.IsNullOrEmpty(user.PasswordHash))
             {
                 throw new AppException(
                     401,
-                    "INVALID_REFRESH_TOKEN");
+                    "INVALID_CREDENTIALS");
             }
 
-            // Yerine başka token oluşturulmuş, iptal edilmiş bir
-            // token tekrar sunulduysa token hırsızlığı ihtimali vardır.
-            if (refreshToken.RevokedAtUtc.HasValue &&
-                !string.IsNullOrWhiteSpace(
-                    refreshToken.ReplacedByTokenHash))
+            var verificationResult =
+                _passwordHasher.VerifyHashedPassword(
+                    user,
+                    user.PasswordHash,
+                    request.Password);
+
+            if (verificationResult ==
+                PasswordVerificationResult.Failed)
             {
-                var user = await _context.Users
-                    .FirstOrDefaultAsync(
-                        x => x.Id == refreshToken.UserId,
-                        cancellationToken);
+                throw new AppException(
+                    401,
+                    "INVALID_CREDENTIALS");
+            }
 
-                if (user != null)
-                {
-                    // Bu ailede hâlâ aktif olan yeni token'ları iptal et.
-                    await _context.RefreshTokens
-                        .Where(token =>
-                            token.FamilyId == refreshToken.FamilyId &&
-                            token.RevokedAtUtc == null)
-                        .ExecuteUpdateAsync(
-                            setters => setters.SetProperty(
-                                token => token.RevokedAtUtc,
-                                now),
-                            cancellationToken);
+            if (!user.EmailVerified)
+            {
+                throw new AppException(
+                    403,
+                    "EMAIL_NOT_VERIFIED");
+            }
 
-                    // Bu aileden üretilmiş mevcut access token'ı da reddet.
-                    // Diğer cihazlar geçerli refresh token ile tekrar
-                    // yenileme yaparak yeni sürüme geçebilir.
-                    user.TokenVersion++;
-                    user.UpdatedAtUtc = now;
+            if (verificationResult ==
+                PasswordVerificationResult.SuccessRehashNeeded)
+            {
+                user.PasswordHash =
+                    _passwordHasher.HashPassword(
+                        user,
+                        request.Password);
 
-                    await _context.SaveChangesAsync(
-                        cancellationToken);
-                }
+                user.UpdatedAtUtc = DateTime.UtcNow;
 
-                await transaction.CommitAsync(
+                await _context.SaveChangesAsync(
                     cancellationToken);
-
-                throw new AppException(
-                    401,
-                    "REFRESH_TOKEN_REUSE_DETECTED");
             }
 
-            // Logout veya şifre değişimi nedeniyle iptal edilmiş,
-            // fakat yerine başka token oluşturulmamış token.
-            if (refreshToken.RevokedAtUtc.HasValue)
-            {
-                throw new AppException(
-                    401,
-                    "INVALID_REFRESH_TOKEN");
-            }
-
-            var currentUser = await _context.Users
-                .FirstOrDefaultAsync(
-                    x => x.Id == refreshToken.UserId,
-                    cancellationToken);
-
-            if (currentUser == null)
-            {
-                throw new AppException(
-                    401,
-                    "INVALID_REFRESH_TOKEN");
-            }
-
-            // Kullanılmış refresh token'ı iptal et.
-            refreshToken.RevokedAtUtc = now;
-
-            // Aynı token ailesinde yeni access ve refresh token oluştur.
             var response = await CreateAuthResponseAsync(
-                currentUser,
-                cancellationToken,
-                refreshToken.FamilyId);
-
-            refreshToken.ReplacedByTokenHash =
-                HashRefreshToken(response.RefreshToken!);
-
-            await _context.SaveChangesAsync(
+                user,
                 cancellationToken);
 
             await transaction.CommitAsync(
@@ -321,162 +253,196 @@ namespace DailyChessPuzzleApi.Services
             return response;
         }
 
+        // All refresh, logout and password-change operations acquire the user
+        // lock before touching refresh token rows.
+        private async Task<User?> GetLockedUserAsync(
+            int userId, CancellationToken cancellationToken)
+        {
+            var user = await _context.Users
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "Users" WHERE "Id" = {userId} FOR UPDATE
+                    """)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (user != null)
+                await _context.Entry(user).ReloadAsync(cancellationToken);
+            return user;
+        }
+
+        private Task<int?> FindTokenOwnerAsync(
+            string tokenHash, CancellationToken cancellationToken) =>
+            _context.RefreshTokens.AsNoTracking()
+                .Where(token => token.TokenHash == tokenHash)
+                .Select(token => (int?)token.UserId)
+                .SingleOrDefaultAsync(cancellationToken);
+
+        public async Task<AuthResponse> RefreshAsync(
+            RefreshTokenRequest request,
+            CancellationToken cancellationToken)
+        {
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
+            var tokenHash = HashRefreshToken(request.RefreshToken);
+            var userId = await FindTokenOwnerAsync(tokenHash, cancellationToken);
+            if (!userId.HasValue)
+                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+
+            var user = await GetLockedUserAsync(userId.Value, cancellationToken);
+            if (user == null)
+                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+
+            var refreshToken = await _context.RefreshTokens
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "RefreshTokens"
+                    WHERE "TokenHash" = {tokenHash} FOR UPDATE
+                    """)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (refreshToken != null)
+                await _context.Entry(refreshToken).ReloadAsync(cancellationToken);
+
+            var now = DateTime.UtcNow;
+            if (refreshToken == null || refreshToken.UserId != user.Id ||
+                refreshToken.ExpiresAtUtc <= now)
+                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+
+            if (refreshToken.RevokedAtUtc.HasValue &&
+                !string.IsNullOrWhiteSpace(refreshToken.ReplacedByTokenHash))
+            {
+                await _context.RefreshTokens
+                    .Where(token => token.UserId == user.Id &&
+                        token.FamilyId == refreshToken.FamilyId &&
+                        token.RevokedAtUtc == null)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(
+                        token => token.RevokedAtUtc, now), cancellationToken);
+                user.TokenVersion++;
+                user.UpdatedAtUtc = now;
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                throw new AppException(401, "REFRESH_TOKEN_REUSE_DETECTED");
+            }
+
+            if (refreshToken.RevokedAtUtc.HasValue)
+                throw new AppException(401, "INVALID_REFRESH_TOKEN");
+
+            refreshToken.RevokedAtUtc = now;
+            var response = await CreateAuthResponseAsync(
+                user, cancellationToken, refreshToken.FamilyId);
+            refreshToken.ReplacedByTokenHash = HashRefreshToken(response.RefreshToken!);
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return response;
+        }
+
         public async Task LogoutAsync(
             RefreshTokenRequest request,
             CancellationToken cancellationToken)
         {
-            var tokenHash = HashRefreshToken(
-                request.RefreshToken);
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
+            var tokenHash = HashRefreshToken(request.RefreshToken);
+            var userId = await FindTokenOwnerAsync(tokenHash, cancellationToken);
+            if (!userId.HasValue ||
+                await GetLockedUserAsync(userId.Value, cancellationToken) == null)
+                return;
+
+            var token = await _context.RefreshTokens.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.TokenHash == tokenHash &&
+                    x.UserId == userId.Value, cancellationToken);
+            if (token == null)
+                return;
 
             var now = DateTime.UtcNow;
-
             await _context.RefreshTokens
-                .Where(token =>
-                    token.TokenHash == tokenHash &&
-                    token.RevokedAtUtc == null)
-                .ExecuteUpdateAsync(
-                    setters => setters.SetProperty(
-                        token => token.RevokedAtUtc,
-                        now),
-                    cancellationToken);
+                .Where(x => x.UserId == userId.Value &&
+                    x.FamilyId == token.FamilyId && x.RevokedAtUtc == null)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(
+                    x => x.RevokedAtUtc, now), cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
         public async Task<AuthResponse> GoogleLoginAsync(
             GoogleLoginRequest request,
             CancellationToken cancellationToken)
         {
-            string? googleClientId =
-                _configuration["GoogleAuth:WebClientId"];
-
-            if (string.IsNullOrWhiteSpace(googleClientId))
-            {
-                throw new InvalidOperationException(
-                    "GOOGLE_CLIENT_ID_NOT_CONFIGURED");
-            }
-
-            GoogleJsonWebSignature.Payload payload;
-
-            try
-            {
-                payload = await GoogleJsonWebSignature.ValidateAsync(
-                    request.IdToken,
-                    new GoogleJsonWebSignature.ValidationSettings
-                    {
-                        Audience = new[] { googleClientId }
-                    });
-            }
-            catch (InvalidJwtException)
-            {
-                throw new AppException(401, "INVALID_GOOGLE_TOKEN");
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
+            var payload = await _googleTokenValidator.ValidateAsync(
+                request.IdToken, cancellationToken);
 
             if (string.IsNullOrWhiteSpace(payload.Subject) ||
                 string.IsNullOrWhiteSpace(payload.Email) ||
                 !payload.EmailVerified)
-            {
                 throw new AppException(401, "GOOGLE_EMAIL_NOT_VERIFIED");
-            }
 
             string googleId = payload.Subject;
             string email = payload.Email.Trim().ToLowerInvariant();
 
-            var user = await _context.Users
-                .FirstOrDefaultAsync(
-                    x => x.GoogleId == googleId,
-                    cancellationToken);
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
 
-            if (user != null)
-                return await CreateAuthResponseAsync(user, cancellationToken);
+            var userId = await _context.Users.AsNoTracking()
+                .Where(x => x.GoogleId == googleId)
+                .Select(x => (int?)x.Id)
+                .SingleOrDefaultAsync(cancellationToken);
 
-            var existingUser = await _context.Users
-                .FirstOrDefaultAsync(
-                    x => x.Email == email,
-                    cancellationToken);
+            if (!userId.HasValue)
+                userId = await _context.Users.AsNoTracking()
+                    .Where(x => x.Email == email)
+                    .Select(x => (int?)x.Id)
+                    .SingleOrDefaultAsync(cancellationToken);
 
-            if (existingUser != null)
+            User user;
+            if (userId.HasValue)
             {
-                if (!existingUser.EmailVerified)
+                user = await GetLockedUserAsync(userId.Value, cancellationToken)
+                    ?? throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
+
+                if (user.GoogleId != googleId)
                 {
-                    await using var transaction =
-                        await _context.Database.BeginTransactionAsync(
-                            cancellationToken);
+                    if (user.Email != email || user.EmailVerified ||
+                        !string.IsNullOrWhiteSpace(user.GoogleId))
+                        throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
 
-                    try
-                    {
-                        var now = DateTime.UtcNow;
+                    var now = DateTime.UtcNow;
+                    user.GoogleId = googleId;
+                    user.EmailVerified = true;
+                    user.PasswordHash = null;
+                    user.EmailVerificationCodeHash = null;
+                    user.EmailVerificationCodeExpiresAtUtc = null;
+                    user.UpdatedAtUtc = now;
+                    user.TokenVersion++;
 
-                        existingUser.GoogleId = googleId;
-                        existingUser.EmailVerified = true;
+                    await _context.RefreshTokens
+                        .Where(token => token.UserId == user.Id &&
+                            token.RevokedAtUtc == null)
+                        .ExecuteUpdateAsync(setters => setters.SetProperty(
+                            token => token.RevokedAtUtc, now), cancellationToken);
 
-                        // Doğrulanmamış hesap oluşturulurken belirlenen şifreye
-                        // artık güvenilemez. Google doğrulamasından sonra silinir.
-                        existingUser.PasswordHash = null;
-
-                        existingUser.EmailVerificationCodeHash = null;
-                        existingUser.EmailVerificationCodeExpiresAtUtc = null;
-                        existingUser.UpdatedAtUtc = now;
-                        existingUser.TokenVersion++;
-
-                        // Bu kullanıcı için daha önce oluşmuş olabilecek bütün
-                        // aktif refresh token'ları geçersiz kıl.
-                        await _context.RefreshTokens
-                            .Where(token =>
-                                token.UserId == existingUser.Id &&
-                                token.RevokedAtUtc == null)
-                            .ExecuteUpdateAsync(
-                                setters => setters.SetProperty(
-                                    token => token.RevokedAtUtc,
-                                    now),
-                                cancellationToken);
-
-                        await _context.SaveChangesAsync(cancellationToken);
-
-                        // Google ile giriş yapan gerçek kullanıcı için yeni
-                        // access token ve refresh token oluşturulur.
-                        var response = await CreateAuthResponseAsync(
-                            existingUser,
-                            cancellationToken);
-
-                        await transaction.CommitAsync(cancellationToken);
-
-                        return response;
-                    }
-                    catch
-                    {
-                        await transaction.RollbackAsync(cancellationToken);
-                        throw;
-                    }
+                    await _context.SaveChangesAsync(cancellationToken);
                 }
+            }
+            else
+            {
+                string username = await GenerateGoogleUsernameAsync(
+                    email, cancellationToken);
 
-                throw new AppException(
-                    409,
-                    "GOOGLE_ACCOUNT_LINK_REQUIRED");
+                user = new User
+                {
+                    Username = username,
+                    FirstName = payload.GivenName?.Trim() ?? string.Empty,
+                    LastName = payload.FamilyName?.Trim() ?? string.Empty,
+                    Email = email,
+                    GoogleId = googleId,
+                    EmailVerified = true,
+                    PasswordHash = null,
+                    CountryCode = null,
+                    CreatedAtUtc = DateTime.UtcNow
+                };
+
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync(cancellationToken);
             }
 
-            string username = await GenerateGoogleUsernameAsync(
-                email,
-                cancellationToken);
-
-            user = new User
-            {
-                Username = username,
-                FirstName = payload.GivenName?.Trim() ?? string.Empty,
-                LastName = payload.FamilyName?.Trim() ?? string.Empty,
-                Email = email,
-                GoogleId = googleId,
-                EmailVerified = true,
-                PasswordHash = null,
-                CountryCode = null,
-                CreatedAtUtc = DateTime.UtcNow
-            };
-
-            _context.Users.Add(user);
-
-            await _context.SaveChangesAsync(cancellationToken);
-
-            return await CreateAuthResponseAsync(user, cancellationToken);
+            var response = await CreateAuthResponseAsync(user, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return response;
         }
 
         public async Task LinkGoogleAccountAsync(
@@ -484,9 +450,13 @@ namespace DailyChessPuzzleApi.Services
             LinkGoogleAccountRequest request,
             CancellationToken cancellationToken)
         {
-            var user = await _context.Users.FirstOrDefaultAsync(
-                x => x.Id == userId,
-                cancellationToken);
+            var payload = await _googleTokenValidator.ValidateAsync(
+                request.IdToken, cancellationToken);
+
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
+
+            var user = await GetLockedUserAsync(userId, cancellationToken);
             if (user == null)
                 throw new AppException(404, "USER_NOT_FOUND");
 
@@ -494,37 +464,19 @@ namespace DailyChessPuzzleApi.Services
                 throw new AppException(409, "PASSWORD_NOT_SET");
 
             if (_passwordHasher.VerifyHashedPassword(
-                    user,
-                    user.PasswordHash,
-                    request.CurrentPassword) == PasswordVerificationResult.Failed)
-            {
+                    user, user.PasswordHash, request.CurrentPassword)
+                == PasswordVerificationResult.Failed)
                 throw new AppException(401, "INVALID_CREDENTIALS");
-            }
 
-            var clientId = _configuration["GoogleAuth:WebClientId"];
-            if (string.IsNullOrWhiteSpace(clientId))
-                throw new InvalidOperationException("Google client ID is not configured.");
-
-            GoogleJsonWebSignature.Payload payload;
-            try
-            {
-                payload = await GoogleJsonWebSignature.ValidateAsync(
-                    request.IdToken,
-                    new GoogleJsonWebSignature.ValidationSettings
-                    {
-                        Audience = new[] { clientId }
-                    });
-            }
-            catch (InvalidJwtException)
-            {
-                throw new AppException(401, "INVALID_GOOGLE_TOKEN");
-            }
-
-            if (!payload.EmailVerified ||
-                !string.Equals(payload.Email?.Trim(), user.Email, StringComparison.OrdinalIgnoreCase))
-            {
+            if (string.IsNullOrWhiteSpace(payload.Subject) ||
+                !payload.EmailVerified ||
+                !string.Equals(payload.Email?.Trim(), user.Email,
+                    StringComparison.OrdinalIgnoreCase))
                 throw new AppException(403, "GOOGLE_EMAIL_MISMATCH");
-            }
+
+            if (!string.IsNullOrWhiteSpace(user.GoogleId) &&
+                user.GoogleId != payload.Subject)
+                throw new AppException(409, "GOOGLE_ACCOUNT_ALREADY_LINKED");
 
             var alreadyLinked = await _context.Users.AnyAsync(
                 x => x.Id != userId && x.GoogleId == payload.Subject,
@@ -536,33 +488,46 @@ namespace DailyChessPuzzleApi.Services
             user.EmailVerified = true;
             user.UpdatedAtUtc = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
         public async Task SetPasswordAsync(
-            int userId,
-            SetPasswordRequest request,
-            CancellationToken cancellationToken)
+    int userId,
+    SetPasswordRequest request,
+    CancellationToken cancellationToken)
         {
-            var user = await _context.Users
-                .FirstOrDefaultAsync(
-                    x => x.Id == userId,
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
                     cancellationToken);
 
-            if (user == null)
-                throw new KeyNotFoundException("USER_NOT_FOUND");
+            var user = await GetLockedUserAsync(
+                userId,
+                cancellationToken);
 
-            if (!string.IsNullOrWhiteSpace(user.PasswordHash))
+            if (user == null)
+                throw new KeyNotFoundException(
+                    "USER_NOT_FOUND");
+
+            if (!string.IsNullOrWhiteSpace(
+                user.PasswordHash))
             {
-                throw new AppException(409, "PASSWORD_ALREADY_SET");
+                throw new AppException(
+                    409,
+                    "PASSWORD_ALREADY_SET");
             }
 
-            user.PasswordHash = _passwordHasher.HashPassword(
-                user,
-                request.NewPassword);
+            user.PasswordHash =
+                _passwordHasher.HashPassword(
+                    user,
+                    request.NewPassword);
 
             user.UpdatedAtUtc = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync(cancellationToken);
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            await transaction.CommitAsync(
+                cancellationToken);
         }
 
         public async Task ChangePasswordAsync(
@@ -570,10 +535,11 @@ namespace DailyChessPuzzleApi.Services
             ChangePasswordRequest request,
             CancellationToken cancellationToken)
         {
-            var user = await _context.Users
-                .FirstOrDefaultAsync(
-                    x => x.Id == userId,
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
                     cancellationToken);
+
+            var user = await GetLockedUserAsync(userId, cancellationToken);
 
             if (user == null)
                 throw new KeyNotFoundException("USER_NOT_FOUND");
@@ -598,9 +564,7 @@ namespace DailyChessPuzzleApi.Services
                     "INVALID_CURRENT_PASSWORD");
             }
 
-            await using var transaction =
-                await _context.Database.BeginTransactionAsync(
-                    cancellationToken);
+
 
             try
             {

@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart';
 
 import '../core/models/api_response.dart';
@@ -28,6 +27,12 @@ class AuthProvider extends ChangeNotifier {
 
   // Oturum başlatma işleminin tekrar çalışmasını önler.
   Future<void>? _initializationFuture;
+
+  // Aynı oturuma ait eş zamanlı logout işlemlerini birleştirir.
+  final Map<int, Future<void>> _logoutOperations = {};
+
+  // Devam eden giriş işleminin oturum nesli.
+  int? _pendingLoginGeneration;
 
   // Kullanıcı bilgileri.
   int? _userId;
@@ -168,19 +173,45 @@ class AuthProvider extends ChangeNotifier {
       throw StateError('AUTH_PROVIDER_DISPOSED');
     }
 
-    // beginSessionChange çağrısı önceki nesli geçersiz kılar.
     final operation = _authStorage.beginSessionChange();
-
+    final generation = _authStorage.sessionGeneration;
+    _pendingLoginGeneration = generation;
     _initializationFuture = null;
-
     _clearUserData();
     _notifySafely();
 
-    final generation = await operation;
+    try {
+      final result = await operation;
+      _ensureCurrentSession(result);
+      return result;
+    } catch (_) {
+      if (_pendingLoginGeneration == generation) {
+        _pendingLoginGeneration = null;
+      }
+      rethrow;
+    }
+  }
 
-    _ensureCurrentSession(generation);
-
-    return generation;
+  // Normal ve Google giriş işlemlerinin ortak oturum yönetimi.
+  Future<ApiResponse<AuthResponse>> _performLogin(
+      Future<ApiResponse<AuthResponse>> Function(int generation) action,
+      ) {
+    return _withLoading(() async {
+      final generation = await _beginSessionChange();
+      try {
+        final result = await action(generation);
+        _ensureCurrentSession(generation);
+        if (result.success && result.data != null) {
+          await _loadSession(generation);
+        }
+        _ensureCurrentSession(generation);
+        return result;
+      } finally {
+        if (_pendingLoginGeneration == generation) {
+          _pendingLoginGeneration = null;
+        }
+      }
+    });
   }
 
   // Kullanıcının ülke bilgisini günceller.
@@ -270,25 +301,13 @@ class AuthProvider extends ChangeNotifier {
     required String email,
     required String password,
   }) {
-    return _withLoading(() async {
-      final generation = await _beginSessionChange();
-
-      final result = await _authApiService.login(
+    return _performLogin(
+          (generation) => _authApiService.login(
         email: email,
         password: password,
         expectedGeneration: generation,
-      );
-
-      _ensureCurrentSession(generation);
-
-      if (result.success && result.data != null) {
-        await _loadSession(generation);
-      }
-
-      _ensureCurrentSession(generation);
-
-      return result;
-    });
+      ),
+    );
   }
 
   // Yeni kullanıcı kaydı.
@@ -356,23 +375,11 @@ class AuthProvider extends ChangeNotifier {
 
   // Google ile giriş.
   Future<ApiResponse<AuthResponse>> loginWithGoogle() {
-    return _withLoading(() async {
-      final generation = await _beginSessionChange();
-
-      final result = await _authApiService.loginWithGoogle(
+    return _performLogin(
+          (generation) => _authApiService.loginWithGoogle(
         expectedGeneration: generation,
-      );
-
-      _ensureCurrentSession(generation);
-
-      if (result.success && result.data != null) {
-        await _loadSession(generation);
-      }
-
-      _ensureCurrentSession(generation);
-
-      return result;
-    });
+      ),
+    );
   }
 
   // Google hesabı için ilk şifreyi belirleme.
@@ -439,22 +446,71 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // Oturumu kapatma.
-  Future<void> logout() async {
-    await _withLoading(() async {
-      final generation = _authStorage.sessionGeneration;
+  Future<void> logout() {
+    final generation = _authStorage.sessionGeneration;
 
-      _ensureCurrentSession(generation);
+    _ensureCurrentSession(generation);
 
-      try {
-        await _authApiService.logout();
-      } finally {
-        if (!_isDisposed) {
+    // Aynı nesle ait devam eden logout işlemini kullan.
+    final existingOperation = _logoutOperations[generation];
+
+    if (existingOperation != null) {
+      return existingOperation;
+    }
+
+    final hasPendingLogin = _pendingLoginGeneration == generation;
+    final operation = _performLogout(
+      generation,
+      hasPendingLogin: hasPendingLogin,
+    );
+
+    _logoutOperations[generation] = operation;
+
+    return operation;
+  }
+
+  Future<void> _performLogout(
+      int generation, {
+        required bool hasPendingLogin,
+      }) async {
+    try {
+      await _withLoading(() async {
+        _ensureCurrentSession(generation);
+
+        try {
+          await _authApiService.logout(
+            forceSessionInvalidation: hasPendingLogin,
+            onLocalSessionCleared: () {
+              final currentGeneration =
+                  _authStorage.sessionGeneration;
+
+              if (!_isCurrentSession(currentGeneration)) {
+                return;
+              }
+
+              // Oturum bulunmadığında nesil değişmez.
+              // Aktif oturum temizlendiğinde bir kez artar.
+              if (currentGeneration != generation &&
+                  currentGeneration != generation + 1) {
+                return;
+              }
+
+              if (_pendingLoginGeneration == generation) {
+                _pendingLoginGeneration = null;
+              }
+
+              _initializationFuture = null;
+
+              _clearUserData();
+              _notifySafely();
+            },
+          );
+        } finally {
           final currentGeneration =
               _authStorage.sessionGeneration;
 
-          // Logout sırasında başka bir hesaba giriş yapılmışsa
-          // yeni kullanıcının state'i temizlenmez.
-          if (currentGeneration == generation + 1) {
+          if (_isCurrentSession(currentGeneration) &&
+              currentGeneration == generation + 1) {
             final token = await _authStorage.getAccessToken();
 
             if (_isCurrentSession(currentGeneration) &&
@@ -466,8 +522,10 @@ class AuthProvider extends ChangeNotifier {
             }
           }
         }
-      }
-    });
+      });
+    } finally {
+      _logoutOperations.remove(generation);
+    }
   }
 
   // Kullanıcı bilgilerini bellekte temizler.

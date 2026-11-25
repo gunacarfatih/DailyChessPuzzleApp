@@ -258,6 +258,10 @@ builder.Services.AddScoped<
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 
+builder.Services.AddScoped<
+    IGoogleTokenValidator,
+    GoogleTokenValidator>();
+
 // --------------------------------------------------
 // CACHE
 // --------------------------------------------------
@@ -489,3 +493,7 @@ app.MapControllers();
 app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 
 app.Run();
+
+public partial class Program
+{
+}

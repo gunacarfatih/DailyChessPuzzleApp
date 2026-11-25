@@ -1,5 +1,5 @@
-
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../features/auth/models/auth_response.dart';
 import '../constants/api_constants.dart';
@@ -16,6 +16,9 @@ class ApiClient {
   ApiClient._();
 
   static final Dio dio = _createDio();
+
+  @visibleForTesting
+  static HttpClientAdapter Function()? refreshAdapterFactory;
 
   static final AuthStorage _authStorage = AuthStorage.instance;
 
@@ -73,6 +76,11 @@ class ApiClient {
           },
         ),
       );
+
+      final adapter = refreshAdapterFactory?.call();
+      if (adapter != null) {
+        refreshDio.httpClientAdapter = adapter;
+      }
 
       final response = await refreshDio.post(
         ApiConstants.refreshTokenEndpoint,
@@ -197,11 +205,17 @@ class ApiClient {
       RequestOptions options,
       String token,
       ) {
-    options.headers.removeWhere(
-          (key, value) => key.toLowerCase() == 'authorization',
-    );
+    final headers = <String, dynamic>{};
 
-    options.headers['Authorization'] = 'Bearer $token';
+    for (final entry in options.headers.entries) {
+      if (entry.key.toLowerCase() != 'authorization') {
+        headers[entry.key] = entry.value;
+      }
+    }
+
+    headers['Authorization'] = 'Bearer $token';
+
+    options.headers = headers;
   }
 
   static Dio _createDio() {
@@ -434,6 +448,12 @@ class ApiClient {
         onError: (error, handler) {
           final generation = error
               .requestOptions.extra[sessionGenerationKey] as int?;
+
+          if (error.type == DioExceptionType.cancel &&
+              error.error == 'AUTH_SESSION_EXPIRED') {
+            handler.next(error);
+            return;
+          }
 
           if (generation != null &&
               !_authStorage.isCurrentGeneration(generation)) {
