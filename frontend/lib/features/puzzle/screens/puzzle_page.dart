@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
@@ -73,6 +72,10 @@ class PuzzlePageState extends State<PuzzlePage> {
   Position? _startingPosition;
   ChessboardController? _controller;
   Move? _lastMove;
+  String? _wrongMoveUci;
+  Timer? _wrongMoveTimer;
+  static const _wrongMoveDuration = Duration(milliseconds: 800);
+  static const _wrongMoveColor = Color(0xFFD32F2F);
 
   Timer? _timer;
   final Stopwatch _dailyElapsedClock = Stopwatch();
@@ -189,6 +192,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     // Önceki hesap için devam eden istekleri geçersiz kıl.
     _puzzleGeneration++;
+    _clearWrongMoveHighlight();
 
     _stopTimer();
     _stopBonusTimer();
@@ -204,6 +208,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   void dispose() {
     // Widget kapandığında devam eden bütün asenkron işlemleri geçersiz kıl.
     _puzzleGeneration++;
+    _clearWrongMoveHighlight();
 
     _timer?.cancel();
     _bonusTimer?.cancel();
@@ -215,6 +220,88 @@ class PuzzlePageState extends State<PuzzlePage> {
   // ------------------------------------------------------------
   // ORTAK YARDIMCI METOTLAR
   // ------------------------------------------------------------
+
+  void _clearWrongMoveHighlight() {
+    _wrongMoveTimer?.cancel();
+    _wrongMoveTimer = null;
+    _wrongMoveUci = null;
+  }
+
+  void _showWrongMoveHighlight(Move move) {
+    if (!mounted) return;
+    _clearWrongMoveHighlight();
+    final generation = _puzzleGeneration;
+    setState(() => _wrongMoveUci = move.uci);
+    _wrongMoveTimer = Timer(_wrongMoveDuration, () {
+      if (!_isCurrentGeneration(generation)) return;
+      setState(_clearWrongMoveHighlight);
+    });
+  }
+
+  Widget _buildWrongMoveHighlight(double boardSize, Side orientation) {
+    final uci = _wrongMoveUci;
+    if (uci == null || uci.length < 4) return const SizedBox.shrink();
+    final squareSize = boardSize / 8;
+    final squares = {uci.substring(0, 2), uci.substring(2, 4)};
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Stack(
+          children: [
+            for (final square in squares)
+              if (RegExp(r'^[a-h][1-8]$').hasMatch(square))
+                Positioned(
+                  left: squareSize * (orientation == Side.white
+                      ? square.codeUnitAt(0) - 97
+                      : 104 - square.codeUnitAt(0)),
+                  top: squareSize * (orientation == Side.white
+                      ? 8 - int.parse(square[1])
+                      : int.parse(square[1]) - 1),
+                  width: squareSize,
+                  height: squareSize,
+                  child: ColoredBox(
+                    color: _wrongMoveColor.withValues(alpha: 0.55),
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWrongMoveWarning() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Center(
+          child: AnimatedOpacity(
+            opacity: _wrongMoveUci != null ? 1 : 0,
+            duration: const Duration(milliseconds: 150),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF8B2020).withValues(alpha: 0.96),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.cancel_outlined, color: Colors.white, size: 24),
+                  SizedBox(width: 10),
+                  Text(
+                    'Yanlış Hamle!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Position _buildPositionFromPlayedMoves(
       String fen,
@@ -313,6 +400,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     // Yeni yükleme başlatılır; önceki isteklerin cevapları geçersiz olur.
     final generation = ++_puzzleGeneration;
+    _clearWrongMoveHighlight();
 
     _stopTimer();
     _stopBonusTimer();
@@ -453,6 +541,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     final generation = _puzzleGeneration;
 
+    _clearWrongMoveHighlight();
     final isReplay = _hasSubmitted;
 
     _stopTimer();
@@ -550,10 +639,10 @@ class PuzzlePageState extends State<PuzzlePage> {
       _dailyElapsedAtSync = startedAtUtc == null
           ? 0
           : responseTimeUtc
-              .difference(startedAtUtc)
-              .inSeconds
-              .clamp(0, 86400)
-              .toInt();
+          .difference(startedAtUtc)
+          .inSeconds
+          .clamp(0, 86400)
+          .toInt();
       _elapsedSeconds = _dailyElapsedAtSync;
 
       _wrongMoves = data.wrongMoves;
@@ -631,7 +720,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
         setState(() {
           _elapsedSeconds = (_dailyElapsedAtSync +
-                  _dailyElapsedClock.elapsed.inSeconds)
+              _dailyElapsedClock.elapsed.inSeconds)
               .clamp(0, 86400)
               .toInt();
         });
@@ -702,6 +791,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     final generation = _puzzleGeneration;
 
     setState(() {
+      _clearWrongMoveHighlight();
       _isSubmitting = true;
     });
 
@@ -764,6 +854,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         });
 
         _restoreBoard();
+        _showWrongMoveHighlight(move);
         return;
       }
 
@@ -877,6 +968,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     final generation = _puzzleGeneration;
 
     setState(() {
+      _clearWrongMoveHighlight();
       _isSubmitting = true;
     });
 
@@ -1073,6 +1165,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     setState(() {
       _isBonusLoading = true;
       _bonusError = null;
+      _clearWrongMoveHighlight();
       _bonusFeedback = 'Bonus bulmaca hazırlanıyor...';
     });
 
@@ -1437,6 +1530,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
 
     setState(() {
+      _clearWrongMoveHighlight();
       _isBonusLoading = true;
     });
 
@@ -1496,6 +1590,10 @@ class PuzzlePageState extends State<PuzzlePage> {
         });
 
         _restoreBonusBoard();
+        if (_isBonusMode && !_isBonusExpired && !_isBonusCompleted &&
+            !serverExpired && !serverCompleted && _bonusRemainingSeconds > 0) {
+          _showWrongMoveHighlight(move);
+        }
         return;
       }
 
@@ -1714,6 +1812,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   void _returnToDailyPuzzle() {
+    _clearWrongMoveHighlight();
     _stopBonusTimer();
 
     final position = _position;
@@ -1860,6 +1959,8 @@ class PuzzlePageState extends State<PuzzlePage> {
                                 orientation: _playerSide,
                                 onMove: _onMove,
                               ),
+                              _buildWrongMoveHighlight(boardSize, _playerSide),
+                              _buildWrongMoveWarning(),
                               IgnorePointer(
                                 child: AnimatedOpacity(
                                   opacity: _showCompletionAnimation ? 1 : 0,
@@ -2049,6 +2150,8 @@ class PuzzlePageState extends State<PuzzlePage> {
                             orientation: _bonusPlayerSide,
                             onMove: _onMove,
                           ),
+                          _buildWrongMoveHighlight(boardSize, _bonusPlayerSide),
+                          _buildWrongMoveWarning(),
                           IgnorePointer(
                             child: AnimatedOpacity(
                               opacity: _showBonusCompletionAnimation ? 1 : 0,
