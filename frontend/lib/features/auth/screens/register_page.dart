@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/auth_provider.dart';
+import 'email_verification_page.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -69,14 +70,15 @@ class _RegisterPageState extends State<RegisterPage> {
         setState(() {
           _pendingVerificationEmail =
               response.data!['email']?.toString() ??
-              _emailController.text.trim();
+                  _emailController.text.trim();
         });
-        _showInfo('Doğrulama kodunu e-postana gönderdik.');
+        await _verifyEmail();
       } else if (response.errorCode == 'EMAIL_DELIVERY_FAILED') {
         setState(() {
           _pendingVerificationEmail = _emailController.text.trim();
         });
         _showError('Hesap oluşturuldu, ancak e-posta gönderilemedi. Kodu yeniden iste.');
+        await _verifyEmail();
       } else {
         _showError(response.message ?? 'Kayıt işlemi başarısız.');
       }
@@ -94,61 +96,11 @@ class _RegisterPageState extends State<RegisterPage> {
     final email = _pendingVerificationEmail;
     if (email == null) return;
 
-    final codeController = TextEditingController();
-    final code = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('E-posta doğrulama'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('6 haneli kodu $email adresinden al.'),
-            const SizedBox(height: 12),
-            TextField(
-              controller: codeController,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              decoration: const InputDecoration(labelText: 'Doğrulama kodu'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Daha sonra'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, codeController.text),
-            child: const Text('Doğrula'),
-          ),
-        ],
-      ),
+    final verified = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => EmailVerificationPage(email: email)),
     );
-    codeController.dispose();
-    if (code == null || !mounted) return;
-
-    try {
-      final result = await context.read<AuthProvider>().verifyEmail(
-            email: email,
-            code: code,
-          );
-      if (!mounted) return;
-      if (!result.success) {
-        _showError(result.message ?? 'E-posta doğrulanamadı.');
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('E-posta doğrulandı. Şimdi giriş yapabilirsin.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      Navigator.pop(context, true);
-    } catch (_) {
-      if (mounted) _showError('E-posta doğrulanırken bir hata oluştu.');
-    }
+    if (!mounted || verified != true) return;
+    Navigator.pop(context, true);
   }
 
   Future<void> _resendVerification() async {
@@ -157,8 +109,8 @@ class _RegisterPageState extends State<RegisterPage> {
 
     try {
       final result = await context.read<AuthProvider>().resendVerification(
-            email: email,
-          );
+        email: email,
+      );
       if (!mounted) return;
       if (result.success) {
         _showInfo('Kod gönderme isteği alındı. Gelen kutunu kontrol et.');
