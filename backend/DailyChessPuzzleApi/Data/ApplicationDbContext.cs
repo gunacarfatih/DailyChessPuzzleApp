@@ -74,7 +74,15 @@ namespace DailyChessPuzzleApi.Data
                     .HasDefaultValue(0)
                     .IsRequired();
 
-                entity.HasIndex(x => x.Username)
+                entity.Property(x => x.NormalizedUsername)
+                    .HasMaxLength(50)
+                    .HasComputedColumnSql(
+                        "lower(\"Username\")",
+                        stored: true)
+                    .IsRequired();
+
+                entity.HasIndex(x => x.NormalizedUsername)
+                    .HasDatabaseName("IX_Users_NormalizedUsername")
                     .IsUnique();
 
                 entity.HasIndex(x => x.Email)

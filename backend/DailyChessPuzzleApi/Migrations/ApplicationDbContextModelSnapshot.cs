@@ -553,6 +553,13 @@ namespace DailyChessPuzzleApi.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("NormalizedUsername")
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasComputedColumnSql("lower(\"Username\")", true);
+
                     b.Property<string>("PasswordHash")
                         .HasColumnType("text");
 
@@ -578,8 +585,9 @@ namespace DailyChessPuzzleApi.Migrations
                         .IsUnique()
                         .HasFilter("\"GoogleId\" IS NOT NULL");
 
-                    b.HasIndex("Username")
-                        .IsUnique();
+                    b.HasIndex("NormalizedUsername")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Users_NormalizedUsername");
 
                     b.ToTable("Users");
                 });

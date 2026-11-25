@@ -1,7 +1,9 @@
 using Google.Apis.Auth;
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using DailyChessPuzzleApi.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Text.RegularExpressions;
 using DailyChessPuzzleApi.DTOs.Auth;
 using DailyChessPuzzleApi.Exceptions;
@@ -535,6 +537,757 @@ public sealed class AuthServiceIntegrationTests
         Assert.NotNull(user.PasswordHash);
         Assert.Equal(0, user.TokenVersion);
         await AssertActiveCountAsync(database, 1);
+    }
+
+    private static RegisterRequest CreateRegistrationRequest(
+    string username,
+    string email)
+    {
+        return new RegisterRequest
+        {
+            Username = username,
+            FirstName = "Registration",
+            LastName = "Test",
+            Email = email,
+            Password = Password,
+            CountryCode = "TR"
+        };
+    }
+
+    private static async Task<string> TryRegisterAsync(
+        PostgresTestDatabase database,
+        string username,
+        string email,
+        params IInterceptor[] interceptors)
+    {
+        await using var context = database.CreateContext(interceptors);
+
+        try
+        {
+            await CreateService(context).RegisterAsync(
+                CreateRegistrationRequest(username, email),
+                CancellationToken.None);
+
+            return "SUCCESS";
+        }
+        catch (AppException exception)
+        {
+            return exception.ErrorCode;
+        }
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_registration_with_same_email_allows_only_one_user()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var gate = new UserWriteRaceInterceptor();
+
+        var results = await RaceAsync(
+            () => TryRegisterAsync(
+                database,
+                "first-player",
+                "same@example.test",
+                gate),
+            () => TryRegisterAsync(
+                database,
+                "second-player",
+                "same@example.test",
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        var outcomes = new[]
+        {
+        results.First,
+        results.Second
+    };
+
+        Assert.Single(outcomes, x => x == "SUCCESS");
+
+        Assert.Single(
+            outcomes,
+            x => x == "EMAIL_ALREADY_EXISTS");
+
+        await using var context = database.CreateContext();
+
+        Assert.Equal(1, await context.Users.CountAsync());
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_registration_with_same_username_allows_only_one_user()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var gate = new UserWriteRaceInterceptor();
+
+        var results = await RaceAsync(
+            () => TryRegisterAsync(
+                database,
+                "same-player",
+                "first@example.test",
+                gate),
+            () => TryRegisterAsync(
+                database,
+                "same-player",
+                "second@example.test",
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        var outcomes = new[]
+        {
+        results.First,
+        results.Second
+    };
+
+        Assert.Single(outcomes, x => x == "SUCCESS");
+
+        Assert.Single(
+            outcomes,
+            x => x == "USERNAME_ALREADY_EXISTS");
+
+        await using var context = database.CreateContext();
+
+        Assert.Equal(1, await context.Users.CountAsync());
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_registration_with_different_username_casing_allows_only_one_user()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var gate = new UserWriteRaceInterceptor();
+
+        var results = await RaceAsync(
+            () => TryRegisterAsync(
+                database,
+                "ChessPlayer",
+                "first@example.test",
+                gate),
+            () => TryRegisterAsync(
+                database,
+                "chessplayer",
+                "second@example.test",
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        var outcomes = new[]
+        {
+        results.First,
+        results.Second
+    };
+
+        Assert.Single(outcomes, x => x == "SUCCESS");
+
+        Assert.Single(
+            outcomes,
+            x => x == "USERNAME_ALREADY_EXISTS");
+
+        await using var context = database.CreateContext();
+
+        Assert.Equal(1, await context.Users.CountAsync());
+    }
+
+    [PostgresFact]
+    public async Task Sequential_registration_rejects_username_with_different_casing()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var first = await TryRegisterAsync(
+            database,
+            "ChessPlayer",
+            "first@example.test");
+
+        var second = await TryRegisterAsync(
+            database,
+            "chessplayer",
+            "second@example.test");
+
+        Assert.Equal("SUCCESS", first);
+
+        Assert.Equal(
+            "USERNAME_ALREADY_EXISTS",
+            second);
+
+        await using var context = database.CreateContext();
+
+        Assert.Equal(1, await context.Users.CountAsync());
+
+        var user = await context.Users.SingleAsync();
+
+        Assert.Equal("ChessPlayer", user.Username);
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_registration_of_distinct_users_succeeds()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var results = await RaceAsync(
+            () => TryRegisterAsync(
+                database,
+                "first-player",
+                "first@example.test"),
+            () => TryRegisterAsync(
+                database,
+                "second-player",
+                "second@example.test"));
+
+        Assert.Equal("SUCCESS", results.First);
+        Assert.Equal("SUCCESS", results.Second);
+
+        await using var context = database.CreateContext();
+
+        Assert.Equal(2, await context.Users.CountAsync());
+
+        Assert.Equal(
+            0,
+            await context.RefreshTokens.CountAsync());
+    }
+
+    [PostgresFact]
+    public async Task Database_rejects_usernames_that_differ_only_by_case()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        await using var context = database.CreateContext();
+
+        context.Users.Add(new User
+        {
+            Username = "ChessPlayer",
+            FirstName = "First",
+            LastName = "Player",
+            Email = "first@example.test",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        await context.SaveChangesAsync();
+
+        context.Users.Add(new User
+        {
+            Username = "chessplayer",
+            FirstName = "Second",
+            LastName = "Player",
+            Email = "second@example.test",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(
+            () => context.SaveChangesAsync());
+
+        await using var check = database.CreateContext();
+
+        Assert.Equal(1, await check.Users.CountAsync());
+    }
+
+    private static FakeGoogleValidator CreateGoogleValidator(
+    string subject,
+    string email)
+    {
+        return new FakeGoogleValidator(_ =>
+            Task.FromResult(new GoogleJsonWebSignature.Payload
+            {
+                Subject = subject,
+                Email = email,
+                EmailVerified = true,
+                GivenName = "Google",
+                FamilyName = "Player"
+            }));
+    }
+
+    private static async Task<(AuthResponse? Response, string? Error)>
+        TryGoogleRegistrationAsync(
+            PostgresTestDatabase database,
+            string subject,
+            string email,
+        params IInterceptor[] interceptors)
+    {
+        await using var context = database.CreateContext(interceptors);
+
+        var validator = CreateGoogleValidator(subject, email);
+
+        try
+        {
+            var response = await CreateService(context, validator)
+                .GoogleLoginAsync(
+                    new GoogleLoginRequest
+                    {
+                        IdToken = "test-token"
+                    },
+                    CancellationToken.None);
+
+            return (response, null);
+        }
+        catch (AppException exception)
+        {
+            return (null, exception.ErrorCode);
+        }
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_first_google_login_creates_only_one_user()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var gate = new UserWriteRaceInterceptor();
+
+        var results = await RaceAsync(
+            () => TryGoogleRegistrationAsync(
+                database,
+                GoogleSubject,
+                TestEmail,
+                gate),
+            () => TryGoogleRegistrationAsync(
+                database,
+                GoogleSubject,
+                TestEmail,
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        Assert.NotNull(results.First.Response);
+        Assert.NotNull(results.Second.Response);
+
+        Assert.Null(results.First.Error);
+        Assert.Null(results.Second.Error);
+
+        Assert.Equal(
+            results.First.Response!.UserId,
+            results.Second.Response!.UserId);
+
+        Assert.NotEqual(
+            results.First.Response.RefreshToken,
+            results.Second.Response.RefreshToken);
+
+        await using var context = database.CreateContext();
+
+        var user = await context.Users.SingleAsync();
+
+        Assert.Equal(GoogleSubject, user.GoogleId);
+        Assert.Equal(TestEmail, user.Email);
+        Assert.True(user.EmailVerified);
+        Assert.Null(user.PasswordHash);
+        Assert.Equal(0, user.TokenVersion);
+
+        var tokens = await context.RefreshTokens
+            .AsNoTracking()
+            .ToListAsync();
+
+        Assert.Equal(2, tokens.Count);
+
+        Assert.All(tokens, token =>
+        {
+            Assert.Equal(user.Id, token.UserId);
+            Assert.Null(token.RevokedAtUtc);
+        });
+
+        Assert.Equal(
+            2,
+            tokens.Select(x => x.FamilyId).Distinct().Count());
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_google_registrations_with_same_username_prefix_create_distinct_users()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var gate = new UserWriteRaceInterceptor();
+
+        var results = await RaceAsync(
+            () => TryGoogleRegistrationAsync(
+                database,
+                "google-subject-first",
+                "chessplayer@first.test",
+                gate),
+            () => TryGoogleRegistrationAsync(
+                database,
+                "google-subject-second",
+                "chessplayer@second.test",
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        Assert.NotNull(results.First.Response);
+        Assert.NotNull(results.Second.Response);
+
+        Assert.NotEqual(
+            results.First.Response!.UserId,
+            results.Second.Response!.UserId);
+
+        await using var context = database.CreateContext();
+
+        var users = await context.Users
+            .AsNoTracking()
+            .ToListAsync();
+
+        Assert.Equal(2, users.Count);
+
+        Assert.Equal(
+            2,
+            users.Select(x => x.NormalizedUsername)
+                .Distinct()
+                .Count());
+
+        Assert.Contains(users, x =>
+            x.GoogleId == "google-subject-first" &&
+            x.Email == "chessplayer@first.test");
+
+        Assert.Contains(users, x =>
+            x.GoogleId == "google-subject-second" &&
+            x.Email == "chessplayer@second.test");
+
+        Assert.All(users, user =>
+        {
+            Assert.True(user.EmailVerified);
+            Assert.Null(user.PasswordHash);
+        });
+
+        Assert.Equal(
+            2,
+            await context.RefreshTokens.CountAsync(
+                x => x.RevokedAtUtc == null));
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_password_registration_and_google_registration_preserve_single_account()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var gate = new UserWriteRaceInterceptor();
+
+        var results = await RaceAsync(
+            () => TryRegisterAsync(
+                database,
+                "password-player",
+                TestEmail,
+                gate),
+            () => TryGoogleRegistrationAsync(
+                database,
+                GoogleSubject,
+                TestEmail,
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        Assert.True(
+            results.First == "SUCCESS" ||
+            results.First == "EMAIL_ALREADY_EXISTS");
+
+        Assert.NotNull(results.Second.Response);
+        Assert.Null(results.Second.Error);
+
+        await using var context = database.CreateContext();
+
+        var user = await context.Users.SingleAsync();
+
+        Assert.Equal(
+            results.Second.Response!.UserId,
+            user.Id);
+
+        Assert.Equal(TestEmail, user.Email);
+        Assert.Equal(GoogleSubject, user.GoogleId);
+        Assert.True(user.EmailVerified);
+
+        Assert.Null(user.PasswordHash);
+        Assert.Null(user.EmailVerificationCodeHash);
+        Assert.Null(user.EmailVerificationCodeExpiresAtUtc);
+
+        Assert.Equal(
+            results.First == "SUCCESS" ? 1 : 0,
+            user.TokenVersion);
+
+        Assert.Equal(
+            user.TokenVersion.ToString(),
+            ReadVersion(results.Second.Response.AccessToken));
+
+        Assert.Equal(
+            1,
+            await context.RefreshTokens.CountAsync());
+
+        Assert.Equal(
+            1,
+            await context.RefreshTokens.CountAsync(
+                x => x.RevokedAtUtc == null));
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_different_google_subjects_with_same_email_cannot_create_two_accounts()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var gate = new UserWriteRaceInterceptor();
+
+        var results = await RaceAsync(
+            () => TryGoogleRegistrationAsync(
+                database,
+                "google-subject-first",
+                TestEmail,
+                gate),
+            () => TryGoogleRegistrationAsync(
+                database,
+                "google-subject-second",
+                TestEmail,
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        var outcomes = new[]
+        {
+        results.First,
+        results.Second
+    };
+
+        Assert.Single(
+            outcomes,
+            x => x.Response != null);
+
+        Assert.Single(
+            outcomes,
+            x => x.Error == "GOOGLE_ACCOUNT_LINK_REQUIRED");
+
+        var winner = results.First.Response != null
+            ? "google-subject-first"
+            : "google-subject-second";
+
+        await using var context = database.CreateContext();
+
+        var user = await context.Users.SingleAsync();
+
+        Assert.Equal(winner, user.GoogleId);
+        Assert.Equal(TestEmail, user.Email);
+        Assert.True(user.EmailVerified);
+        Assert.Null(user.PasswordHash);
+
+        Assert.Equal(
+            1,
+            await context.RefreshTokens.CountAsync());
+
+        Assert.Equal(
+            1,
+            await context.RefreshTokens.CountAsync(
+                x => x.RevokedAtUtc == null));
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_google_link_and_new_google_registration_preserve_unique_google_identity()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var initialLogin = await SeedLoginAsync(database);
+
+        var gate = new UserWriteRaceInterceptor(includeGoogleLink: true);
+
+        async Task<string> TryLinkAsync()
+        {
+            await using var context = database.CreateContext(gate);
+
+            var validator = CreateGoogleValidator(
+                GoogleSubject,
+                TestEmail);
+
+            try
+            {
+                await CreateService(context, validator)
+                    .LinkGoogleAccountAsync(
+                        initialLogin.UserId,
+                        new LinkGoogleAccountRequest
+                        {
+                            IdToken = "test-token",
+                            CurrentPassword = Password
+                        },
+                        CancellationToken.None);
+
+                return "SUCCESS";
+            }
+            catch (AppException exception)
+            {
+                return exception.ErrorCode;
+            }
+        }
+
+        var results = await RaceAsync(
+            () => TryLinkAsync(),
+            () => TryGoogleRegistrationAsync(
+                database,
+                GoogleSubject,
+                "different@example.test",
+                gate));
+
+        Assert.Equal(2, gate.ArrivedCount);
+
+        Assert.True(
+            results.First == "SUCCESS" ||
+            results.First == "GOOGLE_ACCOUNT_ALREADY_LINKED");
+
+        Assert.NotNull(results.Second.Response);
+
+        await using var context = database.CreateContext();
+
+        var users = await context.Users
+            .AsNoTracking()
+            .ToListAsync();
+
+        var owner = Assert.Single(
+            users,
+            x => x.GoogleId == GoogleSubject);
+
+        Assert.Equal(
+            owner.Id,
+            results.Second.Response!.UserId);
+
+        var originalUser = Assert.Single(
+            users,
+            x => x.Id == initialLogin.UserId);
+
+        Assert.NotNull(originalUser.PasswordHash);
+        Assert.True(originalUser.EmailVerified);
+
+        if (results.First == "SUCCESS")
+        {
+            Assert.Equal(initialLogin.UserId, owner.Id);
+            Assert.Single(users);
+        }
+        else
+        {
+            Assert.Null(originalUser.GoogleId);
+            Assert.Equal(2, users.Count);
+            Assert.Equal("different@example.test", owner.Email);
+        }
+
+        Assert.Equal(
+            2,
+            await context.RefreshTokens.CountAsync(
+                x => x.RevokedAtUtc == null));
+    }
+
+
+    [PostgresFact]
+    public async Task Registration_trims_username_and_rejects_duplicate()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        Assert.Equal("SUCCESS", await TryRegisterAsync(
+            database, "  Oyuncu  ", "first@example.test"));
+        Assert.Equal("USERNAME_ALREADY_EXISTS", await TryRegisterAsync(
+            database, "Oyuncu", "second@example.test"));
+        await using var context = database.CreateContext();
+        Assert.Equal("Oyuncu", (await context.Users.SingleAsync()).Username);
+    }
+
+    [PostgresFact]
+    public async Task Registration_validates_username_length_after_trim()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        foreach (var invalid in new[] { "", "   ", " ab ", new string('a', 51) })
+        {
+            Assert.Equal("INVALID_USERNAME", await TryRegisterAsync(
+                database, invalid, "invalid@example.test"));
+        }
+
+        Assert.Equal("SUCCESS", await TryRegisterAsync(
+            database, " abc ", "short@example.test"));
+        Assert.Equal("SUCCESS", await TryRegisterAsync(
+            database, new string('b', 50), "long@example.test"));
+
+        await using var context = database.CreateContext();
+        var names = await context.Users.Select(x => x.Username).ToListAsync();
+        Assert.Equal(2, names.Count);
+        Assert.Contains("abc", names);
+        Assert.Contains(new string('b', 50), names);
+    }
+
+    [PostgresFact]
+    public async Task Registration_username_comparison_matches_postgres_in_all_tested_cultures()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        var previousCulture = CultureInfo.CurrentCulture;
+        var previousUiCulture = CultureInfo.CurrentUICulture;
+
+        try
+        {
+            int index = 0;
+            foreach (var culture in new[] { "tr-TR", "en-US" })
+            {
+                CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+                CultureInfo.CurrentUICulture = CultureInfo.CurrentCulture;
+
+                foreach (var pair in new[]
+                {
+                    ("I", "i"), ("I", "ı"), ("İ", "i"), ("İ", "ı"),
+                    ("ÇĞÖŞÜ", "çğöşü"), ("É", "é"),
+                    ("Σ", "σ"), ("Σ", "ς"), ("é", "e\u0301")
+                })
+                {
+                    var prefix = $"case{index++}_";
+                    var first = prefix + pair.Item1;
+                    var second = prefix + pair.Item2;
+
+                    await using var context = database.CreateContext();
+                    var equal = await context.Database.SqlQuery<bool>(
+                        $"SELECT lower({first}) = lower({second}) AS \"Value\"")
+                        .SingleAsync();
+
+                    Assert.Equal("SUCCESS", await TryRegisterAsync(
+                        database, first, $"{prefix}first@example.test"));
+
+                    var actual = await TryRegisterAsync(
+                        database, second, $"{prefix}second@example.test");
+
+                    Assert.True(
+                        actual == (equal ? "USERNAME_ALREADY_EXISTS" : "SUCCESS"),
+                        $"Culture={culture}; pair={first}/{second}; PostgreSQL equal={equal}; actual={actual}");
+                }
+            }
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previousCulture;
+            CultureInfo.CurrentUICulture = previousUiCulture;
+        }
+    }
+
+    [PostgresFact]
+    public async Task Google_username_generation_matches_postgres_under_turkish_culture()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        var previousCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("tr-TR");
+
+            // The Google generator starts with the lowercase email prefix.
+            // Determine whether the existing spelling collides in this database.
+            Assert.Equal("SUCCESS", await TryRegisterAsync(
+                database, "chessI", "first@example.test"));
+
+            await using var context = database.CreateContext();
+            var equal = await context.Database.SqlQuery<bool>(
+                $"SELECT lower({"chessI"}) = lower({"chessi"}) AS \"Value\"")
+                .SingleAsync();
+
+            var result = await TryGoogleRegistrationAsync(
+                database, "google-culture-subject", "chessi@example.test");
+
+            Assert.Null(result.Error);
+            Assert.NotNull(result.Response);
+            Assert.Equal(equal ? "chessi1" : "chessi", result.Response!.Username);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previousCulture;
+        }
     }
 
     private static string ReadVersion(string token) =>

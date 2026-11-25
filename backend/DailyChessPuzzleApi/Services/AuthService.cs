@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -44,19 +45,21 @@ namespace DailyChessPuzzleApi.Services
         }
 
         public async Task<RegistrationResponse> RegisterAsync(
-            RegisterRequest request,
-            CancellationToken cancellationToken)
+    RegisterRequest request,
+    CancellationToken cancellationToken)
         {
             _emailSender.EnsureConfigured();
+
             string username = request.Username.Trim();
             string firstName = request.FirstName.Trim();
             string lastName = request.LastName.Trim();
             string email = request.Email.Trim().ToLowerInvariant();
 
-            bool usernameExists = await _context.Users
-                .AnyAsync(
-                    x => x.Username.ToLower() == username.ToLower(),
-                    cancellationToken);
+            if (username.Length < 3 || username.Length > 50)
+                throw new AppException(400, "INVALID_USERNAME");
+
+            bool usernameExists = await UsernameExistsAsync(
+                username, cancellationToken);
 
             if (usernameExists)
                 throw new AppException(409, "USERNAME_ALREADY_EXISTS");
@@ -70,6 +73,7 @@ namespace DailyChessPuzzleApi.Services
                 throw new AppException(409, "EMAIL_ALREADY_EXISTS");
 
             var verificationCode = GenerateEmailVerificationCode();
+
             var user = new User
             {
                 Username = username,
@@ -80,8 +84,10 @@ namespace DailyChessPuzzleApi.Services
                     .Trim()
                     .ToUpperInvariant(),
                 EmailVerified = false,
-                EmailVerificationCodeHash = HashEmailVerificationCode(email, verificationCode),
-                EmailVerificationCodeExpiresAtUtc = DateTime.UtcNow.AddMinutes(15),
+                EmailVerificationCodeHash =
+                    HashEmailVerificationCode(email, verificationCode),
+                EmailVerificationCodeExpiresAtUtc =
+                    DateTime.UtcNow.AddMinutes(15),
                 CreatedAtUtc = DateTime.UtcNow
             };
 
@@ -91,7 +97,31 @@ namespace DailyChessPuzzleApi.Services
 
             _context.Users.Add(user);
 
-            await _context.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException exception)
+                when (exception.InnerException is PostgresException postgres &&
+                      postgres.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                _context.Entry(user).State = EntityState.Detached;
+
+                switch (postgres.ConstraintName)
+                {
+                    case "IX_Users_Email":
+                        throw new AppException(
+                            409, "EMAIL_ALREADY_EXISTS");
+
+                    case "IX_Users_Username":
+                    case "IX_Users_NormalizedUsername":
+                        throw new AppException(
+                            409, "USERNAME_ALREADY_EXISTS");
+
+                    default:
+                        throw;
+                }
+            }
 
             try
             {
@@ -109,7 +139,10 @@ namespace DailyChessPuzzleApi.Services
                 throw new AppException(503, "EMAIL_DELIVERY_FAILED");
             }
 
-            return new RegistrationResponse { Email = email };
+            return new RegistrationResponse
+            {
+                Email = email
+            };
         }
 
         public async Task VerifyEmailAsync(
@@ -360,47 +393,110 @@ namespace DailyChessPuzzleApi.Services
         }
 
         public async Task<AuthResponse> GoogleLoginAsync(
-            GoogleLoginRequest request,
-            CancellationToken cancellationToken)
+    GoogleLoginRequest request,
+    CancellationToken cancellationToken)
         {
             var payload = await _googleTokenValidator.ValidateAsync(
-                request.IdToken, cancellationToken);
+                request.IdToken,
+                cancellationToken);
 
             if (string.IsNullOrWhiteSpace(payload.Subject) ||
                 string.IsNullOrWhiteSpace(payload.Email) ||
                 !payload.EmailVerified)
-                throw new AppException(401, "GOOGLE_EMAIL_NOT_VERIFIED");
+            {
+                throw new AppException(
+                    401,
+                    "GOOGLE_EMAIL_NOT_VERIFIED");
+            }
 
+            const int maxAttempts = 5;
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    return await ExecuteGoogleLoginAsync(
+                        payload,
+                        cancellationToken);
+                }
+                catch (DbUpdateException exception)
+                    when (IsGoogleRegistrationConflict(exception))
+                {
+                    // ExecuteGoogleLoginAsync içerisindeki transaction
+                    // dispose edildi ve tamamlanmamış işlem geri alındı.
+
+                    _context.ChangeTracker.Clear();
+
+                    if (attempt == maxAttempts)
+                    {
+                        throw new AppException(
+                            503,
+                            "GOOGLE_LOGIN_TEMPORARILY_UNAVAILABLE");
+                    }
+
+                    await Task.Delay(
+                        Random.Shared.Next(20, 80) * attempt,
+                        cancellationToken);
+                }
+            }
+
+            throw new AppException(
+                503,
+                "GOOGLE_LOGIN_TEMPORARILY_UNAVAILABLE");
+        }
+
+        private async Task<AuthResponse> ExecuteGoogleLoginAsync(
+            GoogleJsonWebSignature.Payload payload,
+            CancellationToken cancellationToken)
+        {
             string googleId = payload.Subject;
             string email = payload.Email.Trim().ToLowerInvariant();
 
-            await using var transaction = await _context.Database
-                .BeginTransactionAsync(cancellationToken);
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
 
-            var userId = await _context.Users.AsNoTracking()
+            var userId = await _context.Users
+                .AsNoTracking()
                 .Where(x => x.GoogleId == googleId)
                 .Select(x => (int?)x.Id)
                 .SingleOrDefaultAsync(cancellationToken);
 
             if (!userId.HasValue)
-                userId = await _context.Users.AsNoTracking()
+            {
+                userId = await _context.Users
+                    .AsNoTracking()
                     .Where(x => x.Email == email)
                     .Select(x => (int?)x.Id)
                     .SingleOrDefaultAsync(cancellationToken);
+            }
 
             User user;
+
             if (userId.HasValue)
             {
-                user = await GetLockedUserAsync(userId.Value, cancellationToken)
-                    ?? throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
+                user = await GetLockedUserAsync(
+                    userId.Value,
+                    cancellationToken)
+                    ?? throw new AppException(
+                        409,
+                        "GOOGLE_ACCOUNT_LINK_REQUIRED");
 
                 if (user.GoogleId != googleId)
                 {
-                    if (user.Email != email || user.EmailVerified ||
+                    if (user.Email != email ||
+                        user.EmailVerified ||
                         !string.IsNullOrWhiteSpace(user.GoogleId))
-                        throw new AppException(409, "GOOGLE_ACCOUNT_LINK_REQUIRED");
+                    {
+                        throw new AppException(
+                            409,
+                            "GOOGLE_ACCOUNT_LINK_REQUIRED");
+                    }
 
                     var now = DateTime.UtcNow;
+
                     user.GoogleId = googleId;
                     user.EmailVerified = true;
                     user.PasswordHash = null;
@@ -410,24 +506,32 @@ namespace DailyChessPuzzleApi.Services
                     user.TokenVersion++;
 
                     await _context.RefreshTokens
-                        .Where(token => token.UserId == user.Id &&
+                        .Where(token =>
+                            token.UserId == user.Id &&
                             token.RevokedAtUtc == null)
-                        .ExecuteUpdateAsync(setters => setters.SetProperty(
-                            token => token.RevokedAtUtc, now), cancellationToken);
+                        .ExecuteUpdateAsync(
+                            setters => setters.SetProperty(
+                                token => token.RevokedAtUtc,
+                                now),
+                            cancellationToken);
 
-                    await _context.SaveChangesAsync(cancellationToken);
+                    await _context.SaveChangesAsync(
+                        cancellationToken);
                 }
             }
             else
             {
                 string username = await GenerateGoogleUsernameAsync(
-                    email, cancellationToken);
+                    email,
+                    cancellationToken);
 
                 user = new User
                 {
                     Username = username,
-                    FirstName = payload.GivenName?.Trim() ?? string.Empty,
-                    LastName = payload.FamilyName?.Trim() ?? string.Empty,
+                    FirstName =
+                        payload.GivenName?.Trim() ?? string.Empty,
+                    LastName =
+                        payload.FamilyName?.Trim() ?? string.Empty,
                     Email = email,
                     GoogleId = googleId,
                     EmailVerified = true,
@@ -437,58 +541,132 @@ namespace DailyChessPuzzleApi.Services
                 };
 
                 _context.Users.Add(user);
-                await _context.SaveChangesAsync(cancellationToken);
+
+                await _context.SaveChangesAsync(
+                    cancellationToken);
             }
 
-            var response = await CreateAuthResponseAsync(user, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            var response = await CreateAuthResponseAsync(
+                user,
+                cancellationToken);
+
+            await transaction.CommitAsync(
+                cancellationToken);
+
             return response;
         }
 
+        private static bool IsGoogleRegistrationConflict(
+            DbUpdateException exception)
+        {
+            return exception.InnerException is PostgresException postgres &&
+                   postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                   postgres.ConstraintName is
+                       "IX_Users_Email" or
+                       "IX_Users_Username" or
+                       "IX_Users_NormalizedUsername" or
+                       "IX_Users_GoogleId";
+        }
         public async Task LinkGoogleAccountAsync(
-            int userId,
-            LinkGoogleAccountRequest request,
-            CancellationToken cancellationToken)
+    int userId,
+    LinkGoogleAccountRequest request,
+    CancellationToken cancellationToken)
         {
             var payload = await _googleTokenValidator.ValidateAsync(
-                request.IdToken, cancellationToken);
+                request.IdToken,
+                cancellationToken);
 
-            await using var transaction = await _context.Database
-                .BeginTransactionAsync(cancellationToken);
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
 
-            var user = await GetLockedUserAsync(userId, cancellationToken);
+            var user = await GetLockedUserAsync(
+                userId,
+                cancellationToken);
+
             if (user == null)
-                throw new AppException(404, "USER_NOT_FOUND");
+            {
+                throw new AppException(
+                    404,
+                    "USER_NOT_FOUND");
+            }
 
             if (string.IsNullOrWhiteSpace(user.PasswordHash))
-                throw new AppException(409, "PASSWORD_NOT_SET");
+            {
+                throw new AppException(
+                    409,
+                    "PASSWORD_NOT_SET");
+            }
 
             if (_passwordHasher.VerifyHashedPassword(
-                    user, user.PasswordHash, request.CurrentPassword)
+                    user,
+                    user.PasswordHash,
+                    request.CurrentPassword)
                 == PasswordVerificationResult.Failed)
-                throw new AppException(401, "INVALID_CREDENTIALS");
+            {
+                throw new AppException(
+                    401,
+                    "INVALID_CREDENTIALS");
+            }
 
             if (string.IsNullOrWhiteSpace(payload.Subject) ||
                 !payload.EmailVerified ||
-                !string.Equals(payload.Email?.Trim(), user.Email,
+                !string.Equals(
+                    payload.Email?.Trim(),
+                    user.Email,
                     StringComparison.OrdinalIgnoreCase))
-                throw new AppException(403, "GOOGLE_EMAIL_MISMATCH");
+            {
+                throw new AppException(
+                    403,
+                    "GOOGLE_EMAIL_MISMATCH");
+            }
 
             if (!string.IsNullOrWhiteSpace(user.GoogleId) &&
                 user.GoogleId != payload.Subject)
-                throw new AppException(409, "GOOGLE_ACCOUNT_ALREADY_LINKED");
+            {
+                throw new AppException(
+                    409,
+                    "GOOGLE_ACCOUNT_ALREADY_LINKED");
+            }
 
             var alreadyLinked = await _context.Users.AnyAsync(
-                x => x.Id != userId && x.GoogleId == payload.Subject,
+                x => x.Id != userId &&
+                     x.GoogleId == payload.Subject,
                 cancellationToken);
+
             if (alreadyLinked)
-                throw new AppException(409, "GOOGLE_ACCOUNT_ALREADY_LINKED");
+            {
+                throw new AppException(
+                    409,
+                    "GOOGLE_ACCOUNT_ALREADY_LINKED");
+            }
 
             user.GoogleId = payload.Subject;
             user.EmailVerified = true;
             user.UpdatedAtUtc = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+
+            try
+            {
+                await _context.SaveChangesAsync(
+                    cancellationToken);
+
+                await transaction.CommitAsync(
+                    cancellationToken);
+            }
+            catch (DbUpdateException exception)
+                when (exception.InnerException is PostgresException postgres &&
+                      postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                      postgres.ConstraintName == "IX_Users_GoogleId")
+            {
+                await transaction.RollbackAsync(
+                    cancellationToken);
+
+                _context.ChangeTracker.Clear();
+
+                throw new AppException(
+                    409,
+                    "GOOGLE_ACCOUNT_ALREADY_LINKED");
+            }
         }
 
         public async Task SetPasswordAsync(
@@ -598,6 +776,21 @@ namespace DailyChessPuzzleApi.Services
             }
         }
 
+        private Task<bool> UsernameExistsAsync(
+            string username,
+            CancellationToken cancellationToken)
+        {
+            // Use the same PostgreSQL lower() rule as the generated column.
+            // FromSqlInterpolated parameterizes the supplied username.
+            return _context.Users
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "Users"
+                    WHERE "NormalizedUsername" = lower({username})
+                    """)
+                .AsNoTracking()
+                .AnyAsync(cancellationToken);
+        }
+
         private async Task<string> GenerateGoogleUsernameAsync(
             string email,
             CancellationToken cancellationToken)
@@ -623,9 +816,7 @@ namespace DailyChessPuzzleApi.Services
             string username = baseUsername;
             int suffix = 1;
 
-            while (await _context.Users.AnyAsync(
-                x => x.Username.ToLower() == username.ToLower(),
-                cancellationToken))
+            while (await UsernameExistsAsync(username, cancellationToken))
             {
                 username = $"{baseUsername}{suffix}";
                 suffix++;

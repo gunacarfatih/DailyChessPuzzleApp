@@ -1,9 +1,15 @@
 ﻿using System.Text;
 
+using DailyChessPuzzleApi.Data;
+using DailyChessPuzzleApi.Services.Interfaces;
+
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,10 +34,14 @@ internal sealed class TestWebApplicationFactory
 
     private readonly string _connectionString;
 
+    private readonly IInterceptor[] _interceptors;
+
     public TestWebApplicationFactory(
-        PostgresTestDatabase database)
+        PostgresTestDatabase database,
+        params IInterceptor[] interceptors)
     {
         _connectionString = database.ConnectionString;
+        _interceptors = interceptors;
     }
 
     protected override void ConfigureWebHost(
@@ -75,6 +85,23 @@ internal sealed class TestWebApplicationFactory
         {
             services.RemoveAll<IHostedService>();
 
+            // Gercek SMTP baglantisini engelle.
+            services.RemoveAll<IEmailSender>();
+
+            services.AddSingleton<IEmailSender>(
+                new TestEmailSender());
+
+            // HTTP isteklerinde olusturulan DbContext'lere
+            // test interceptor'larini ekle.
+            if (_interceptors.Length > 0)
+            {
+                services.ConfigureDbContext<ApplicationDbContext>(
+                    options =>
+                    {
+                        options.AddInterceptors(_interceptors);
+                    });
+            }
+
             services.PostConfigure<JwtBearerOptions>(
                 JwtBearerDefaults.AuthenticationScheme,
                 options =>
@@ -94,5 +121,22 @@ internal sealed class TestWebApplicationFactory
                         JwtAudience;
                 });
         });
+    }
+
+    private sealed class TestEmailSender : IEmailSender
+    {
+        public void EnsureConfigured()
+        {
+        }
+
+        public Task SendVerificationCodeAsync(
+            string email,
+            string code,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return Task.CompletedTask;
+        }
     }
 }

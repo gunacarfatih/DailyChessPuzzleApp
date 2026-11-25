@@ -1,6 +1,7 @@
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 using Xunit;
 
@@ -96,14 +97,19 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
         return database;
     }
 
-    public ApplicationDbContext CreateContext()
+    public ApplicationDbContext CreateContext(
+    params IInterceptor[] interceptors)
     {
-        var options =
+        var builder =
             new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseNpgsql(_connectionString)
-                .Options;
+                .UseNpgsql(_connectionString);
 
-        return new ApplicationDbContext(options);
+        if (interceptors.Length > 0)
+        {
+            builder.AddInterceptors(interceptors);
+        }
+
+        return new ApplicationDbContext(builder.Options);
     }
 
     public async Task SeedDailyPuzzleAsync(
