@@ -31,6 +31,10 @@ namespace DailyChessPuzzleApi.Models
         // ISO 3166-1 alpha-2 ülke kodu (TR, DE, US vb.).
         public string? CountryCode { get; set; }
 
+        // Son başarılı ülke atamasının veya değişikliğinin UTC zamanı.
+        // Ülke değiştirme işlemi 24 saatte bir yapılabilir.
+        public DateTime? CountryChangedAtUtc { get; set; }
+
         // Şifre gibi güvenlik bilgileri değiştiğinde artırılır.
         // Eski JWT access token'larının reddedilmesini sağlar.
         public int TokenVersion { get; set; }

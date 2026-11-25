@@ -84,7 +84,7 @@ public sealed class AuthServiceIntegrationTests
             },
             CancellationToken.None);
 
-        Assert.Equal("TR", login.CountryCode);
+        Assert.Null(login.CountryCode);
         Assert.False(string.IsNullOrWhiteSpace(login.AccessToken));
         Assert.False(string.IsNullOrWhiteSpace(login.RefreshToken));
 
@@ -1288,6 +1288,121 @@ public sealed class AuthServiceIntegrationTests
         {
             CultureInfo.CurrentCulture = previousCulture;
         }
+    }
+
+    [PostgresFact]
+    public async Task Registration_ignores_supplied_country_code()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var result = await TryRegisterAsync(
+            database,
+            "country-registration",
+            "country@example.test");
+
+        Assert.Equal("SUCCESS", result);
+
+        await using var context = database.CreateContext();
+
+        var user = await context.Users
+            .AsNoTracking()
+            .SingleAsync();
+
+        Assert.Null(user.CountryCode);
+        Assert.Null(user.CountryChangedAtUtc);
+    }
+
+    [PostgresFact]
+    public async Task New_google_user_has_no_country()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var login = await GoogleLoginAsync(database);
+
+        Assert.Null(login.CountryCode);
+
+        await using var context = database.CreateContext();
+
+        var user = await context.Users
+            .AsNoTracking()
+            .SingleAsync();
+
+        Assert.Equal(login.UserId, user.Id);
+        Assert.Equal(GoogleSubject, user.GoogleId);
+        Assert.Null(user.CountryCode);
+        Assert.Null(user.CountryChangedAtUtc);
+    }
+
+    [PostgresFact]
+    public async Task Password_login_preserves_existing_country()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var initialLogin = await SeedLoginAsync(database);
+
+        var changedAt = DateTime.UtcNow.Date.AddDays(-2);
+
+        await using (var context = database.CreateContext())
+        {
+            var user = await context.Users.SingleAsync();
+
+            user.CountryCode = "TR";
+            user.CountryChangedAtUtc = changedAt;
+
+            await context.SaveChangesAsync();
+        }
+
+        var login = await LoginAsync(database);
+
+        Assert.Equal(initialLogin.UserId, login.UserId);
+        Assert.Equal("TR", login.CountryCode);
+
+        await using var check = database.CreateContext();
+
+        var savedUser = await check.Users
+            .AsNoTracking()
+            .SingleAsync();
+
+        Assert.Equal("TR", savedUser.CountryCode);
+        Assert.Equal(changedAt, savedUser.CountryChangedAtUtc);
+    }
+
+    [PostgresFact]
+    public async Task Google_login_preserves_existing_country()
+    {
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
+        var initialLogin = await GoogleLoginAsync(database);
+
+        var changedAt = DateTime.UtcNow.Date.AddDays(-2);
+
+        await using (var context = database.CreateContext())
+        {
+            var user = await context.Users.SingleAsync();
+
+            user.CountryCode = "DE";
+            user.CountryChangedAtUtc = changedAt;
+
+            await context.SaveChangesAsync();
+        }
+
+        var login = await GoogleLoginAsync(database);
+
+        Assert.Equal(initialLogin.UserId, login.UserId);
+        Assert.Equal("DE", login.CountryCode);
+
+        await using var check = database.CreateContext();
+
+        var savedUser = await check.Users
+            .AsNoTracking()
+            .SingleAsync();
+
+        Assert.Equal("DE", savedUser.CountryCode);
+        Assert.Equal(changedAt, savedUser.CountryChangedAtUtc);
     }
 
     private static string ReadVersion(string token) =>

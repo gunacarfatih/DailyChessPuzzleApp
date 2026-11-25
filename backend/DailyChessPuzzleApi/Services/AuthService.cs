@@ -80,9 +80,8 @@ namespace DailyChessPuzzleApi.Services
                 FirstName = firstName,
                 LastName = lastName,
                 Email = email,
-                CountryCode = request.CountryCode?
-                    .Trim()
-                    .ToUpperInvariant(),
+                CountryCode = null,
+                CountryChangedAtUtc = null,
                 EmailVerified = false,
                 EmailVerificationCodeHash =
                     HashEmailVerificationCode(email, verificationCode),
@@ -537,6 +536,7 @@ namespace DailyChessPuzzleApi.Services
                     EmailVerified = true,
                     PasswordHash = null,
                     CountryCode = null,
+                    CountryChangedAtUtc = null,
                     CreatedAtUtc = DateTime.UtcNow
                 };
 

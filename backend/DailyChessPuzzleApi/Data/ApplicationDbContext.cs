@@ -70,6 +70,10 @@ namespace DailyChessPuzzleApi.Data
                 entity.Property(x => x.CountryCode)
                     .HasMaxLength(2);
 
+                entity.Property(x => x.CountryChangedAtUtc)
+                    .HasColumnType("timestamp with time zone")
+                    .IsRequired(false);
+
                 entity.Property(x => x.TokenVersion)
                     .HasDefaultValue(0)
                     .IsRequired();

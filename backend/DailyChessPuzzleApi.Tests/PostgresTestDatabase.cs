@@ -82,7 +82,8 @@ internal sealed class PostgresTestDatabase : IAsyncDisposable
             new NpgsqlConnectionStringBuilder(
                 adminBuilder.ConnectionString)
             {
-                SearchPath = schema
+                SearchPath = schema,
+                Pooling = false
             };
 
         var database = new PostgresTestDatabase(

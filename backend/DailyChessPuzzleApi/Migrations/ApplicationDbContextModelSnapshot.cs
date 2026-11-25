@@ -517,6 +517,9 @@ namespace DailyChessPuzzleApi.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime?>("CountryChangedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("CountryCode")
                         .HasMaxLength(2)
                         .HasColumnType("character varying(2)");
