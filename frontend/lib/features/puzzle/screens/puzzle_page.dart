@@ -36,6 +36,8 @@ class PuzzlePageState extends State<PuzzlePage> {
   static const Color _primary = Color(0xFFB7D7A8);
   static const Color _secondary = Color(0xFFD6B46A);
   static const int _bonusDurationSeconds = 300;
+  static const _opponentReplyDelay = Duration(milliseconds: 600);
+  static const _opponentAnimationDelay = Duration(milliseconds: 300);
 
   late final PuzzleApiService _puzzleApiService =
       widget.puzzleApiService ?? PuzzleApiService();
@@ -858,21 +860,13 @@ class PuzzlePageState extends State<PuzzlePage> {
         return;
       }
 
-      if (playedMoves.length > oldMoveCount + 1) {
-        await Future.delayed(
-          const Duration(milliseconds: 500),
-        );
-
-        if (!_isCurrentGeneration(generation)) return;
-      }
-
       final playerMoves = playedMoves
           .take(oldMoveCount + 1)
           .toList();
 
       final playerPosition = _buildPositionFromPlayedMoves(
         _startingPosition!.fen,
-        playedMoves.skip(1).toList(),
+        playerMoves.skip(1).toList(),
       );
 
       _position = playerPosition;
@@ -888,9 +882,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       );
 
       if (playedMoves.length > oldMoveCount + 1) {
-        await Future.delayed(
-          const Duration(milliseconds: 500),
-        );
+        await Future.delayed(_opponentReplyDelay);
 
         if (!_isCurrentGeneration(generation)) return;
       }
@@ -917,6 +909,11 @@ class PuzzlePageState extends State<PuzzlePage> {
         animate: true,
         resetPremove: true,
       );
+
+      if (playedMoves.length > oldMoveCount + 1) {
+        await Future.delayed(_opponentAnimationDelay);
+        if (!_isCurrentGeneration(generation)) return;
+      }
 
       if (serverCompleted) {
         await _finishPuzzle(
@@ -1618,9 +1615,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       );
 
       if (playedMoves.length > oldMoveCount + 1) {
-        await Future.delayed(
-          const Duration(milliseconds: 500),
-        );
+        await Future.delayed(_opponentReplyDelay);
 
         if (!_isCurrentGeneration(generation)) return;
       }
@@ -1644,6 +1639,11 @@ class PuzzlePageState extends State<PuzzlePage> {
         animate: true,
         resetPremove: true,
       );
+
+      if (playedMoves.length > oldMoveCount + 1) {
+        await Future.delayed(_opponentAnimationDelay);
+        if (!_isCurrentGeneration(generation)) return;
+      }
 
       setState(() {
         _isBonusLoading = false;
@@ -1952,12 +1952,15 @@ class PuzzlePageState extends State<PuzzlePage> {
                           child: Stack(
                             alignment: Alignment.center,
                             children: [
-                              Chessboard(
-                                key: ValueKey('daily-puzzle-$_hasStarted'),
-                                controller: _controller!,
-                                size: boardSize,
-                                orientation: _playerSide,
-                                onMove: _onMove,
+                              AbsorbPointer(
+                                absorbing: _isSubmitting,
+                                child: Chessboard(
+                                  key: ValueKey('daily-puzzle-$_hasStarted'),
+                                  controller: _controller!,
+                                  size: boardSize,
+                                  orientation: _playerSide,
+                                  onMove: _onMove,
+                                ),
                               ),
                               _buildWrongMoveHighlight(boardSize, _playerSide),
                               _buildWrongMoveWarning(),
@@ -2143,12 +2146,15 @@ class PuzzlePageState extends State<PuzzlePage> {
                       height: boardSize,
                       child: Stack(
                         children: [
-                          Chessboard(
-                            key: ValueKey('bonus-puzzle-$_isBonusStarted'),
-                            controller: controller,
-                            size: boardSize,
-                            orientation: _bonusPlayerSide,
-                            onMove: _onMove,
+                          AbsorbPointer(
+                            absorbing: _isBonusLoading,
+                            child: Chessboard(
+                              key: ValueKey('bonus-puzzle-$_isBonusStarted'),
+                              controller: controller,
+                              size: boardSize,
+                              orientation: _bonusPlayerSide,
+                              onMove: _onMove,
+                            ),
                           ),
                           _buildWrongMoveHighlight(boardSize, _bonusPlayerSide),
                           _buildWrongMoveWarning(),
