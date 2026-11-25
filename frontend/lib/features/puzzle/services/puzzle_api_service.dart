@@ -65,6 +65,7 @@ class PuzzleApiService {
     required int sessionId,
     required String uci,
     required String clientId,
+    required int expectedMoveIndex,
   }) async {
     final response = await _dio.post(
       ApiConstants.submitPuzzleMoveEndpoint,
@@ -72,6 +73,7 @@ class PuzzleApiService {
         'sessionId': sessionId,
         'uci': uci,
         'clientId': clientId,
+        'expectedMoveIndex': expectedMoveIndex,
       },
     );
 
@@ -129,11 +131,13 @@ class PuzzleApiService {
   // Bonus bulmacaya hamle gönder.
   Future<ApiResponse<PuzzleActionResult>> submitBonusMove({
     required String uci,
+    required int expectedMoveIndex,
   }) async {
     final response = await _dio.post(
       ApiConstants.submitBonusMoveEndpoint,
       data: {
         'uci': uci,
+        'expectedMoveIndex': expectedMoveIndex,
       },
     );
 

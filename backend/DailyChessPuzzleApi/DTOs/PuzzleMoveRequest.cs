@@ -1,5 +1,4 @@
-﻿
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace DailyChessPuzzleApi.DTOs
 {
@@ -16,5 +15,9 @@ namespace DailyChessPuzzleApi.DTOs
         [Required]
         [StringLength(10, MinimumLength = 4)]
         public string Uci { get; set; } = string.Empty;
+
+        // İstemcinin hamleyi gönderdiği sıradaki hamle indeksi.
+        [Range(0, int.MaxValue)]
+        public int? ExpectedMoveIndex { get; set; }
     }
 }

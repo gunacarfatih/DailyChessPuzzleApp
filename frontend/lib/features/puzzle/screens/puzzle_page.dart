@@ -791,6 +791,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
 
     final generation = _puzzleGeneration;
+    final expectedMoveIndex = _nextMoveIndex;
 
     setState(() {
       _clearWrongMoveHighlight();
@@ -806,6 +807,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         sessionId: sessionId,
         uci: move.uci,
         clientId: clientId,
+        expectedMoveIndex: expectedMoveIndex,
       );
 
       if (!_isCurrentGeneration(generation)) return;
@@ -1515,6 +1517,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
 
     final generation = _puzzleGeneration;
+    final expectedMoveIndex = _bonusNextMoveIndex;
 
     final position = _bonusPosition;
     final bonus = _bonusPuzzle;
@@ -1534,6 +1537,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     try {
       final response = await _puzzleApiService.submitBonusMove(
         uci: move.uci,
+        expectedMoveIndex: expectedMoveIndex,
       );
 
       if (!_isCurrentGeneration(generation)) return;

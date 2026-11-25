@@ -274,6 +274,23 @@ namespace DailyChessPuzzleApi.Services
                         score: completedScore);
                 }
 
+                if (request.ExpectedMoveIndex.HasValue)
+                {
+                    var requestedIndex = request.ExpectedMoveIndex.Value;
+
+                    if (requestedIndex > session.CurrentMoveIndex)
+                    {
+                        throw new AppException(409, "INVALID_MOVE_INDEX");
+                    }
+
+                    if (requestedIndex < session.CurrentMoveIndex)
+                    {
+                        await transaction.CommitAsync(cancellationToken);
+
+                        return ToSessionResponse(session);
+                    }
+                }
+
                 var expectedMove = moves[session.CurrentMoveIndex];
 
                 if (!string.Equals(
@@ -535,6 +552,23 @@ namespace DailyChessPuzzleApi.Services
                     return ToBonusSessionResponse(assignment);
                 }
 
+                if (request.ExpectedMoveIndex.HasValue)
+                {
+                    var requestedIndex = request.ExpectedMoveIndex.Value;
+
+                    if (requestedIndex > assignment.CurrentMoveIndex)
+                    {
+                        throw new AppException(409, "INVALID_MOVE_INDEX");
+                    }
+
+                    if (requestedIndex < assignment.CurrentMoveIndex)
+                    {
+                        await transaction.CommitAsync(cancellationToken);
+
+                        return ToBonusSessionResponse(assignment);
+                    }
+                }
+
                 var expectedMove = moves[assignment.CurrentMoveIndex];
 
                 if (!string.Equals(
@@ -663,21 +697,21 @@ namespace DailyChessPuzzleApi.Services
 
             try
             {
-                var assignment = await _context.BonusPuzzleAssignments
-                    .FromSqlInterpolated(
-                        $"""
-                        SELECT *
-                        FROM "BonusPuzzleAssignments"
-                        WHERE "UserId" = {userId}
-                          AND "PuzzleDate" = {today}
-                        FOR UPDATE
-                        """)
-                    .Include(x => x.Puzzle)
-                    .Include(x => x.PuzzleAttempt)
-                    .FirstOrDefaultAsync(cancellationToken);
+                var assignment = await GetLockedBonusAssignmentAsync(
+                    userId,
+                    today,
+                    cancellationToken);
 
                 if (assignment == null)
                     throw new KeyNotFoundException("BONUS_NOT_FOUND");
+
+                if (assignment.PuzzleAttemptId.HasValue &&
+                    assignment.PuzzleAttempt == null)
+                {
+                    throw new AppException(
+                        500,
+                        "BONUS_ATTEMPT_NOT_FOUND");
+                }
 
                 if (assignment.PuzzleAttempt != null)
                 {
