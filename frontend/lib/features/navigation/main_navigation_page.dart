@@ -1,4 +1,3 @@
-
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -18,15 +17,14 @@ class MainNavigationPage extends StatefulWidget {
   const MainNavigationPage({super.key});
 
   @override
-  State<MainNavigationPage> createState() =>
-      _MainNavigationPageState();
+  State<MainNavigationPage> createState() => _MainNavigationPageState();
 }
 
-class _MainNavigationPageState extends State<MainNavigationPage> {
+class _MainNavigationPageState extends State<MainNavigationPage>
+    with WidgetsBindingObserver {
   int _selectedIndex = 0;
 
-  final GlobalKey<HomePageState> _homePageKey =
-  GlobalKey<HomePageState>();
+  final GlobalKey<HomePageState> _homePageKey = GlobalKey<HomePageState>();
 
   final GlobalKey<PuzzlePageState> _puzzlePageKey =
   GlobalKey<PuzzlePageState>();
@@ -38,8 +36,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   GlobalKey<ProfilePageState>();
 
   // Tek bir SignalR servis örneği kullanıyoruz.
-  final LeaderboardSignalRService _signalRService =
-  LeaderboardSignalRService();
+  final LeaderboardSignalRService _signalRService = LeaderboardSignalRService();
 
   // Eş zamanlı SignalR bağlantı güncellemelerini önler.
   Future<void>? _signalRUpdateFuture;
@@ -54,32 +51,35 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     ),
     PuzzlePage(key: _puzzlePageKey),
     LeaderboardPage(key: _leaderboardPageKey),
-    ProfilePage(
-      key: _profilePageKey,
-      onAuthChanged: _handleAuthChanged,
-    ),
+    ProfilePage(key: _profilePageKey, onAuthChanged: _handleAuthChanged),
   ];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     // SignalR bildirim callback'lerini tanımla.
     _signalRService.onLeaderboardUpdated = () {
       if (kDebugMode) {
-        debugPrint(
-          'SIGNALR CALLBACK: onLeaderboardUpdated çalıştı.',
-        );
+        debugPrint('SIGNALR CALLBACK: onLeaderboardUpdated çalıştı.');
       }
 
       _refreshLeaderboard();
     };
 
-    _signalRService.onConnectionRestored =
-        _refreshLeaderboard;
+    _signalRService.onConnectionRestored = _refreshLeaderboard;
 
     // Uygulama açıldığında oturum durumunu kontrol et.
     _updateSignalRConnection();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(context.read<AuthProvider>().syncCountryFromDevice());
+      unawaited(_updateSignalRConnection());
+    }
   }
 
   @override
@@ -106,7 +106,9 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Oturumunuz sona erdi. Yeniden giriş yapın.')),
+          const SnackBar(
+            content: Text('Oturumunuz sona erdi. Yeniden giriş yapın.'),
+          ),
         );
       }
     });
@@ -135,8 +137,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
   // SignalR bağlantı güncellemelerini sıraya alır.
   Future<void> _updateSignalRConnection() {
-    final previousUpdate =
-        _signalRUpdateFuture ?? Future<void>.value();
+    final previousUpdate = _signalRUpdateFuture ?? Future<void>.value();
 
     final update = previousUpdate.then(
           (_) => _updateSignalRConnectionInternal(),
@@ -152,7 +153,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   }
 
   // Provider üzerinden oturum durumunu kontrol eder
-// ve SignalR bağlantısını günceller.
+  // ve SignalR bağlantısını günceller.
   Future<void> _updateSignalRConnectionInternal() async {
     try {
       final authProvider = context.read<AuthProvider>();
@@ -164,9 +165,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
       await _signalRService.connect();
     } catch (error) {
       if (kDebugMode) {
-        debugPrint(
-          'SignalR bağlantı güncelleme hatası: $error',
-        );
+        debugPrint('SignalR bağlantı güncelleme hatası: $error');
       }
     }
   }
@@ -174,9 +173,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   // Liderlik tablosunu API üzerinden yeniler.
   void _refreshLeaderboard() {
     if (kDebugMode) {
-      debugPrint(
-        'NAVIGATION: Liderlik tablosu yenileniyor.',
-      );
+      debugPrint('NAVIGATION: Liderlik tablosu yenileniyor.');
     }
 
     if (!mounted) return;
@@ -212,6 +209,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _observedAuthProvider?.removeListener(_handleAuthProviderChanged);
     // Sayfa kapatılırken callback'leri temizle.
     _signalRService.onLeaderboardUpdated = null;
@@ -226,10 +224,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _pages,
-      ),
+      body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _navigateTo,

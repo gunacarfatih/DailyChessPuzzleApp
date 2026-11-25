@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -15,10 +14,7 @@ import 'password_management_page.dart';
 class ProfilePage extends StatefulWidget {
   final Future<void> Function()? onAuthChanged;
 
-  const ProfilePage({
-    super.key,
-    this.onAuthChanged,
-  });
+  const ProfilePage({super.key, this.onAuthChanged});
 
   @override
   State<ProfilePage> createState() => ProfilePageState();
@@ -26,14 +22,12 @@ class ProfilePage extends StatefulWidget {
 
 class ProfilePageState extends State<ProfilePage> {
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
-  final TextEditingController _countryController = TextEditingController();
   final UserStatsApiService _userStatsApiService = UserStatsApiService();
 
   bool _isLoading = true;
   bool _isLoggedIn = false;
   bool _isLoggingOut = false;
   bool _hasPassword = false;
-  bool _isSavingCountry = false;
 
   String? _errorMessage;
 
@@ -85,7 +79,6 @@ class ProfilePageState extends State<ProfilePage> {
       final lastName = authProvider.lastName;
       final userId = authProvider.userId;
       final hasPassword = authProvider.hasPassword;
-      final countryCode = authProvider.countryCode;
 
       if (!mounted) return;
 
@@ -108,8 +101,8 @@ class ProfilePageState extends State<ProfilePage> {
             _lastName = lastName;
             _userId = userId;
             _hasPassword = hasPassword;
-            _errorMessage = statsResponse.message ??
-                'Profil bilgileri alınamadı.';
+            _errorMessage =
+                statsResponse.message ?? 'Profil bilgileri alınamadı.';
             _isLoading = false;
           });
 
@@ -130,7 +123,6 @@ class ProfilePageState extends State<ProfilePage> {
         _lastName = lastName;
         _userId = userId;
         _hasPassword = hasPassword;
-        _countryController.text = countryCode ?? '';
         _profileData = currentUser;
         _isLoading = false;
       });
@@ -142,42 +134,9 @@ class ProfilePageState extends State<ProfilePage> {
       }
 
       setState(() {
-        _errorMessage =
-        'Profil bilgileri alınırken bir hata oluştu.';
+        _errorMessage = 'Profil bilgileri alınırken bir hata oluştu.';
         _isLoading = false;
       });
-    }
-  }
-
-  Future<void> _saveCountryCode() async {
-    final value = _countryController.text.trim().toUpperCase();
-    if (value.isNotEmpty && !RegExp(r'^[A-Z]{2}$').hasMatch(value)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('İki harfli ülke kodu gir. Örn: TR')),
-      );
-      return;
-    }
-
-    setState(() => _isSavingCountry = true);
-    try {
-      final result = await context.read<AuthProvider>().updateCountryCode(
-            value.isEmpty ? null : value,
-          );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.success
-              ? 'Ülke bilgisi güncellendi.'
-              : result.message ?? 'Ülke bilgisi güncellenemedi.'),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ülke bilgisi güncellenemedi.')),
-      );
-    } finally {
-      if (mounted) setState(() => _isSavingCountry = false);
     }
   }
 
@@ -198,7 +157,8 @@ class ProfilePageState extends State<ProfilePage> {
             child: const Text('İptal'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, passwordController.text),
+            onPressed: () =>
+                Navigator.pop(dialogContext, passwordController.text),
             child: const Text('Devam et'),
           ),
         ],
@@ -209,14 +169,16 @@ class ProfilePageState extends State<ProfilePage> {
 
     try {
       final result = await context.read<AuthProvider>().linkGoogleAccount(
-            currentPassword: password,
-          );
+        currentPassword: password,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result.success
-              ? 'Google hesabı bağlandı.'
-              : result.message ?? 'Google hesabı bağlanamadı.'),
+          content: Text(
+            result.success
+                ? 'Google hesabı bağlandı.'
+                : result.message ?? 'Google hesabı bağlanamadı.',
+          ),
         ),
       );
     } catch (_) {
@@ -260,9 +222,7 @@ class ProfilePageState extends State<ProfilePage> {
   Future<void> _openLoginPage() async {
     final result = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const LoginPage(),
-      ),
+      MaterialPageRoute(builder: (_) => const LoginPage()),
     );
 
     if (!mounted) return;
@@ -282,9 +242,7 @@ class ProfilePageState extends State<ProfilePage> {
   Future<void> _openRegisterPage() async {
     final result = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const RegisterPage(),
-      ),
+      MaterialPageRoute(builder: (_) => const RegisterPage()),
     );
 
     if (!mounted) return;
@@ -422,9 +380,7 @@ class ProfilePageState extends State<ProfilePage> {
       appBar: AppBar(
         title: const Text(
           'Profilim',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
@@ -435,18 +391,13 @@ class ProfilePageState extends State<ProfilePage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: refreshProfile,
-        child: _buildBody(),
-      ),
+      body: RefreshIndicator(onRefresh: refreshProfile, child: _buildBody()),
     );
   }
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_errorMessage != null) {
@@ -459,10 +410,7 @@ class ProfilePageState extends State<ProfilePage> {
       children: [
         _buildProfileHeader(),
         const SizedBox(height: 20),
-        if (_isLoggedIn)
-          _buildLoggedInActions()
-        else
-          _buildGuestActions(),
+        if (_isLoggedIn) _buildLoggedInActions() else _buildGuestActions(),
         const SizedBox(height: 24),
         _buildSectionTitle('İstatistikler'),
         const SizedBox(height: 14),
@@ -472,8 +420,6 @@ class ProfilePageState extends State<ProfilePage> {
         const SizedBox(height: 14),
         _buildPlayerInformation(),
         if (_isLoggedIn) ...[
-          const SizedBox(height: 16),
-          _buildCountryEditor(),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: _linkGoogleAccount,
@@ -487,60 +433,22 @@ class ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _buildCountryEditor() {
-    return Row(
-      children: [
-        Expanded(
-          child: TextField(
-            controller: _countryController,
-            textCapitalization: TextCapitalization.characters,
-            maxLength: 2,
-            decoration: const InputDecoration(
-              labelText: 'Ülke kodu',
-              hintText: 'TR',
-              counterText: '',
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        FilledButton(
-          onPressed: _isSavingCountry ? null : _saveCountryCode,
-          child: _isSavingCountry
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Kaydet'),
-        ),
-      ],
-    );
-  }
-
   @override
   void dispose() {
-    _countryController.dispose();
     super.dispose();
   }
 
   Widget _buildProfileHeader() {
-    final displayName = _isLoggedIn
-        ? _displayFullName
-        : 'Satranç Oyuncusu';
+    final displayName = _isLoggedIn ? _displayFullName : 'Satranç Oyuncusu';
 
-    final subtitle = _isLoggedIn
-        ? (_email ?? '')
-        : _displayClientId;
+    final subtitle = _isLoggedIn ? (_email ?? '') : _displayClientId;
 
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         gradient: const LinearGradient(
-          colors: [
-            Color(0xFF304438),
-            Color(0xFF1B2923),
-          ],
+          colors: [Color(0xFF304438), Color(0xFF1B2923)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -551,13 +459,9 @@ class ProfilePageState extends State<ProfilePage> {
             width: 92,
             height: 92,
             decoration: BoxDecoration(
-              color: const Color(0xFFB7D7A8)
-                  .withValues(alpha: 0.15),
+              color: const Color(0xFFB7D7A8).withValues(alpha: 0.15),
               shape: BoxShape.circle,
-              border: Border.all(
-                color: const Color(0xFFB7D7A8),
-                width: 2,
-              ),
+              border: Border.all(color: const Color(0xFFB7D7A8), width: 2),
             ),
             child: Icon(
               _isLoggedIn ? Icons.verified_user : Icons.person,
@@ -569,46 +473,32 @@ class ProfilePageState extends State<ProfilePage> {
           Text(
             displayName,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 21,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 7),
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white60,
-              fontSize: 12,
-            ),
+            style: const TextStyle(color: Colors.white60, fontSize: 12),
           ),
           const SizedBox(height: 14),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 7,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
             decoration: BoxDecoration(
-              color: const Color(0xFFB7D7A8)
-                  .withValues(alpha: 0.15),
+              color: const Color(0xFFB7D7A8).withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  _isLoggedIn
-                      ? Icons.verified
-                      : Icons.workspace_premium,
+                  _isLoggedIn ? Icons.verified : Icons.workspace_premium,
                   size: 16,
                   color: const Color(0xFFD6B46A),
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  _isLoggedIn
-                      ? 'Kayıtlı oyuncu'
-                      : 'Misafir oyuncu',
+                  _isLoggedIn ? 'Kayıtlı oyuncu' : 'Misafir oyuncu',
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color(0xFFB7D7A8),
@@ -629,26 +519,19 @@ class ProfilePageState extends State<ProfilePage> {
       decoration: BoxDecoration(
         color: const Color(0xFF26382D),
         borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: Colors.white10,
-        ),
+        border: Border.all(color: Colors.white10),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Row(
             children: [
-              Icon(
-                Icons.info_outline,
-                color: Color(0xFFD6B46A),
-              ),
+              Icon(Icons.info_outline, color: Color(0xFFD6B46A)),
               SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'Misafir hesabı kullanıyorsun.',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
             ],
@@ -657,11 +540,7 @@ class ProfilePageState extends State<ProfilePage> {
           const Text(
             'Hesap oluşturarak puanlarını kalıcı olarak '
                 'saklayabilir ve farklı cihazlardan erişebilirsin.',
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-              height: 1.5,
-            ),
+            style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
           ),
           const SizedBox(height: 18),
           SizedBox(
@@ -698,16 +577,11 @@ class ProfilePageState extends State<ProfilePage> {
         children: [
           const Row(
             children: [
-              Icon(
-                Icons.check_circle,
-                color: Color(0xFFB7D7A8),
-              ),
+              Icon(Icons.check_circle, color: Color(0xFFB7D7A8)),
               SizedBox(width: 10),
               Text(
                 'Hesabın aktif',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -717,11 +591,7 @@ class ProfilePageState extends State<ProfilePage> {
             child: OutlinedButton.icon(
               onPressed: _openPasswordManagementPage,
               icon: const Icon(Icons.lock_outline),
-              label: Text(
-                _hasPassword
-                    ? 'Şifre Değiştir'
-                    : 'Şifre Belirle',
-              ),
+              label: Text(_hasPassword ? 'Şifre Değiştir' : 'Şifre Belirle'),
             ),
           ),
           const SizedBox(height: 10),
@@ -733,16 +603,10 @@ class ProfilePageState extends State<ProfilePage> {
                   ? const SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                ),
+                child: CircularProgressIndicator(strokeWidth: 2),
               )
                   : const Icon(Icons.logout),
-              label: Text(
-                _isLoggingOut
-                    ? 'Çıkış yapılıyor...'
-                    : 'Çıkış Yap',
-              ),
+              label: Text(_isLoggingOut ? 'Çıkış yapılıyor...' : 'Çıkış Yap'),
             ),
           ),
         ],
@@ -753,10 +617,7 @@ class ProfilePageState extends State<ProfilePage> {
   Widget _buildSectionTitle(String title) {
     return Text(
       title,
-      style: const TextStyle(
-        fontSize: 19,
-        fontWeight: FontWeight.bold,
-      ),
+      style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
     );
   }
 
@@ -792,9 +653,7 @@ class ProfilePageState extends State<ProfilePage> {
         _buildStatisticCard(
           icon: Icons.leaderboard_rounded,
           title: 'Genel Sıralama',
-          value: rank != null && rank > 0
-              ? '#$rank'
-              : 'Henüz yok',
+          value: rank != null && rank > 0 ? '#$rank' : 'Henüz yok',
           color: const Color(0xFF8DB9D9),
           fullWidth: true,
         ),
@@ -815,9 +674,7 @@ class ProfilePageState extends State<ProfilePage> {
       decoration: BoxDecoration(
         color: const Color(0xFF1B2923),
         borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: Colors.white10,
-        ),
+        border: Border.all(color: Colors.white10),
       ),
       child: Row(
         children: [
@@ -828,11 +685,7 @@ class ProfilePageState extends State<ProfilePage> {
               color: color.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: Icon(
-              icon,
-              color: color,
-              size: 23,
-            ),
+            child: Icon(icon, color: color, size: 23),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -841,10 +694,7 @@ class ProfilePageState extends State<ProfilePage> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Colors.white54,
-                  ),
+                  style: const TextStyle(fontSize: 11, color: Colors.white54),
                 ),
                 const SizedBox(height: 5),
                 Text(
@@ -863,6 +713,10 @@ class ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildPlayerInformation() {
+    final countryCode = context.select<AuthProvider, String?>(
+          (provider) => provider.countryCode,
+    );
+
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF1B2923),
@@ -873,14 +727,9 @@ class ProfilePageState extends State<ProfilePage> {
           _buildInformationRow(
             icon: Icons.fingerprint,
             title: 'Oyuncu kimliği',
-            value: _isLoggedIn
-                ? 'Hesap #${_userId ?? '-'}'
-                : _displayClientId,
+            value: _isLoggedIn ? 'Hesap #${_userId ?? '-'}' : _displayClientId,
           ),
-          const Divider(
-            height: 1,
-            color: Colors.white10,
-          ),
+          const Divider(height: 1, color: Colors.white10),
           if (_isLoggedIn) ...[
             _buildInformationRow(
               icon: Icons.badge_outlined,
@@ -889,10 +738,7 @@ class ProfilePageState extends State<ProfilePage> {
                   ? _firstName!.trim()
                   : '-',
             ),
-            const Divider(
-              height: 1,
-              color: Colors.white10,
-            ),
+            const Divider(height: 1, color: Colors.white10),
             _buildInformationRow(
               icon: Icons.badge_outlined,
               title: 'Soyad',
@@ -900,38 +746,32 @@ class ProfilePageState extends State<ProfilePage> {
                   ? _lastName!.trim()
                   : '-',
             ),
-            const Divider(
-              height: 1,
-              color: Colors.white10,
-            ),
+            const Divider(height: 1, color: Colors.white10),
             _buildInformationRow(
               icon: Icons.person_outline,
               title: 'Kullanıcı adı',
               value: _username ?? '-',
             ),
-            const Divider(
-              height: 1,
-              color: Colors.white10,
-            ),
+            const Divider(height: 1, color: Colors.white10),
             _buildInformationRow(
               icon: Icons.email_outlined,
               title: 'E-posta',
               value: _email ?? '-',
             ),
-            const Divider(
-              height: 1,
-              color: Colors.white10,
+            const Divider(height: 1, color: Colors.white10),
+            _buildInformationRow(
+              icon: Icons.public,
+              title: 'Hesap ülkesi',
+              value: countryCode ?? 'Henüz belirlenmedi',
             ),
+            const Divider(height: 1, color: Colors.white10),
           ],
           _buildInformationRow(
             icon: Icons.emoji_events_outlined,
             title: 'Sıralama dönemi',
             value: 'Tüm zamanlar',
           ),
-          const Divider(
-            height: 1,
-            color: Colors.white10,
-          ),
+          const Divider(height: 1, color: Colors.white10),
           _buildInformationRow(
             icon: Icons.check_circle_outline,
             title: 'Oyuncu durumu',
@@ -950,25 +790,15 @@ class ProfilePageState extends State<ProfilePage> {
     required String value,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 17,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
       child: Row(
         children: [
-          Icon(
-            icon,
-            size: 20,
-            color: const Color(0xFFB7D7A8),
-          ),
+          Icon(icon, size: 20, color: const Color(0xFFB7D7A8)),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Colors.white70,
-              ),
+              style: const TextStyle(fontSize: 13, color: Colors.white70),
             ),
           ),
           Flexible(
@@ -976,10 +806,7 @@ class ProfilePageState extends State<ProfilePage> {
               value,
               textAlign: TextAlign.end,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -997,10 +824,7 @@ class ProfilePageState extends State<ProfilePage> {
       child: const Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            Icons.info_outline,
-            color: Color(0xFFB7D7A8),
-          ),
+          Icon(Icons.info_outline, color: Color(0xFFB7D7A8)),
           SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -1023,20 +847,14 @@ class ProfilePageState extends State<ProfilePage> {
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 140),
-        const Icon(
-          Icons.cloud_off_outlined,
-          size: 52,
-          color: Colors.white54,
-        ),
+        const Icon(Icons.cloud_off_outlined, size: 52, color: Colors.white54),
         const SizedBox(height: 16),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 28),
           child: Text(
             _errorMessage ?? 'Profil bilgileri alınamadı.',
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-            ),
+            style: const TextStyle(color: Colors.white70),
           ),
         ),
         const SizedBox(height: 20),

@@ -1,18 +1,28 @@
 import 'package:flutter/foundation.dart';
 
+import 'dart:async';
+
+import '../core/services/country_sync_service.dart';
+import '../core/services/location_service.dart';
 import '../core/models/api_response.dart';
 import '../core/storage/auth_storage.dart';
 import '../features/auth/models/auth_response.dart';
 import '../features/auth/services/auth_api_service.dart';
 
 class AuthProvider extends ChangeNotifier {
-  AuthProvider({AuthApiService? authApiService})
-      : _authApiService = authApiService ?? AuthApiService(),
+  AuthProvider({
+    AuthApiService? authApiService,
+    LocationService? locationService,
+  }) : _authApiService = authApiService ?? AuthApiService(),
+        _countrySyncService = CountrySyncService(
+          countryLookup: (locationService ?? LocationService()).getCountryCode,
+        ),
         _authStorage = AuthStorage.instance {
     AuthStorage.onSessionExpired = _handleSessionExpired;
   }
 
   final AuthApiService _authApiService;
+  final CountrySyncService _countrySyncService;
   final AuthStorage _authStorage;
 
   // Oturum durumu.
@@ -30,6 +40,7 @@ class AuthProvider extends ChangeNotifier {
 
   // Aynı oturuma ait eş zamanlı logout işlemlerini birleştirir.
   final Map<int, Future<void>> _logoutOperations = {};
+  Future<void>? _countrySyncOperation;
 
   // Devam eden giriş işleminin oturum nesli.
   int? _pendingLoginGeneration;
@@ -58,8 +69,7 @@ class AuthProvider extends ChangeNotifier {
   // Provider'ın ve ilgili oturumun hâlâ geçerli
   // olup olmadığını kontrol eder.
   bool _isCurrentSession(int generation) {
-    return !_isDisposed &&
-        _authStorage.isCurrentGeneration(generation);
+    return !_isDisposed && _authStorage.isCurrentGeneration(generation);
   }
 
   void _ensureCurrentSession(int generation) {
@@ -90,6 +100,9 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       await _loadSession(generation);
+      if (_isCurrentSession(generation) && _isLoggedIn) {
+        unawaited(syncCountryFromDevice());
+      }
     } catch (_) {
       // Eski oturuma ait başlatma işlemi yeni oturumun
       // initialization durumunu değiştiremez.
@@ -97,6 +110,55 @@ class AuthProvider extends ChangeNotifier {
         _initializationFuture = null;
         rethrow;
       }
+    }
+  }
+
+  /// Best-effort country sync. Location and network errors are deliberately
+  /// ignored so they never prevent login or puzzle play.
+  Future<void> syncCountryFromDevice({bool force = false}) {
+    if (_isDisposed || !_isLoggedIn) return Future<void>.value();
+
+    final current = _countrySyncOperation;
+    if (current != null) return current;
+
+    final operation = _performCountrySync(force: force);
+    _countrySyncOperation = operation;
+    return operation.whenComplete(() {
+      if (identical(_countrySyncOperation, operation)) {
+        _countrySyncOperation = null;
+      }
+    });
+  }
+
+  Future<void> _performCountrySync({required bool force}) async {
+    final generation = _authStorage.sessionGeneration;
+    if (!_isCurrentSession(generation)) return;
+
+    try {
+      final deviceCountry = await _countrySyncService
+          .resolve(force: force)
+          .timeout(const Duration(seconds: 6));
+      if (deviceCountry == null || !_isCurrentSession(generation)) return;
+
+      final currentCountry = _countryCode?.trim().toUpperCase();
+      if (currentCountry == deviceCountry) return;
+
+      final result = await _authApiService
+          .updateCountryCode(deviceCountry)
+          .timeout(const Duration(seconds: 8));
+      if (!_isCurrentSession(generation) || !result.success) return;
+
+      await _authStorage.updateCountryCode(
+        deviceCountry,
+        expectedGeneration: generation,
+      );
+      if (!_isCurrentSession(generation)) return;
+
+      _countryCode = deviceCountry;
+      _notifySafely();
+    } catch (_) {
+      // Permission, GPS, network, cooldown and stale-session failures keep
+      // the existing account country and do not block the calling flow.
     }
   }
 
@@ -175,6 +237,8 @@ class AuthProvider extends ChangeNotifier {
 
     final operation = _authStorage.beginSessionChange();
     final generation = _authStorage.sessionGeneration;
+    _countrySyncService.reset();
+    _countrySyncOperation = null;
     _pendingLoginGeneration = generation;
     _initializationFuture = null;
     _clearUserData();
@@ -203,6 +267,9 @@ class AuthProvider extends ChangeNotifier {
         _ensureCurrentSession(generation);
         if (result.success && result.data != null) {
           await _loadSession(generation);
+          if (_isCurrentSession(generation) && _isLoggedIn) {
+            unawaited(syncCountryFromDevice());
+          }
         }
         _ensureCurrentSession(generation);
         return result;
@@ -224,14 +291,11 @@ class AuthProvider extends ChangeNotifier {
 
     final normalizedValue = countryCode?.trim().toUpperCase();
 
-    final normalized =
-    normalizedValue == null || normalizedValue.isEmpty
+    final normalized = normalizedValue == null || normalizedValue.isEmpty
         ? null
         : normalizedValue;
 
-    final result = await _authApiService.updateCountryCode(
-      normalized,
-    );
+    final result = await _authApiService.updateCountryCode(normalized);
 
     _ensureCurrentSession(generation);
 
@@ -271,9 +335,7 @@ class AuthProvider extends ChangeNotifier {
   // Ortak loading yönetimi.
   // Bir işlem tamamlandığında diğer işlemler devam ediyorsa
   // loading durumu kapatılmaz.
-  Future<T> _withLoading<T>(
-      Future<T> Function() action,
-      ) async {
+  Future<T> _withLoading<T>(Future<T> Function() action) async {
     if (_isDisposed) {
       throw StateError('AUTH_PROVIDER_DISPOSED');
     }
@@ -363,9 +425,7 @@ class AuthProvider extends ChangeNotifier {
     return _withLoading(() async {
       final generation = _authStorage.sessionGeneration;
 
-      final result = await _authApiService.resendVerification(
-        email: email,
-      );
+      final result = await _authApiService.resendVerification(email: email);
 
       _ensureCurrentSession(generation);
 
@@ -376,9 +436,8 @@ class AuthProvider extends ChangeNotifier {
   // Google ile giriş.
   Future<ApiResponse<AuthResponse>> loginWithGoogle() {
     return _performLogin(
-          (generation) => _authApiService.loginWithGoogle(
-        expectedGeneration: generation,
-      ),
+          (generation) =>
+          _authApiService.loginWithGoogle(expectedGeneration: generation),
     );
   }
 
@@ -481,8 +540,7 @@ class AuthProvider extends ChangeNotifier {
           await _authApiService.logout(
             forceSessionInvalidation: hasPendingLogin,
             onLocalSessionCleared: () {
-              final currentGeneration =
-                  _authStorage.sessionGeneration;
+              final currentGeneration = _authStorage.sessionGeneration;
 
               if (!_isCurrentSession(currentGeneration)) {
                 return;
@@ -506,15 +564,13 @@ class AuthProvider extends ChangeNotifier {
             },
           );
         } finally {
-          final currentGeneration =
-              _authStorage.sessionGeneration;
+          final currentGeneration = _authStorage.sessionGeneration;
 
           if (_isCurrentSession(currentGeneration) &&
               currentGeneration == generation + 1) {
             final token = await _authStorage.getAccessToken();
 
-            if (_isCurrentSession(currentGeneration) &&
-                token == null) {
+            if (_isCurrentSession(currentGeneration) && token == null) {
               _initializationFuture = null;
 
               _clearUserData();

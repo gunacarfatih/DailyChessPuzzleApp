@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:provider/provider.dart';
+
 import '../../../providers/auth_provider.dart';
 import '../../../providers/leaderboard_provider.dart';
 
@@ -17,11 +18,7 @@ import '../models/puzzle_action_result.dart';
 import '../services/puzzle_api_service.dart';
 
 class PuzzlePage extends StatefulWidget {
-  const PuzzlePage({
-    super.key,
-    this.puzzleApiService,
-    this.clientIdStorage,
-  });
+  const PuzzlePage({super.key, this.puzzleApiService, this.clientIdStorage});
 
   final PuzzleApiService? puzzleApiService;
   final ClientIdStorage? clientIdStorage;
@@ -94,7 +91,6 @@ class PuzzlePageState extends State<PuzzlePage> {
   // İlk başarılı günlük çözümün liderlik tablosuna kaydedilen puanı.
   int? _acceptedScore;
 
-
   // Bonus bulmaca
   BonusPuzzle? _bonusPuzzle;
 
@@ -123,19 +119,18 @@ class PuzzlePageState extends State<PuzzlePage> {
   int? _bonusScore;
 
   int get _liveScore {
-    final score = 1000 -
-        (_elapsedSeconds * 2) -
-        (_wrongMoves * 150) -
-        (_usedHint ? 250 : 0);
+    final score =
+        1000 -
+            (_elapsedSeconds * 2) -
+            (_wrongMoves * 150) -
+            (_usedHint ? 250 : 0);
 
     return score < 0 ? 0 : score;
   }
 
-  Side get _playerSide =>
-      _startingPosition?.turn ?? Side.white;
+  Side get _playerSide => _startingPosition?.turn ?? Side.white;
 
-  Side get _bonusPlayerSide =>
-      _bonusStartingPosition?.turn ?? Side.white;
+  Side get _bonusPlayerSide => _bonusStartingPosition?.turn ?? Side.white;
 
   bool get _canUseHint {
     final position = _position;
@@ -188,7 +183,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   // MainNavigationPage tarafından hesap değişiminde çağrılır.
-// Eski hesap isteklerini geçersiz kılar ve yeni bulmacayı yükler.
+  // Eski hesap isteklerini geçersiz kılar ve yeni bulmacayı yükler.
   void resetPuzzleForAccountChange() {
     if (!mounted) return;
 
@@ -233,6 +228,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     if (!mounted) return;
     _clearWrongMoveHighlight();
     final generation = _puzzleGeneration;
+
     setState(() => _wrongMoveUci = move.uci);
     _wrongMoveTimer = Timer(_wrongMoveDuration, () {
       if (!_isCurrentGeneration(generation)) return;
@@ -252,12 +248,16 @@ class PuzzlePageState extends State<PuzzlePage> {
             for (final square in squares)
               if (RegExp(r'^[a-h][1-8]$').hasMatch(square))
                 Positioned(
-                  left: squareSize * (orientation == Side.white
-                      ? square.codeUnitAt(0) - 97
-                      : 104 - square.codeUnitAt(0)),
-                  top: squareSize * (orientation == Side.white
-                      ? 8 - int.parse(square[1])
-                      : int.parse(square[1]) - 1),
+                  left:
+                  squareSize *
+                      (orientation == Side.white
+                          ? square.codeUnitAt(0) - 97
+                          : 104 - square.codeUnitAt(0)),
+                  top:
+                  squareSize *
+                      (orientation == Side.white
+                          ? 8 - int.parse(square[1])
+                          : int.parse(square[1]) - 1),
                   width: squareSize,
                   height: squareSize,
                   child: ColoredBox(
@@ -305,20 +305,14 @@ class PuzzlePageState extends State<PuzzlePage> {
     );
   }
 
-  Position _buildPositionFromPlayedMoves(
-      String fen,
-      List<String> playedMoves,
-      )
-  {
+  Position _buildPositionFromPlayedMoves(String fen, List<String> playedMoves) {
     Position position = Chess.fromSetup(Setup.parseFen(fen));
 
     for (final uci in playedMoves) {
       final move = NormalMove.fromUci(uci);
 
       if (!position.isLegal(move)) {
-        throw FormatException(
-          'Sunucudan geçersiz hamle geldi: $uci',
-        );
+        throw FormatException('Sunucudan geçersiz hamle geldi: $uci');
       }
 
       position = position.play(move);
@@ -330,22 +324,15 @@ class PuzzlePageState extends State<PuzzlePage> {
     return position;
   }
 
-  Position _positionAfterFirstMove(
-      String fen,
-      List<String> playedMoves,
-      ) {
-    final initialPosition = Chess.fromSetup(
-      Setup.parseFen(fen),
-    );
+  Position _positionAfterFirstMove(String fen, List<String> playedMoves) {
+    final initialPosition = Chess.fromSetup(Setup.parseFen(fen));
 
     if (playedMoves.isEmpty) return initialPosition;
 
     final firstMove = NormalMove.fromUci(playedMoves.first);
 
     if (!initialPosition.isLegal(firstMove)) {
-      throw FormatException(
-        'Başlangıç hamlesi geçersiz: ${playedMoves.first}',
-      );
+      throw FormatException('Başlangıç hamlesi geçersiz: ${playedMoves.first}');
     }
 
     return initialPosition.play(firstMove);
@@ -367,24 +354,17 @@ class PuzzlePageState extends State<PuzzlePage> {
 
   // Liderlik tablosunu güvenli şekilde yeniler.
   // Generation değişmişse eski hesaptan gelen işlem yenileme yapamaz.
-  Future<void> _refreshLeaderboardSafely({
-    int? generation,
-  }) async
-  {
+  Future<void> _refreshLeaderboardSafely({int? generation}) async {
     if (!mounted) return;
 
-    if (generation != null &&
-        !_isCurrentGeneration(generation)) {
+    if (generation != null && !_isCurrentGeneration(generation)) {
       return;
     }
 
     try {
-      await context
-          .read<LeaderboardProvider>()
-          .refreshLeaderboard();
+      await context.read<LeaderboardProvider>().refreshLeaderboard();
 
-      if (generation != null &&
-          !_isCurrentGeneration(generation)) {
+      if (generation != null && !_isCurrentGeneration(generation)) {
         return;
       }
     } catch (error, stackTrace) {
@@ -464,7 +444,6 @@ class PuzzlePageState extends State<PuzzlePage> {
       _sessionId = null;
       _sessionScore = null;
       _acceptedScore = null;
-
     });
 
     try {
@@ -487,9 +466,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
-        throw Exception(
-          response.message ?? 'Bulmaca bilgisi alınamadı.',
-        );
+        throw Exception(response.message ?? 'Bulmaca bilgisi alınamadı.');
       }
 
       final puzzle = response.data!;
@@ -508,9 +485,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         _isReplay = puzzle.isSolved;
         _isSolved = false;
 
-        _acceptedScore = isAuthenticated
-            ? puzzle.previousScore
-            : null;
+        _acceptedScore = isAuthenticated ? puzzle.previousScore : null;
 
         _feedback = puzzle.isSolved
             ? 'Bu bulmacayı daha önce tamamladın.'
@@ -534,14 +509,16 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _startPuzzle() async {
-    if (_hasStarted ||
-        _isLoading ||
-        _isSubmitting ||
-        _puzzle == null) {
+    if (_hasStarted || _isLoading || _isSubmitting || _puzzle == null) {
       return;
     }
 
     final generation = _puzzleGeneration;
+
+    // Best effort only; puzzle start never waits for location or network.
+    if (_isAuthenticated) {
+      unawaited(context.read<AuthProvider>().syncCountryFromDevice());
+    }
 
     _clearWrongMoveHighlight();
     final isReplay = _hasSubmitted;
@@ -577,8 +554,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       if (!_isCurrentGeneration(generation)) return;
 
-      final response =
-      await _puzzleApiService.startPuzzleSession(
+      final response = await _puzzleApiService.startPuzzleSession(
         clientId: clientId,
       );
 
@@ -587,9 +563,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _debugLog("START PUZZLE DATA: ${response.data}");
 
       if (!response.success || response.data == null) {
-        throw Exception(
-          response.message ?? 'Bulmaca oturumu başlatılamadı.',
-        );
+        throw Exception(response.message ?? 'Bulmaca oturumu başlatılamadı.');
       }
 
       final data = response.data!;
@@ -598,30 +572,20 @@ class PuzzlePageState extends State<PuzzlePage> {
       final fen = data.fen;
 
       if (sessionId == null) {
-        throw Exception(
-          'Sunucudan oturum numarası alınamadı.',
-        );
+        throw Exception('Sunucudan oturum numarası alınamadı.');
       }
 
       if (fen == null || fen.trim().isEmpty) {
-        throw Exception(
-          'Sunucu bulmaca oturumu için FEN bilgisi döndürmedi.',
-        );
+        throw Exception('Sunucu bulmaca oturumu için FEN bilgisi döndürmedi.');
       }
 
       final playedMoves = data.playedMoves;
 
-      final currentPosition = _buildPositionFromPlayedMoves(
-        fen,
-        playedMoves,
-      );
+      final currentPosition = _buildPositionFromPlayedMoves(fen, playedMoves);
 
       _debugLog('POSITION AFTER OPPONENT MOVE: ${currentPosition.fen}');
 
-      final startingPosition = _positionAfterFirstMove(
-        fen,
-        playedMoves,
-      );
+      final startingPosition = _positionAfterFirstMove(fen, playedMoves);
 
       final startedAtUtc = data.startedAtUtc;
 
@@ -653,9 +617,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       _controller?.dispose();
 
-      _controller = ChessboardController(
-        game: _buildGame(currentPosition),
-      );
+      _controller = ChessboardController(game: _buildGame(currentPosition));
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -669,9 +631,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           _hasStarted = false;
           _sessionScore = sessionScore;
 
-          if (!isReplay &&
-              _isAuthenticated &&
-              sessionScore != null) {
+          if (!isReplay && _isAuthenticated && sessionScore != null) {
             _acceptedScore = sessionScore;
           }
 
@@ -711,23 +671,18 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     final generation = _puzzleGeneration;
 
-    _timer = Timer.periodic(
-      const Duration(seconds: 1),
-          (_) {
-        if (!_isCurrentGeneration(generation) ||
-            _isSolved ||
-            !_hasStarted) {
-          return;
-        }
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_isCurrentGeneration(generation) || _isSolved || !_hasStarted) {
+        return;
+      }
 
-        setState(() {
-          _elapsedSeconds = (_dailyElapsedAtSync +
-              _dailyElapsedClock.elapsed.inSeconds)
-              .clamp(0, 86400)
-              .toInt();
-        });
-      },
-    );
+      setState(() {
+        _elapsedSeconds =
+            (_dailyElapsedAtSync + _dailyElapsedClock.elapsed.inSeconds)
+                .clamp(0, 86400)
+                .toInt();
+      });
+    });
   }
 
   void _stopTimer() {
@@ -751,19 +706,13 @@ class PuzzlePageState extends State<PuzzlePage> {
     );
   }
 
-  Future<void> _onMove(
-      Move move, {
-        bool? viaDragAndDrop,
-      }) async {
+  Future<void> _onMove(Move move, {bool? viaDragAndDrop}) async {
     if (_isBonusMode) {
       await _onBonusMove(move);
       return;
     }
 
-    if (!_hasStarted ||
-        _isSolved ||
-        _isLoading ||
-        _isSubmitting) {
+    if (!_hasStarted || _isSolved || _isLoading || _isSubmitting) {
       _restoreBoard();
       return;
     }
@@ -783,10 +732,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   Future<void> _submitDailyMove(Move move) async {
     final sessionId = _sessionId;
 
-    if (_isSubmitting ||
-        !_hasStarted ||
-        _isSolved ||
-        sessionId == null) {
+    if (_isSubmitting || !_hasStarted || _isSolved || sessionId == null) {
       return;
     }
 
@@ -823,8 +769,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             _hasSubmitted = true;
             _feedback = 'Bu oturum zaten tamamlanmış.';
           } else {
-            _feedback =
-                response.message ?? 'Hamle gönderilemedi.';
+            _feedback = response.message ?? 'Hamle gönderilemedi.';
           }
         });
 
@@ -862,9 +807,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         return;
       }
 
-      final playerMoves = playedMoves
-          .take(oldMoveCount + 1)
-          .toList();
+      final playerMoves = playedMoves.take(oldMoveCount + 1).toList();
 
       final playerPosition = _buildPositionFromPlayedMoves(
         _startingPosition!.fen,
@@ -918,10 +861,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       if (serverCompleted) {
-        await _finishPuzzle(
-          data,
-          generation: generation,
-        );
+        await _finishPuzzle(data, generation: generation);
         return;
       }
 
@@ -984,16 +924,13 @@ class PuzzlePageState extends State<PuzzlePage> {
       if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
-        throw Exception(
-          response.message ?? 'İpucu kullanılamadı.',
-        );
+        throw Exception(response.message ?? 'İpucu kullanılamadı.');
       }
 
       final data = response.data!;
       final hintSquare = data.hintSquare;
 
-      if (hintSquare == null ||
-          hintSquare.isEmpty) {
+      if (hintSquare == null || hintSquare.isEmpty) {
         throw Exception('Sunucu ipucu karesini döndürmedi.');
       }
 
@@ -1001,8 +938,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         _isSubmitting = false;
         _usedHint = true;
         _hintSquare = hintSquare;
-        _feedback =
-        'İpucu: $_hintSquare karesindeki taşı hareket ettir.';
+        _feedback = 'İpucu: $_hintSquare karesindeki taşı hareket ettir.';
       });
     } catch (error, stackTrace) {
       _debugLog('Günlük ipucu hatası: $error');
@@ -1020,8 +956,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   Future<void> _finishPuzzle(
       PuzzleActionResult data, {
         required int generation,
-      }) async
-  {
+      }) async {
     if (!_isCurrentGeneration(generation) || _isSolved) return;
 
     _stopTimer();
@@ -1031,9 +966,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _feedback = 'Bulmaca tamamlandı!';
     });
 
-    await Future.delayed(
-      const Duration(milliseconds: 1500),
-    );
+    await Future.delayed(const Duration(milliseconds: 1500));
 
     if (!_isCurrentGeneration(generation)) return;
 
@@ -1050,9 +983,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       _sessionScore = score;
 
-      if (!_isReplay &&
-          _isAuthenticated &&
-          score != null) {
+      if (!_isReplay && _isAuthenticated && score != null) {
         _acceptedScore = score;
       }
 
@@ -1066,9 +997,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     // Misafirler liderlik tablosunu yenilemez ve bonus yüklemez.
     // Tekrar çözüm de ilk günlük puanı değiştirmez.
     if (_isAuthenticated && !_isReplay) {
-      await _refreshLeaderboardSafely(
-        generation: generation,
-      );
+      await _refreshLeaderboardSafely(generation: generation);
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1082,8 +1011,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     if (position == null || _isSubmitting) return;
 
     setState(() {
-      _feedback =
-      'Oturum sunucuda devam ediyor. Hamlelerini göndermeye devam edebilirsin.';
+      _feedback = 'Oturum sunucuda devam ediyor. Hamlelerini göndermeye devam edebilirsin.';
     });
 
     _restoreBoard();
@@ -1094,9 +1022,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   // ------------------------------------------------------------
 
   Future<void> _loadBonusStatus() async {
-    if (!_isAuthenticated ||
-        _isBonusLoading ||
-        !mounted) {
+    if (!_isAuthenticated || _isBonusLoading || !mounted) {
       return;
     }
 
@@ -1174,9 +1100,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
-        throw Exception(
-          response.message ?? 'Bonus bulmaca bilgisi alınamadı.',
-        );
+        throw Exception(response.message ?? 'Bonus bulmaca bilgisi alınamadı.');
       }
 
       final bonus = response.data!;
@@ -1219,8 +1143,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           _isBonusCompleted = false;
           _isBonusExpired = false;
           _isBonusLoading = false;
-          _bonusFeedback =
-          'Hazır olduğunda bonus bulmacaya başlayabilirsin.';
+          _bonusFeedback = 'Hazır olduğunda bonus bulmacaya başlayabilirsin.';
         });
 
         return;
@@ -1238,15 +1161,9 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       final playedMoves = bonus.playedMoves;
 
-      final currentPosition = _buildPositionFromPlayedMoves(
-        fen,
-        playedMoves,
-      );
+      final currentPosition = _buildPositionFromPlayedMoves(fen, playedMoves);
 
-      final startingPosition = _positionAfterFirstMove(
-        fen,
-        playedMoves,
-      );
+      final startingPosition = _positionAfterFirstMove(fen, playedMoves);
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1256,8 +1173,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _bonusLastMove = _lastPlayedMove(playedMoves);
       _bonusNextMoveIndex = playedMoves.length;
       _bonusWrongMoves = bonus.wrongMoves;
-      _bonusRemainingSeconds =
-          bonus.remainingSeconds ?? _bonusDurationSeconds;
+      _bonusRemainingSeconds = bonus.remainingSeconds ?? _bonusDurationSeconds;
       _bonusScore = bonus.score;
       _bonusHintSquare = bonus.hintSquare;
 
@@ -1300,6 +1216,8 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     final generation = _puzzleGeneration;
 
+    unawaited(context.read<AuthProvider>().syncCountryFromDevice());
+
     setState(() {
       _isBonusLoading = true;
       _bonusError = null;
@@ -1307,15 +1225,12 @@ class PuzzlePageState extends State<PuzzlePage> {
     });
 
     try {
-      final response =
-      await _puzzleApiService.startBonusPuzzle();
+      final response = await _puzzleApiService.startBonusPuzzle();
 
       if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
-        throw Exception(
-          response.message ?? 'Bonus bulmaca başlatılamadı.',
-        );
+        throw Exception(response.message ?? 'Bonus bulmaca başlatılamadı.');
       }
 
       final bonus = response.data!;
@@ -1335,9 +1250,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       if (bonus.startedAtUtc == null) {
-        throw Exception(
-          'Sunucu bonus başlangıç zamanını döndürmedi.',
-        );
+        throw Exception('Sunucu bonus başlangıç zamanını döndürmedi.');
       }
 
       final fen = bonus.fen;
@@ -1350,15 +1263,9 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       final playedMoves = bonus.playedMoves;
 
-      final currentPosition = _buildPositionFromPlayedMoves(
-        fen,
-        playedMoves,
-      );
+      final currentPosition = _buildPositionFromPlayedMoves(fen, playedMoves);
 
-      final startingPosition = _positionAfterFirstMove(
-        fen,
-        playedMoves,
-      );
+      final startingPosition = _positionAfterFirstMove(fen, playedMoves);
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1422,34 +1329,30 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     final generation = _puzzleGeneration;
 
-    _bonusTimer = Timer.periodic(
-      const Duration(seconds: 1),
-          (_) {
-        if (!_isCurrentGeneration(generation) ||
-            !_isBonusStarted ||
-            _isBonusCompleted ||
-            _isBonusExpired) {
-          return;
-        }
+    _bonusTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_isCurrentGeneration(generation) ||
+          !_isBonusStarted ||
+          _isBonusCompleted ||
+          _isBonusExpired) {
+        return;
+      }
 
-        if (_bonusRemainingSeconds <= 1) {
-          _bonusTimer?.cancel();
-
-          setState(() {
-            _bonusRemainingSeconds = 0;
-            _bonusFeedback =
-            'Süre doldu! Bonus durumu kontrol ediliyor.';
-          });
-
-          _checkBonusExpiration();
-          return;
-        }
+      if (_bonusRemainingSeconds <= 1) {
+        _bonusTimer?.cancel();
 
         setState(() {
-          _bonusRemainingSeconds--;
+          _bonusRemainingSeconds = 0;
+          _bonusFeedback = 'Süre doldu! Bonus durumu kontrol ediliyor.';
         });
-      },
-    );
+
+        _checkBonusExpiration();
+        return;
+      }
+
+      setState(() {
+        _bonusRemainingSeconds--;
+      });
+    });
   }
 
   void _stopBonusTimer() {
@@ -1458,9 +1361,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _checkBonusExpiration() async {
-    if (!mounted ||
-        !_isAuthenticated ||
-        !_isBonusMode) {
+    if (!mounted || !_isAuthenticated || !_isBonusMode) {
       return;
     }
 
@@ -1473,8 +1374,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       if (!response.success || response.data == null) {
         setState(() {
-          _bonusFeedback =
-          'Süre doldu. Sunucu durumu henüz doğrulanamadı.';
+          _bonusFeedback = 'Süre doldu. Sunucu durumu henüz doğrulanamadı.';
         });
         return;
       }
@@ -1556,8 +1456,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             _isBonusCompleted = true;
             _bonusFeedback = 'Bonus bulmaca zaten tamamlandı.';
           } else {
-            _bonusFeedback =
-                response.message ?? 'Hamle gönderilemedi.';
+            _bonusFeedback = response.message ?? 'Hamle gönderilemedi.';
           }
         });
 
@@ -1591,16 +1490,18 @@ class PuzzlePageState extends State<PuzzlePage> {
         });
 
         _restoreBonusBoard();
-        if (_isBonusMode && !_isBonusExpired && !_isBonusCompleted &&
-            !serverExpired && !serverCompleted && _bonusRemainingSeconds > 0) {
+        if (_isBonusMode &&
+            !_isBonusExpired &&
+            !_isBonusCompleted &&
+            !serverExpired &&
+            !serverCompleted &&
+            _bonusRemainingSeconds > 0) {
           _showWrongMoveHighlight(move);
         }
         return;
       }
 
-      final playerMoves = playedMoves
-          .take(oldMoveCount + 1)
-          .toList();
+      final playerMoves = playedMoves.take(oldMoveCount + 1).toList();
 
       final playerPosition = _buildPositionFromPlayedMoves(
         bonus.fen!,
@@ -1662,9 +1563,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       }
 
       if (_isBonusCompleted) {
-        await _finishBonusPuzzle(
-          generation: generation,
-        );
+        await _finishBonusPuzzle(generation: generation);
       }
     } catch (error, stackTrace) {
       _debugLog('Bonus hamle hatası: $error');
@@ -1674,8 +1573,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       setState(() {
         _isBonusLoading = false;
-        _bonusFeedback =
-        'Hamle gönderilemedi. Tekrar deneyebilirsin.';
+        _bonusFeedback = 'Hamle gönderilemedi. Tekrar deneyebilirsin.';
       });
 
       _restoreBonusBoard();
@@ -1704,22 +1602,18 @@ class PuzzlePageState extends State<PuzzlePage> {
     });
 
     try {
-      final response =
-      await _puzzleApiService.useBonusHint();
+      final response = await _puzzleApiService.useBonusHint();
 
       if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success || response.data == null) {
-        throw Exception(
-          response.message ?? 'Bonus ipucu kullanılamadı.',
-        );
+        throw Exception(response.message ?? 'Bonus ipucu kullanılamadı.');
       }
 
       final data = response.data!;
       final hintSquare = data.hintSquare;
 
-      if (hintSquare == null ||
-          hintSquare.isEmpty) {
+      if (hintSquare == null || hintSquare.isEmpty) {
         throw Exception('Sunucu ipucu karesini döndürmedi.');
       }
 
@@ -1742,9 +1636,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
   }
 
-  Future<void> _finishBonusPuzzle({
-    required int generation,
-  }) async {
+  Future<void> _finishBonusPuzzle({required int generation}) async {
     if (!_isCurrentGeneration(generation) ||
         !_isAuthenticated ||
         _isBonusSubmitting) {
@@ -1759,15 +1651,12 @@ class PuzzlePageState extends State<PuzzlePage> {
     });
 
     try {
-      final response =
-      await _puzzleApiService.submitBonusPuzzle();
+      final response = await _puzzleApiService.submitBonusPuzzle();
 
       if (!_isCurrentGeneration(generation)) return;
 
       if (!response.success) {
-        throw Exception(
-          response.message ?? 'Bonus sonucu kaydedilemedi.',
-        );
+        throw Exception(response.message ?? 'Bonus sonucu kaydedilemedi.');
       }
 
       final score = response.data?.score;
@@ -1786,15 +1675,11 @@ class PuzzlePageState extends State<PuzzlePage> {
         _showBonusCompletionAnimation = true;
       });
 
-      await _refreshLeaderboardSafely(
-        generation: generation,
-      );
+      await _refreshLeaderboardSafely(generation: generation);
 
       if (!_isCurrentGeneration(generation)) return;
 
-      await Future.delayed(
-        const Duration(milliseconds: 1800),
-      );
+      await Future.delayed(const Duration(milliseconds: 1800));
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1809,8 +1694,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
       setState(() {
         _isBonusSubmitting = false;
-        _bonusFeedback =
-        'Bonus çözüldü ancak sonuç kaydedilemedi: $error';
+        _bonusFeedback = 'Bonus çözüldü ancak sonuç kaydedilemedi: $error';
       });
     }
   }
@@ -1825,9 +1709,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
     _controller?.dispose();
 
-    _controller = ChessboardController(
-      game: _buildGame(position),
-    );
+    _controller = ChessboardController(game: _buildGame(position));
 
     setState(() {
       _isBonusMode = false;
@@ -1861,9 +1743,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         actions: [
           if (!_isBonusMode)
             IconButton(
-              onPressed: _isLoading || _isSubmitting
-                  ? null
-                  : _loadTodayPuzzle,
+              onPressed: _isLoading || _isSubmitting ? null : _loadTodayPuzzle,
               icon: const Icon(Icons.refresh),
               tooltip: 'Bulmacayı yenile',
             ),
@@ -1876,9 +1756,7 @@ class PuzzlePageState extends State<PuzzlePage> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: _primary),
-      );
+      return const Center(child: CircularProgressIndicator(color: _primary));
     }
 
     if (_errorMessage != null) {
@@ -1898,20 +1776,15 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
 
     if (_puzzle == null) {
-      return const Center(
-        child: Text('Bulmaca bulunamadı.'),
-      );
+      return const Center(child: Text('Bulmaca bulunamadı.'));
     }
 
-    if (!_hasStarted &&
-        (_position == null || _controller == null)) {
+    if (!_hasStarted && (_position == null || _controller == null)) {
       return _buildStartOverlay();
     }
 
     if (_position == null || _controller == null) {
-      return const Center(
-        child: Text('Bulmaca tahtası oluşturulamadı.'),
-      );
+      return const Center(child: Text('Bulmaca tahtası oluşturulamadı.'));
     }
 
     if (_isSolved) {
@@ -1980,11 +1853,14 @@ class PuzzlePageState extends State<PuzzlePage> {
                                       width: boardSize,
                                       height: boardSize,
                                       decoration: BoxDecoration(
-                                        color: Colors.black.withValues(alpha: 0.5),
+                                        color: Colors.black.withValues(
+                                          alpha: 0.5,
+                                        ),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        mainAxisAlignment:
+                                        MainAxisAlignment.center,
                                         children: [
                                           const Icon(
                                             Icons.check_circle_rounded,
@@ -2047,10 +1923,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                   ),
                 ),
               ),
-              if (!_hasStarted)
-                Positioned.fill(
-                  child: _buildStartOverlay(),
-                ),
+              if (!_hasStarted) Positioned.fill(child: _buildStartOverlay()),
             ],
           ),
         );
@@ -2066,9 +1939,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     final position = _bonusPosition;
     final controller = _controller;
 
-    if (!_isBonusStarted &&
-        position == null &&
-        controller == null) {
+    if (!_isBonusStarted && position == null && controller == null) {
       return _buildBonusStartOverlay();
     }
 
@@ -2101,11 +1972,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(
-                            Icons.bolt,
-                            color: _secondary,
-                            size: 30,
-                          ),
+                          const Icon(Icons.bolt, color: _secondary, size: 30),
                           const SizedBox(width: 12),
                           const Expanded(
                             child: Column(
@@ -2305,9 +2172,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 ],
               ),
               if (!_isBonusStarted)
-                Positioned.fill(
-                  child: _buildBonusStartOverlay(),
-                ),
+                Positioned.fill(child: _buildBonusStartOverlay()),
             ],
           ),
         );
@@ -2326,9 +2191,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         decoration: BoxDecoration(
           color: _surface,
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: _secondary.withValues(alpha: 0.35),
-          ),
+          border: Border.all(color: _secondary.withValues(alpha: 0.35)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.25),
@@ -2347,20 +2210,13 @@ class PuzzlePageState extends State<PuzzlePage> {
                 color: _secondary.withValues(alpha: 0.13),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.bolt,
-                color: _secondary,
-                size: 36,
-              ),
+              child: const Icon(Icons.bolt, color: _secondary, size: 36),
             ),
             const SizedBox(height: 18),
             const Text(
               'Bonus Bulmaca Seni Bekliyor!',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 21,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             const Text(
@@ -2391,9 +2247,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 )
                     : const Icon(Icons.play_arrow_rounded, size: 27),
                 label: Text(
-                  _isBonusLoading
-                      ? 'Başlatılıyor...'
-                      : 'Bonus Bulmacaya Başla',
+                  _isBonusLoading ? 'Başlatılıyor...' : 'Bonus Bulmacaya Başla',
                   style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
@@ -2416,9 +2270,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 onPressed: _isBonusLoading ? null : _returnToDailyPuzzle,
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Günlük Bulmacaya Dön'),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.white70,
-                ),
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
               ),
             ),
             if (_bonusError != null) ...[
@@ -2426,10 +2278,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               Text(
                 _bonusError!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFE69A91),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Color(0xFFE69A91), fontSize: 12),
               ),
             ],
           ],
@@ -2447,9 +2296,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: color.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
@@ -2459,10 +2306,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              _bonusFeedback,
-              style: const TextStyle(fontSize: 13),
-            ),
+            child: Text(_bonusFeedback, style: const TextStyle(fontSize: 13)),
           ),
         ],
       ),
@@ -2480,9 +2324,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         children: [
           const Icon(Icons.lightbulb, color: _secondary),
           const SizedBox(width: 10),
-          const Expanded(
-            child: Text('Doğru hamlenin başlangıç karesi:'),
-          ),
+          const Expanded(child: Text('Doğru hamlenin başlangıç karesi:')),
           Text(
             _bonusHintSquare!,
             style: const TextStyle(
@@ -2512,10 +2354,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           const SizedBox(height: 20),
           Text(
             expired ? 'Bonus Süresi Doldu' : 'Bonus Tamamlandı!',
-            style: const TextStyle(
-              fontSize: 25,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
           Text(
@@ -2523,10 +2362,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 ? '5 dakikalık bonus süresini tamamlayamadın.'
                 : 'Bonus bulmacayı başarıyla çözdün.',
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
           const SizedBox(height: 28),
           Container(
@@ -2535,18 +2371,13 @@ class PuzzlePageState extends State<PuzzlePage> {
             decoration: BoxDecoration(
               color: _surface,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: _secondary.withValues(alpha: 0.25),
-              ),
+              border: Border.all(color: _secondary.withValues(alpha: 0.25)),
             ),
             child: Column(
               children: [
                 const Text(
                   'Bonus puanın',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 15,
-                  ),
+                  style: TextStyle(color: Colors.white70, fontSize: 15),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -2562,10 +2393,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                   expired
                       ? 'Bu denemeden puan kazanamadın.'
                       : 'Puanın sunucuya kaydedildi.',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 12,
-                  ),
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
                 ),
               ],
             ),
@@ -2585,10 +2413,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             Text(
               _bonusFeedback,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
             ),
           ],
         ],
@@ -2626,9 +2451,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         decoration: BoxDecoration(
           color: _surface,
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: _primary.withValues(alpha: 0.25),
-          ),
+          border: Border.all(color: _primary.withValues(alpha: 0.25)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.25),
@@ -2657,10 +2480,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             const Text(
               'Bulmaca seni bekliyor!',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 21,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
             Text(
@@ -2680,10 +2500,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               height: 54,
               child: ElevatedButton.icon(
                 onPressed: _isSubmitting ? null : _startPuzzle,
-                icon: const Icon(
-                  Icons.replay_rounded,
-                  size: 24,
-                ),
+                icon: const Icon(Icons.replay_rounded, size: 24),
                 label: Text(
                   _hasSubmitted ? 'Tekrar Çöz' : 'Bulmacaya Başla',
                   style: const TextStyle(
@@ -2717,9 +2534,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                         : Icons.bolt,
                   ),
                   label: Text(
-                    _isBonusLoading
-                        ? 'Yükleniyor...'
-                        : bonusButtonText,
+                    _isBonusLoading ? 'Yükleniyor...' : bonusButtonText,
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
@@ -2727,9 +2542,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                   ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: _secondary,
-                    side: BorderSide(
-                      color: _secondary.withValues(alpha: 0.7),
-                    ),
+                    side: BorderSide(color: _secondary.withValues(alpha: 0.7)),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
@@ -2746,10 +2559,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               Text(
                 _submissionError!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFE69A91),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Color(0xFFE69A91), fontSize: 12),
               ),
             ],
             if (_bonusError != null) ...[
@@ -2757,10 +2567,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               Text(
                 _bonusError!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFE69A91),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Color(0xFFE69A91), fontSize: 12),
               ),
             ],
           ],
@@ -2802,27 +2609,18 @@ class PuzzlePageState extends State<PuzzlePage> {
               children: [
                 const Text(
                   'Günün Bulmacası',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 5),
                 Text(
                   'Bulmaca #${_puzzle!.id}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.white54,
-                  ),
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
                 ),
               ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: _secondary.withValues(alpha: 0.13),
               borderRadius: BorderRadius.circular(20),
@@ -2872,10 +2670,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 13,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(14),
@@ -2890,10 +2685,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Colors.white54,
-                  ),
+                  style: const TextStyle(fontSize: 11, color: Colors.white54),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -2913,16 +2705,11 @@ class PuzzlePageState extends State<PuzzlePage> {
 
   Widget _buildLiveScoreCard() {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 18,
-        vertical: 16,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       decoration: BoxDecoration(
         color: _primary.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: _primary.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: _primary.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
@@ -2933,11 +2720,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               color: _primary.withValues(alpha: 0.13),
               borderRadius: BorderRadius.circular(13),
             ),
-            child: const Icon(
-              Icons.stars_rounded,
-              color: _primary,
-              size: 25,
-            ),
+            child: const Icon(Icons.stars_rounded, color: _primary, size: 25),
           ),
           const SizedBox(width: 13),
           const Expanded(
@@ -2946,18 +2729,12 @@ class PuzzlePageState extends State<PuzzlePage> {
               children: [
                 Text(
                   'Canlı puanın',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
                 SizedBox(height: 4),
                 Text(
                   'Süre, yanlış hamle ve ipuçlarına göre güncellenir.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.white60,
-                  ),
+                  style: TextStyle(fontSize: 11, color: Colors.white60),
                 ),
               ],
             ),
@@ -2990,9 +2767,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: color.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
@@ -3009,10 +2784,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           Expanded(
             child: Text(
               _feedback,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.4,
-              ),
+              style: const TextStyle(fontSize: 13, height: 1.4),
             ),
           ),
         ],
@@ -3026,17 +2798,11 @@ class PuzzlePageState extends State<PuzzlePage> {
       decoration: BoxDecoration(
         color: _secondary.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: _secondary.withValues(alpha: 0.35),
-        ),
+        border: Border.all(color: _secondary.withValues(alpha: 0.35)),
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.lightbulb,
-            color: _secondary,
-            size: 27,
-          ),
+          const Icon(Icons.lightbulb, color: _secondary, size: 27),
           const SizedBox(width: 12),
           const Expanded(
             child: Column(
@@ -3052,19 +2818,13 @@ class PuzzlePageState extends State<PuzzlePage> {
                 SizedBox(height: 4),
                 Text(
                   'Doğru hamlenin başlangıç karesi:',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
+                  style: TextStyle(fontSize: 12, color: Colors.white70),
                 ),
               ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 9,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
             decoration: BoxDecoration(
               color: _secondary,
               borderRadius: BorderRadius.circular(10),
@@ -3103,9 +2863,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           child: ElevatedButton.icon(
             onPressed: _canUseHint ? _useHint : null,
             icon: const Icon(Icons.lightbulb_outline),
-            label: Text(
-              _usedHint ? 'İpucu Kullanıldı' : 'İpucu Al',
-            ),
+            label: Text(_usedHint ? 'İpucu Kullanıldı' : 'İpucu Al'),
             style: ElevatedButton.styleFrom(
               backgroundColor: _secondary,
               foregroundColor: _background,
@@ -3128,19 +2886,12 @@ class PuzzlePageState extends State<PuzzlePage> {
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.emoji_events_outlined,
-            color: _secondary,
-            size: 22,
-          ),
+          const Icon(Icons.emoji_events_outlined, color: _secondary, size: 22),
           const SizedBox(width: 10),
           const Expanded(
             child: Text(
               'En yüksek puan için hızlı ve hatasız çöz!',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.white70,
-              ),
+              style: TextStyle(fontSize: 12, color: Colors.white70),
             ),
           ),
           if (_usedHint)
@@ -3176,9 +2927,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 shape: BoxShape.circle,
               ),
               child: Icon(
-                _isReplay
-                    ? Icons.replay_rounded
-                    : Icons.emoji_events,
+                _isReplay ? Icons.replay_rounded : Icons.emoji_events,
                 size: 64,
                 color: _secondary,
               ),
@@ -3186,14 +2935,9 @@ class PuzzlePageState extends State<PuzzlePage> {
           ),
           const SizedBox(height: 24),
           Text(
-            _isReplay
-                ? 'Tekrar Tebrikler!'
-                : 'Harika İş Çıkardın!',
+            _isReplay ? 'Tekrar Tebrikler!' : 'Harika İş Çıkardın!',
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
           Text(
@@ -3202,10 +2946,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 'İlk günlük puanın ve liderlik tablosundaki kaydın korunuyor.'
                 : 'Günün bulmacasını başarıyla tamamladın.',
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 14,
-              color: Colors.white70,
-            ),
+            style: const TextStyle(fontSize: 14, color: Colors.white70),
           ),
           const SizedBox(height: 26),
           _buildResultScoreCard(),
@@ -3215,15 +2956,9 @@ class PuzzlePageState extends State<PuzzlePage> {
             const SizedBox(height: 22),
             _buildBonusEntryCard(),
           ],
-          if (_isAuthenticated &&
-              _isBonusLoading &&
-              !_isBonusEligible) ...[
+          if (_isAuthenticated && _isBonusLoading && !_isBonusEligible) ...[
             const SizedBox(height: 18),
-            const Center(
-              child: CircularProgressIndicator(
-                color: _primary,
-              ),
-            ),
+            const Center(child: CircularProgressIndicator(color: _primary)),
           ],
           if (_submissionError != null) ...[
             const SizedBox(height: 16),
@@ -3237,10 +2972,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               icon: const Icon(Icons.arrow_back),
               label: const Text(
                 'Günlük Bulmacaya Dön',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ),
           ),
@@ -3274,9 +3006,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       decoration: BoxDecoration(
         color: _secondary.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: _secondary.withValues(alpha: 0.35),
-        ),
+        border: Border.all(color: _secondary.withValues(alpha: 0.35)),
       ),
       child: Column(
         children: [
@@ -3333,9 +3063,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 onPressed: _isBonusLoading ? null : _startBonusPuzzle,
                 icon: const Icon(Icons.play_arrow),
                 label: Text(
-                  _isBonusLoading
-                      ? 'Yükleniyor...'
-                      : 'Bonus Bulmacayı Aç',
+                  _isBonusLoading ? 'Yükleniyor...' : 'Bonus Bulmacayı Aç',
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _secondary,
@@ -3360,10 +3088,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             Text(
               _bonusError!,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFFE69A91),
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: Color(0xFFE69A91), fontSize: 12),
             ),
           ],
         ],
@@ -3373,31 +3098,19 @@ class PuzzlePageState extends State<PuzzlePage> {
 
   Widget _buildResultScoreCard() {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        vertical: 26,
-        horizontal: 16,
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
       decoration: BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: _secondary.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: _secondary.withValues(alpha: 0.25)),
       ),
       child: Column(
         children: [
-          const Icon(
-            Icons.stars,
-            size: 36,
-            color: _secondary,
-          ),
+          const Icon(Icons.stars, size: 36, color: _secondary),
           const SizedBox(height: 12),
           const Text(
             'Bu oturumun puanı',
-            style: TextStyle(
-              fontSize: 15,
-              color: Colors.white70,
-            ),
+            style: TextStyle(fontSize: 15, color: Colors.white70),
           ),
           const SizedBox(height: 8),
           Text(
@@ -3412,10 +3125,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           const Text(
             'Bu denemenin süre, hata ve ipucu bilgilerine göre hesaplanan puanı.',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white60,
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.white60),
           ),
           if (_isAuthenticated) ...[
             const Padding(
@@ -3425,10 +3135,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             const Text(
               'Liderlik tablosuna kaydedilen günlük puanın',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.white70,
-              ),
+              style: TextStyle(fontSize: 14, color: Colors.white70),
             ),
             const SizedBox(height: 8),
             if (_acceptedScore != null)
@@ -3444,10 +3151,7 @@ class PuzzlePageState extends State<PuzzlePage> {
               const Text(
                 'Puan bilgisi alınamadı',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.white60,
-                ),
+                style: TextStyle(fontSize: 14, color: Colors.white60),
               ),
             const SizedBox(height: 8),
             Text(
@@ -3455,10 +3159,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                   ? 'İlk günlük puanın korunuyor; bu tekrar denemesi liderlik tablosunu değiştirmedi.'
                   : 'Bu, liderlik tablosuna kaydedilen ilk günlük puanındır.',
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 11,
-                color: Colors.white54,
-              ),
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
             ),
           ],
         ],
@@ -3479,10 +3180,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             alignment: Alignment.centerLeft,
             child: Text(
               'Deneme İstatistikleri',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(height: 18),
@@ -3521,18 +3219,13 @@ class PuzzlePageState extends State<PuzzlePage> {
       decoration: BoxDecoration(
         color: Colors.red.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: Colors.redAccent.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.25)),
       ),
       child: Column(
         children: [
           const Row(
             children: [
-              Icon(
-                Icons.error_outline,
-                color: Colors.redAccent,
-              ),
+              Icon(Icons.error_outline, color: Colors.redAccent),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -3548,10 +3241,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           const SizedBox(height: 8),
           Text(
             _submissionError!,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-            ),
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -3575,11 +3265,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   }) {
     return Row(
       children: [
-        Icon(
-          icon,
-          color: Colors.white70,
-          size: 21,
-        ),
+        Icon(icon, color: Colors.white70, size: 21),
         const SizedBox(width: 10),
         Expanded(child: Text(label)),
         Text(
@@ -3601,24 +3287,14 @@ class PuzzlePageState extends State<PuzzlePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.error_outline,
-              size: 56,
-              color: Color(0xFFE69A91),
-            ),
+            const Icon(Icons.error_outline, size: 56, color: Color(0xFFE69A91)),
             const SizedBox(height: 16),
             const Text(
               'Bulmaca yüklenemedi',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-            SelectableText(
-              _errorMessage!,
-              textAlign: TextAlign.center,
-            ),
+            SelectableText(_errorMessage!, textAlign: TextAlign.center),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: _loadTodayPuzzle,

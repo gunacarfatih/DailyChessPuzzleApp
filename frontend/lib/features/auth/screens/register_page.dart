@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -22,8 +21,6 @@ class _RegisterPageState extends State<RegisterPage> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
   TextEditingController();
-  final TextEditingController _countryCodeController =
-  TextEditingController();
 
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
@@ -37,7 +34,6 @@ class _RegisterPageState extends State<RegisterPage> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _countryCodeController.dispose();
     super.dispose();
   }
 
@@ -52,16 +48,12 @@ class _RegisterPageState extends State<RegisterPage> {
     }
 
     try {
-      final countryCode =
-      _countryCodeController.text.trim().toUpperCase();
-
       final response = await context.read<AuthProvider>().register(
         username: _usernameController.text.trim(),
         firstName: _firstNameController.text.trim(),
         lastName: _lastNameController.text.trim(),
         email: _emailController.text.trim(),
         password: _passwordController.text,
-        countryCode: countryCode.isEmpty ? null : countryCode,
       );
 
       if (!mounted) return;
@@ -77,7 +69,9 @@ class _RegisterPageState extends State<RegisterPage> {
         setState(() {
           _pendingVerificationEmail = _emailController.text.trim();
         });
-        _showError('Hesap oluşturuldu, ancak e-posta gönderilemedi. Kodu yeniden iste.');
+        _showError(
+          'Hesap oluşturuldu, ancak e-posta gönderilemedi. Kodu yeniden iste.',
+        );
         await _verifyEmail();
       } else {
         _showError(response.message ?? 'Kayıt işlemi başarısız.');
@@ -124,19 +118,13 @@ class _RegisterPageState extends State<RegisterPage> {
 
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
   void _showInfo(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
     );
   }
 
@@ -159,9 +147,7 @@ class _RegisterPageState extends State<RegisterPage> {
     final isLoading = context.watch<AuthProvider>().isLoading;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Hesap Oluştur'),
-      ),
+      appBar: AppBar(title: const Text('Hesap Oluştur')),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -182,10 +168,7 @@ class _RegisterPageState extends State<RegisterPage> {
                   const Text(
                     'Aramıza Katıl!',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                   ),
 
                   const SizedBox(height: 8),
@@ -194,9 +177,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     'Hesabını oluştur ve satranç yolculuğuna '
                         'kendi hesabınla devam et.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.grey.shade400,
-                    ),
+                    style: TextStyle(color: Colors.grey.shade400),
                   ),
 
                   const SizedBox(height: 30),
@@ -286,33 +267,6 @@ class _RegisterPageState extends State<RegisterPage> {
 
                   const SizedBox(height: 16),
 
-                  // Ülke kodu
-                  TextFormField(
-                    controller: _countryCodeController,
-                    textCapitalization: TextCapitalization.characters,
-                    maxLength: 2,
-                    textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(
-                      labelText: 'Ülke kodu (isteğe bağlı)',
-                      hintText: 'TR',
-                      prefixIcon: Icon(Icons.public),
-                      border: OutlineInputBorder(),
-                      counterText: '',
-                    ),
-                    validator: (value) {
-                      final countryCode = value?.trim() ?? '';
-
-                      if (countryCode.isNotEmpty &&
-                          !RegExp(r'^[a-zA-Z]{2}$').hasMatch(countryCode)) {
-                        return 'İki harfli ülke kodu gir. Örn: TR';
-                      }
-
-                      return null;
-                    },
-                  ),
-
-                  const SizedBox(height: 16),
-
                   // Şifre
                   TextFormField(
                     controller: _passwordController,
@@ -370,8 +324,7 @@ class _RegisterPageState extends State<RegisterPage> {
                         ),
                         onPressed: () {
                           setState(() {
-                            _obscureConfirmPassword =
-                            !_obscureConfirmPassword;
+                            _obscureConfirmPassword = !_obscureConfirmPassword;
                           });
                         },
                       ),
@@ -399,9 +352,7 @@ class _RegisterPageState extends State<RegisterPage> {
                           ? const SizedBox(
                         width: 22,
                         height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                        ),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                           : Text(
                         _pendingVerificationEmail == null
@@ -426,10 +377,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     'Yeni hesabın sıfırdan başlayacak. '
                         'Misafir oyun geçmişin ve puanların ayrı kalacak.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.grey.shade400,
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                   ),
                 ],
               ),

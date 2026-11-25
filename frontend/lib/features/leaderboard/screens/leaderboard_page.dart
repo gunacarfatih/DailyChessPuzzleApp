@@ -1,3 +1,4 @@
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -19,9 +20,6 @@ class LeaderboardPage extends StatefulWidget {
 class LeaderboardPageState extends State<LeaderboardPage> {
   final LocationService _locationService = LocationService();
 
-  // Konum bilgisi belirlenene kadar ilk yükleme ekranını gösterir.
-  bool _isInitializing = true;
-
   // Kullanıcının seçtiği dönem.
   String _selectedPeriod = 'daily';
 
@@ -35,38 +33,24 @@ class LeaderboardPageState extends State<LeaderboardPage> {
   @override
   void initState() {
     super.initState();
-    _initializeLocationAndLoadLeaderboard();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_loadLeaderboard());
+      unawaited(_initializeLocation());
+    });
   }
 
-  // Önce kullanıcının ülkesini tespit eder,
-  // ardından ilgili leaderboard verisini yükler.
-  Future<void> _initializeLocationAndLoadLeaderboard() async {
+  Future<void> _initializeLocation() async {
     try {
       final countryInfo = await _locationService.getCountryInfo();
-
-      if (!mounted) return;
-
-      if (countryInfo != null) {
-        setState(() {
-          _detectedCountryCode = countryInfo.code;
-          _detectedCountryName = countryInfo.name;
-        });
-      }
-
-      await _loadLeaderboard();
+      if (!mounted || countryInfo == null) return;
+      setState(() {
+        _detectedCountryCode = countryInfo.code;
+        _detectedCountryName = countryInfo.name;
+      });
     } catch (error) {
       if (kDebugMode) {
         debugPrint('Konum bilgisi yükleme hatası: $error');
-      }
-
-      if (mounted) {
-        await _loadLeaderboard();
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isInitializing = false;
-        });
       }
     }
   }
@@ -167,11 +151,10 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     _getSelectedLeaderboard(leaderboard);
 
     // Yüklenme ve hata durumlarını Provider'dan alır.
-    final isLoading = _isInitializing ||
-        leaderboardProvider.isLoadingFor(
-          selectedCountryCode,
-          period: _selectedPeriod.toLowerCase(),
-        );
+    final isLoading = leaderboardProvider.isLoadingFor(
+      selectedCountryCode,
+      period: _selectedPeriod.toLowerCase(),
+    );
 
     final errorMessage = leaderboardProvider.errorFor(
       selectedCountryCode,
