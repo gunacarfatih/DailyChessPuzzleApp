@@ -57,10 +57,10 @@ public sealed class RegistrationHttpIntegrationTests
 
         Assert.NotNull(user.PasswordHash);
 
-        Assert.NotNull(
+        Assert.Null(
             user.EmailVerificationCodeHash);
 
-        Assert.NotNull(
+        Assert.Null(
             user.EmailVerificationCodeExpiresAtUtc);
 
         Assert.Equal(0, user.TokenVersion);

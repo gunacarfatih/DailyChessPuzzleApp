@@ -495,15 +495,26 @@ public sealed class AuthServiceIntegrationTests
     }
 
     [PostgresFact]
-    public async Task Concurrent_google_takeover_requests_both_resolve_to_same_account()
+    public async Task Concurrent_google_login_requests_cannot_take_over_unverified_account()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         var initial = await SeedLoginAsync(database);
         await PrepareGoogleUserAsync(database, false, false);
-        var result = await RaceAsync(() => GoogleLoginAsync(database), () => GoogleLoginAsync(database));
-        Assert.Equal(initial.UserId, result.First.UserId);
-        Assert.Equal(initial.UserId, result.Second.UserId);
-        await AssertActiveCountAsync(database, 2);
+        var result = await RaceAsync(
+            () => TryGoogleRegistrationAsync(database, GoogleSubject, TestEmail),
+            () => TryGoogleRegistrationAsync(database, GoogleSubject, TestEmail));
+        Assert.Null(result.First.Response);
+        Assert.Null(result.Second.Response);
+        Assert.Equal("GOOGLE_ACCOUNT_LINK_REQUIRED", result.First.Error);
+        Assert.Equal("GOOGLE_ACCOUNT_LINK_REQUIRED", result.Second.Error);
+        await using var context = database.CreateContext();
+        var user = await context.Users.SingleAsync();
+        Assert.Equal(initial.UserId, user.Id);
+        Assert.Null(user.GoogleId);
+        Assert.False(user.EmailVerified);
+        Assert.NotNull(user.PasswordHash);
+        Assert.Equal(0, user.TokenVersion);
+        await AssertActiveCountAsync(database, 1);
     }
 
     [PostgresFact]
@@ -537,34 +548,57 @@ public sealed class AuthServiceIntegrationTests
     }
 
     [PostgresFact]
-    public async Task Google_takeover_revokes_old_refresh_tokens()
+    public async Task Rejected_google_takeover_preserves_old_refresh_token()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         var initial = await SeedLoginAsync(database);
         await PrepareGoogleUserAsync(database, false, false);
-        var login = await GoogleLoginAsync(database);
-        Assert.Equal(initial.UserId, login.UserId);
-        Assert.False(login.HasPassword);
+        var error = await Assert.ThrowsAsync<AppException>(() => GoogleLoginAsync(database));
+        Assert.Equal("GOOGLE_ACCOUNT_LINK_REQUIRED", error.ErrorCode);
         await AssertActiveCountAsync(database, 1);
-        Assert.Equal("INVALID_REFRESH_TOKEN", (await TryRefreshAsync(database, initial.RefreshToken)).Error);
-        Assert.NotNull((await TryRefreshAsync(database, login.RefreshToken)).Response);
+        var refreshed = await TryRefreshAsync(database, initial.RefreshToken);
+        Assert.NotNull(refreshed.Response);
+        Assert.Equal(initial.UserId, refreshed.Response!.UserId);
+        Assert.True(refreshed.Response.HasPassword);
+        Assert.False(refreshed.Response.EmailVerified);
+        Assert.Equal("0", ReadVersion(refreshed.Response.AccessToken));
+        await AssertActiveCountAsync(database, 1);
     }
 
     [PostgresFact]
-    public async Task Concurrent_google_takeover_increments_token_version_only_once()
+    public async Task Concurrent_authorized_google_links_are_idempotent()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
-        await SeedLoginAsync(database);
+        var initial = await SeedLoginAsync(database);
         await PrepareGoogleUserAsync(database, false, false);
-        var result = await RaceAsync(() => GoogleLoginAsync(database), () => GoogleLoginAsync(database));
+        async Task<bool> LinkAsync()
+        {
+            await using var context = database.CreateContext();
+            await CreateService(context, new FakeGoogleValidator()).LinkGoogleAccountAsync(
+                initial.UserId,
+                new LinkGoogleAccountRequest { IdToken = "test-token", CurrentPassword = Password },
+                CancellationToken.None);
+            return true;
+        }
+        var result = await RaceAsync(() => LinkAsync(), () => LinkAsync());
+        Assert.True(result.First);
+        Assert.True(result.Second);
         await using var context = database.CreateContext();
         var user = await context.Users.SingleAsync();
-        Assert.Equal(1, user.TokenVersion);
-        Assert.Equal("1", ReadVersion(result.First.AccessToken));
-        Assert.Equal("1", ReadVersion(result.Second.AccessToken));
+        Assert.Equal(initial.UserId, user.Id);
+        Assert.Equal(0, user.TokenVersion);
         Assert.True(user.EmailVerified);
-        Assert.Null(user.PasswordHash);
+        Assert.NotNull(user.PasswordHash);
         Assert.Equal(GoogleSubject, user.GoogleId);
+        await AssertActiveCountAsync(database, 1);
+        var google = await GoogleLoginAsync(database);
+        Assert.Equal(initial.UserId, google.UserId);
+        Assert.True(google.HasPassword);
+        Assert.True(google.EmailVerified);
+        Assert.Equal("0", ReadVersion(google.AccessToken));
+        Assert.NotNull((await TryRefreshAsync(database, initial.RefreshToken)).Response);
+        Assert.Equal(initial.UserId, (await LoginAsync(database)).UserId);
+        await AssertActiveCountAsync(database, 3);
     }
 
     [PostgresFact]
@@ -1023,45 +1057,37 @@ public sealed class AuthServiceIntegrationTests
 
         Assert.Equal(2, gate.ArrivedCount);
 
-        Assert.True(
-            results.First == "SUCCESS" ||
-            results.First == "EMAIL_ALREADY_EXISTS");
-
-        Assert.NotNull(results.Second.Response);
-        Assert.Null(results.Second.Error);
-
         await using var context = database.CreateContext();
-
         var user = await context.Users.SingleAsync();
-
-        Assert.Equal(
-            results.Second.Response!.UserId,
-            user.Id);
-
         Assert.Equal(TestEmail, user.Email);
-        Assert.Equal(GoogleSubject, user.GoogleId);
-        Assert.True(user.EmailVerified);
-
-        Assert.Null(user.PasswordHash);
+        Assert.Equal(0, user.TokenVersion);
         Assert.Null(user.EmailVerificationCodeHash);
         Assert.Null(user.EmailVerificationCodeExpiresAtUtc);
 
-        Assert.Equal(
-            results.First == "SUCCESS" ? 1 : 0,
-            user.TokenVersion);
-
-        Assert.Equal(
-            user.TokenVersion.ToString(),
-            ReadVersion(results.Second.Response.AccessToken));
-
-        Assert.Equal(
-            1,
-            await context.RefreshTokens.CountAsync());
-
-        Assert.Equal(
-            1,
-            await context.RefreshTokens.CountAsync(
-                x => x.RevokedAtUtc == null));
+        if (results.First == "SUCCESS")
+        {
+            Assert.Null(results.Second.Response);
+            Assert.Equal("GOOGLE_ACCOUNT_LINK_REQUIRED", results.Second.Error);
+            Assert.Null(user.GoogleId);
+            Assert.False(user.EmailVerified);
+            Assert.NotNull(user.PasswordHash);
+            Assert.Empty(await context.RefreshTokens.ToListAsync());
+            Assert.Equal(user.Id, (await LoginAsync(database)).UserId);
+        }
+        else
+        {
+            Assert.Equal("EMAIL_ALREADY_EXISTS", results.First);
+            Assert.NotNull(results.Second.Response);
+            Assert.Null(results.Second.Error);
+            Assert.Equal(user.Id, results.Second.Response!.UserId);
+            Assert.Equal(GoogleSubject, user.GoogleId);
+            Assert.True(user.EmailVerified);
+            Assert.Null(user.PasswordHash);
+            Assert.Equal("0", ReadVersion(results.Second.Response.AccessToken));
+            var token = await context.RefreshTokens.SingleAsync();
+            Assert.Equal(user.Id, token.UserId);
+            Assert.Null(token.RevokedAtUtc);
+        }
     }
 
     [PostgresFact]
