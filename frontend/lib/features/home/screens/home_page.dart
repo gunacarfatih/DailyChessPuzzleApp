@@ -1,4 +1,3 @@
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -123,22 +122,18 @@ class HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
-          children: [
-            Icon(
-              Icons.grid_view_rounded,
-              color: Color(0xFFB7D7A8),
-              size: 23,
-            ),
-            SizedBox(width: 9),
-            Text(
-              'Daily Chess Puzzle',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 19,
-              ),
-            ),
-          ],
+        centerTitle: false,
+        toolbarHeight: 72,
+        title: Align(
+          alignment: Alignment.centerLeft,
+          child: Image.asset(
+            'assets/branding/checkrix_logo.png',
+            height: 56,
+            width: 180,
+            fit: BoxFit.contain,
+            alignment: Alignment.centerLeft,
+            semanticLabel: 'Checkrix',
+          ),
         ),
         actions: [
           IconButton(

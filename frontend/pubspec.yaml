@@ -1,6 +1,5 @@
-
 name: daily_chess_puzzle
-description: "Daily Chess Puzzle Mobile App"
+description: "Checkrix - Think. Solve. Master."
 
 publish_to: 'none'
 
@@ -32,6 +31,37 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/branding/app_icon.png"
+  min_sdk_android: 21
+  remove_alpha_ios: true
+  background_color_ios: "#101A17"
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/branding/app_icon.png
+    - assets/branding/splash_screen.png
+    - assets/branding/checkrix_logo.png
+
+flutter_native_splash:
+  color: "#101A17"
+  image: assets/branding/app_icon.png
+
+  android: true
+  ios: true
+  web: false
+
+  android_gravity: center
+  ios_content_mode: scaleAspectFit
+
+  android_12:
+    color: "#101A17"
+    image: assets/branding/app_icon.png
+    icon_background_color: "#101A17"
