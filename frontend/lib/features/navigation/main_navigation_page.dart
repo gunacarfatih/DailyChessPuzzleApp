@@ -17,31 +17,38 @@ class MainNavigationPage extends StatefulWidget {
   const MainNavigationPage({super.key});
 
   @override
-  State<MainNavigationPage> createState() => _MainNavigationPageState();
+  State<MainNavigationPage> createState() =>
+      _MainNavigationPageState();
 }
 
-class _MainNavigationPageState extends State<MainNavigationPage>
+class _MainNavigationPageState
+    extends State<MainNavigationPage>
     with WidgetsBindingObserver {
   int _selectedIndex = 0;
 
-  final GlobalKey<HomePageState> _homePageKey = GlobalKey<HomePageState>();
+  final GlobalKey<HomePageState> _homePageKey =
+  GlobalKey<HomePageState>();
 
   final GlobalKey<PuzzlePageState> _puzzlePageKey =
   GlobalKey<PuzzlePageState>();
 
-  final GlobalKey<LeaderboardPageState> _leaderboardPageKey =
+  final GlobalKey<LeaderboardPageState>
+  _leaderboardPageKey =
   GlobalKey<LeaderboardPageState>();
 
   final GlobalKey<ProfilePageState> _profilePageKey =
   GlobalKey<ProfilePageState>();
 
-  // Tek bir SignalR servis örneği kullanıyoruz.
-  final LeaderboardSignalRService _signalRService = LeaderboardSignalRService();
+  final LeaderboardSignalRService _signalRService =
+  LeaderboardSignalRService();
 
-  // Eş zamanlı SignalR bağlantı güncellemelerini önler.
   Future<void>? _signalRUpdateFuture;
+
   AuthProvider? _observedAuthProvider;
+
   bool _lastAuthState = false;
+
+  String? _lastCountryCode;
 
   late final List<Widget> _pages = [
     HomePage(
@@ -51,93 +58,220 @@ class _MainNavigationPageState extends State<MainNavigationPage>
     ),
     PuzzlePage(key: _puzzlePageKey),
     LeaderboardPage(key: _leaderboardPageKey),
-    ProfilePage(key: _profilePageKey, onAuthChanged: _handleAuthChanged),
+    ProfilePage(
+      key: _profilePageKey,
+      onAuthChanged: _handleAuthChanged,
+    ),
   ];
 
   @override
   void initState() {
     super.initState();
+
     WidgetsBinding.instance.addObserver(this);
 
-    // SignalR bildirim callback'lerini tanımla.
-    _signalRService.onLeaderboardUpdated = () {
-      if (kDebugMode) {
-        debugPrint('SIGNALR CALLBACK: onLeaderboardUpdated çalıştı.');
-      }
+    // SignalR bildirimleri doğrudan Provider'a iletilir.
+    _signalRService.onLeaderboardEvent = (event) {
+      if (!mounted) return;
 
-      _refreshLeaderboard();
+      context
+          .read<LeaderboardProvider>()
+          .handleLeaderboardEvent(event);
     };
 
-    _signalRService.onConnectionRestored = _refreshLeaderboard;
+    // Yeniden bağlantıda kaçırılmış güncellemeler alınır.
+    _signalRService.onConnectionRestored = () {
+      if (!mounted) return;
 
-    // Uygulama açıldığında oturum durumunu kontrol et.
-    _updateSignalRConnection();
+      unawaited(_refreshAllLeaderboards());
+    };
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      unawaited(_initializeSignalR());
+    });
+  }
+
+  Future<void> _initializeSignalR() async {
+    await _updateSignalRConnection();
+
+    if (!mounted) return;
+
+    await _refreshAllLeaderboards();
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void didChangeAppLifecycleState(
+      AppLifecycleState state,
+      ) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(context.read<AuthProvider>().syncCountryFromDevice());
-      unawaited(_updateSignalRConnection());
+      unawaited(_handleAppResumed());
+    }
+  }
+
+  Future<void> _handleAppResumed() async {
+    if (!mounted) return;
+
+    try {
+      await context
+          .read<AuthProvider>()
+          .syncCountryFromDevice();
+
+      if (!mounted) return;
+
+      await _updateSignalRConnection();
+
+      if (!mounted) return;
+
+      await _refreshAllLeaderboards();
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint(
+          'Uygulama yeniden açılma hatası: $error',
+        );
+
+        debugPrintStack(stackTrace: stackTrace);
+      }
     }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+
     final provider = context.read<AuthProvider>();
-    if (identical(provider, _observedAuthProvider)) return;
-    _observedAuthProvider?.removeListener(_handleAuthProviderChanged);
+
+    if (identical(
+      provider,
+      _observedAuthProvider,
+    )) {
+      return;
+    }
+
+    _observedAuthProvider?.removeListener(
+      _handleAuthProviderChanged,
+    );
+
     _observedAuthProvider = provider;
+
     _lastAuthState = provider.isLoggedIn;
-    provider.addListener(_handleAuthProviderChanged);
+
+    _lastCountryCode = _normalizeCountry(
+      provider.countryCode,
+    );
+
+    provider.addListener(
+      _handleAuthProviderChanged,
+    );
+  }
+
+  String? _normalizeCountry(String? country) {
+    final normalized =
+    country?.trim().toUpperCase();
+
+    if (normalized == null ||
+        normalized.isEmpty) {
+      return null;
+    }
+
+    return normalized;
   }
 
   void _handleAuthProviderChanged() {
     final provider = _observedAuthProvider;
-    if (provider == null) return;
-    final isLoggedIn = provider.isLoggedIn;
-    final sessionExpired = _lastAuthState && !isLoggedIn;
-    _lastAuthState = isLoggedIn;
-    if (!sessionExpired || !mounted) return;
 
-    setState(() => _selectedIndex = 3);
-    unawaited(_handleAuthChanged());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Oturumunuz sona erdi. Yeniden giriş yapın.'),
-          ),
-        );
-      }
-    });
+    if (provider == null || !mounted) {
+      return;
+    }
+
+    final isLoggedIn = provider.isLoggedIn;
+
+    final countryCode = _normalizeCountry(
+      provider.countryCode,
+    );
+
+    final sessionExpired =
+        _lastAuthState && !isLoggedIn;
+
+    final countryChanged =
+        _lastCountryCode != countryCode;
+
+    _lastAuthState = isLoggedIn;
+    _lastCountryCode = countryCode;
+
+    if (sessionExpired) {
+      setState(() {
+        _selectedIndex = 3;
+      });
+
+      unawaited(_handleAuthChanged());
+
+      WidgetsBinding.instance.addPostFrameCallback(
+            (_) {
+          if (!mounted) return;
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Oturumunuz sona erdi. '
+                    'Yeniden giriş yapın.',
+              ),
+            ),
+          );
+        },
+      );
+
+      return;
+    }
+
+    if (countryChanged && isLoggedIn) {
+      unawaited(_handleCountryChanged());
+    }
   }
 
-  // Kullanıcı giriş/çıkış yaptığında veya hesap değiştirdiğinde çağrılır.
-  Future<void> _handleAuthChanged() async {
+  Future<void> _handleCountryChanged() async {
     if (!mounted) return;
 
-    // Önce eski hesaba ait leaderboard verilerini temizle.
-    context.read<LeaderboardProvider>().clearForAccountChange();
-
-    // Hesap değiştiğinde eski bulmaca oturumunu sıfırla
-    // ve yeni oturumun günlük bulmacasını yükle.
-    _puzzlePageKey.currentState?.resetPuzzleForAccountChange();
-
-    // Yeni oturum durumuna göre SignalR bağlantısını güncelle.
     await _updateSignalRConnection();
 
     if (!mounted) return;
 
-    // Yeni oturum bilgileriyle leaderboard verisini yeniden yükle.
-    _leaderboardPageKey.currentState?.refreshLeaderboard();
-    _profilePageKey.currentState?.refreshProfile();
+    await _refreshAllLeaderboards();
+  }
+
+  // Giriş, çıkış veya hesap değişikliği.
+  Future<void> _handleAuthChanged() async {
+    if (!mounted) return;
+
+    final leaderboardProvider =
+    context.read<LeaderboardProvider>();
+
+    leaderboardProvider.clearForAccountChange();
+
+    _puzzlePageKey.currentState
+        ?.resetPuzzleForAccountChange();
+
+    await _updateSignalRConnection();
+
+    if (!mounted) return;
+
+    await _refreshAllLeaderboards();
+
+    if (!mounted) return;
+
+    _leaderboardPageKey.currentState
+        ?.refreshLeaderboard();
+
+    _profilePageKey.currentState
+        ?.refreshProfile();
   }
 
   // SignalR bağlantı güncellemelerini sıraya alır.
   Future<void> _updateSignalRConnection() {
-    final previousUpdate = _signalRUpdateFuture ?? Future<void>.value();
+    final previousUpdate =
+        _signalRUpdateFuture ??
+            Future<void>.value();
 
     final update = previousUpdate.then(
           (_) => _updateSignalRConnectionInternal(),
@@ -146,43 +280,66 @@ class _MainNavigationPageState extends State<MainNavigationPage>
     _signalRUpdateFuture = update;
 
     return update.whenComplete(() {
-      if (identical(_signalRUpdateFuture, update)) {
+      if (identical(
+        _signalRUpdateFuture,
+        update,
+      )) {
         _signalRUpdateFuture = null;
       }
     });
   }
 
-  // Provider üzerinden oturum durumunu kontrol eder
-  // ve SignalR bağlantısını günceller.
-  Future<void> _updateSignalRConnectionInternal() async {
+  Future<void>
+  _updateSignalRConnectionInternal() async {
+    if (!mounted) return;
+
     try {
-      final authProvider = context.read<AuthProvider>();
+      final authProvider =
+      context.read<AuthProvider>();
 
       await authProvider.initialize();
 
       if (!mounted) return;
 
       await _signalRService.connect();
-    } catch (error) {
+
+      if (!mounted) return;
+
+      await _signalRService.refreshSubscriptions();
+    } catch (error, stackTrace) {
       if (kDebugMode) {
-        debugPrint('SignalR bağlantı güncelleme hatası: $error');
+        debugPrint(
+          'SignalR bağlantı güncelleme hatası: '
+              '$error',
+        );
+
+        debugPrintStack(stackTrace: stackTrace);
       }
     }
   }
 
-  // Liderlik tablosunu API üzerinden yeniler.
-  void _refreshLeaderboard() {
-    if (kDebugMode) {
-      debugPrint('NAVIGATION: Liderlik tablosu yenileniyor.');
-    }
-
+  // Global ve bilinen ülke tablolarını yeniler.
+  Future<void> _refreshAllLeaderboards() async {
     if (!mounted) return;
 
-    _leaderboardPageKey.currentState?.refreshLeaderboard();
+    final authProvider =
+    context.read<AuthProvider>();
+
+    final leaderboardProvider =
+    context.read<LeaderboardProvider>();
+
+    await leaderboardProvider
+        .refreshAllKnownLeaderboards(
+      country: _normalizeCountry(
+        authProvider.countryCode,
+      ),
+    );
   }
 
   void _navigateTo(int index) {
-    if (index == _selectedIndex) return;
+    if (index == _selectedIndex) {
+      return;
+    }
 
     setState(() {
       _selectedIndex = index;
@@ -190,19 +347,23 @@ class _MainNavigationPageState extends State<MainNavigationPage>
 
     switch (index) {
       case 0:
-        _homePageKey.currentState?.refreshStatistics();
+        _homePageKey.currentState
+            ?.refreshStatistics();
         break;
 
       case 1:
-        _puzzlePageKey.currentState?.refreshPuzzle();
+        _puzzlePageKey.currentState
+            ?.refreshPuzzle();
         break;
 
       case 2:
-        _leaderboardPageKey.currentState?.refreshLeaderboard();
+        _leaderboardPageKey.currentState
+            ?.refreshLeaderboard();
         break;
 
       case 3:
-        _profilePageKey.currentState?.refreshProfile();
+        _profilePageKey.currentState
+            ?.refreshProfile();
         break;
     }
   }
@@ -210,12 +371,17 @@ class _MainNavigationPageState extends State<MainNavigationPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _observedAuthProvider?.removeListener(_handleAuthProviderChanged);
-    // Sayfa kapatılırken callback'leri temizle.
+
+    _observedAuthProvider?.removeListener(
+      _handleAuthProviderChanged,
+    );
+
     _signalRService.onLeaderboardUpdated = null;
+
+    _signalRService.onLeaderboardEvent = null;
+
     _signalRService.onConnectionRestored = null;
 
-    // SignalR bağlantısını kapat.
     unawaited(_signalRService.disconnect());
 
     super.dispose();
@@ -224,7 +390,10 @@ class _MainNavigationPageState extends State<MainNavigationPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _selectedIndex, children: _pages),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _pages,
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _navigateTo,

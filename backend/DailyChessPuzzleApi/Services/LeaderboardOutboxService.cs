@@ -1,22 +1,18 @@
 ﻿
 using DailyChessPuzzleApi.Data;
-using DailyChessPuzzleApi.Hubs;
 using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Services.Interfaces;
 
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using System.Collections.Concurrent;
 
 namespace DailyChessPuzzleApi.Services
 {
     public class LeaderboardOutboxService : ILeaderboardOutboxService
     {
-        private static readonly ConcurrentDictionary<string, DateTime> LastNotificationUtc = new();
         private readonly ApplicationDbContext _context;
         private readonly ILeaderboardCacheService _cacheService;
         private readonly ILogger<LeaderboardOutboxService> _logger;
-        private readonly IHubContext<LeaderboardHub> _hubContext;
+        private readonly ILeaderboardPublisher _publisher;
 
         private static readonly TimeSpan LockDuration =
             TimeSpan.FromMinutes(5);
@@ -25,12 +21,12 @@ namespace DailyChessPuzzleApi.Services
             ApplicationDbContext context,
             ILeaderboardCacheService cacheService,
             ILogger<LeaderboardOutboxService> logger,
-            IHubContext<LeaderboardHub> hubContext)
+            ILeaderboardPublisher publisher)
         {
             _context = context;
             _cacheService = cacheService;
             _logger = logger;
-            _hubContext = hubContext;
+            _publisher = publisher;
         }
 
         public async Task<bool> ProcessPendingAsync(
@@ -407,42 +403,28 @@ namespace DailyChessPuzzleApi.Services
 
                     await transaction.CommitAsync(cancellationToken);
 
-                    // Yalnızca kayıtlı kullanıcıların global günlük
-                    // puan değişiklikleri SignalR bildirimi oluşturur.
-                    bool shouldNotifyClients =
-                        IsRegisteredIdentity(targetClientId) &&
-                        leaderboardChanged &&
-                        delivery.Period.Equals(
-                            "daily",
-                            StringComparison.OrdinalIgnoreCase);
-
-                    var notificationScope = delivery.CountryCode ?? "global";
-                    if (shouldNotifyClients && ShouldSendNotification(
-                            $"{delivery.Period}:{delivery.PeriodKey}:{notificationScope}"))
+                    // Publish changes after the transaction commits.
+                    if (leaderboardChanged)
                     {
                         try
                         {
-                            var eventPayload = new
-                            {
-                                period = delivery.Period,
-                                periodKey = delivery.PeriodKey
-                            };
-                            var groupName = delivery.CountryCode == null
-                                ? $"leaderboard:{delivery.Period}"
-                                : $"leaderboard:{delivery.Period}:{delivery.CountryCode}";
-                            await _hubContext.Clients.Group(groupName).SendAsync(
-                                "LeaderboardUpdated", eventPayload, CancellationToken.None);
+                            await _publisher.PublishAsync(
+                                delivery.Period,
+                                delivery.PeriodKey,
+                                delivery.CountryCode,
+                                CancellationToken.None);
 
                             _logger.LogInformation(
                                 "Leaderboard update notification sent. " +
-                                "OutboxId: {OutboxId}, PeriodKey: {PeriodKey}",
+                                "OutboxId: {OutboxId}, Period: {Period}, " +
+                                "PeriodKey: {PeriodKey}, CountryCode: {CountryCode}",
                                 delivery.OutboxId,
-                                delivery.PeriodKey);
+                                delivery.Period,
+                                delivery.PeriodKey,
+                                delivery.CountryCode ?? "GLOBAL");
                         }
                         catch (Exception notificationException)
                         {
-                            // SignalR bildirimi başarısız olsa bile
-                            // tamamlanmış Outbox işlemini tekrar kuyruğa alma.
                             _logger.LogWarning(
                                 notificationException,
                                 "Leaderboard notification could not be sent. " +
@@ -549,20 +531,6 @@ namespace DailyChessPuzzleApi.Services
                                 d.OutboxId == x.Id &&
                                 d.Status != LeaderboardCacheOutboxDeliveryStatus.Completed))
                 .ExecuteDeleteAsync(cancellationToken);
-        }
-
-        private static bool ShouldSendNotification(string periodKey)
-        {
-            var now = DateTime.UtcNow;
-            var previous = LastNotificationUtc.GetOrAdd(periodKey, DateTime.MinValue);
-            while (now - previous >= TimeSpan.FromSeconds(5))
-            {
-                if (LastNotificationUtc.TryUpdate(periodKey, now, previous))
-                    return true;
-                previous = LastNotificationUtc.GetOrAdd(periodKey, DateTime.MinValue);
-            }
-
-            return false;
         }
 
         // Kimliğin user: ile başlaması yeterli değildir.

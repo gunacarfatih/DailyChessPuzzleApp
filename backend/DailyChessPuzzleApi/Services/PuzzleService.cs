@@ -18,15 +18,18 @@ namespace DailyChessPuzzleApi.Services
         private readonly ApplicationDbContext _context;
         private readonly ILogger<PuzzleService> _logger;
         private readonly IDailyPuzzleService _dailyPuzzleService;
+        private readonly LeaderboardOutboxSignal? _outboxSignal;
 
         public PuzzleService(
             ApplicationDbContext context,
             ILogger<PuzzleService> logger,
-            IDailyPuzzleService dailyPuzzleService)
+            IDailyPuzzleService dailyPuzzleService,
+            LeaderboardOutboxSignal? outboxSignal = null)
         {
             _context = context;
             _logger = logger;
             _dailyPuzzleService = dailyPuzzleService;
+            _outboxSignal = outboxSignal;
         }
 
         // ---------------------------------------------------------
@@ -275,12 +278,14 @@ namespace DailyChessPuzzleApi.Services
 
                     await _context.SaveChangesAsync(cancellationToken);
 
-                    var completedScore = await FinalizeDailySessionAsync(
+                    var (completedScore, outboxCreated) = await FinalizeDailySessionAsync(
                         session,
                         session.PuzzleDate,
                         cancellationToken);
 
                     await transaction.CommitAsync(cancellationToken);
+                    if (outboxCreated)
+                        _outboxSignal?.Notify();
                     await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
 
                     return ToSessionResponse(
@@ -337,16 +342,19 @@ namespace DailyChessPuzzleApi.Services
                 await _context.SaveChangesAsync(cancellationToken);
 
                 int? score = null;
+                bool outboxCreatedForMove = false;
 
                 if (session.IsCompleted)
                 {
-                    score = await FinalizeDailySessionAsync(
+                    (score, outboxCreatedForMove) = await FinalizeDailySessionAsync(
                         session,
                         session.PuzzleDate,
                         cancellationToken);
                 }
 
                 await transaction.CommitAsync(cancellationToken);
+                if (outboxCreatedForMove)
+                    _outboxSignal?.Notify();
 
                 if (session.IsCompleted)
                     await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
@@ -861,6 +869,7 @@ namespace DailyChessPuzzleApi.Services
                 await _context.SaveChangesAsync(cancellationToken);
 
                 await transaction.CommitAsync(cancellationToken);
+                _outboxSignal?.Notify();
 
                 _logger.LogInformation(
                     "Bonus puzzle result saved. UserId: {UserId}, PuzzleId: {PuzzleId}, Score: {Score}",
@@ -887,7 +896,7 @@ namespace DailyChessPuzzleApi.Services
         // GÜNLÜK OTURUMU SONUÇLANDIRMA
         // ---------------------------------------------------------
 
-        private async Task<int> FinalizeDailySessionAsync(
+        private async Task<(int Score, bool OutboxCreated)> FinalizeDailySessionAsync(
             PuzzleGameSession session,
             DateOnly today,
             CancellationToken cancellationToken)
@@ -932,7 +941,7 @@ namespace DailyChessPuzzleApi.Services
             // Daha önce başarılı çözüm varsa yeni PuzzleAttempt,
             // leaderboard veya bonus kaydı oluşturma.
             if (previousAttempt != null)
-                return score;
+                return (score, false);
 
             var seconds = CalculateDailySessionSeconds(session);
             var completedAt = session.CompletedAtUtc ?? DateTime.UtcNow;
@@ -983,7 +992,7 @@ namespace DailyChessPuzzleApi.Services
                 session.Id,
                 score);
 
-            return score;
+            return (score, session.UserId.HasValue);
         }
 
         private async Task TryCreateBonusAfterDailyCommitAsync(

@@ -1,4 +1,3 @@
-
 import 'dart:async';
 
 import 'package:daily_chess_puzzle/core/models/api_response.dart';
@@ -6,6 +5,7 @@ import 'package:daily_chess_puzzle/features/leaderboard/models/leaderboard_perio
 import 'package:daily_chess_puzzle/features/leaderboard/models/leaderboard_response.dart';
 import 'package:daily_chess_puzzle/features/leaderboard/screens/leaderboard_page.dart';
 import 'package:daily_chess_puzzle/features/leaderboard/services/leaderboard_api_service.dart';
+import 'package:daily_chess_puzzle/providers/auth_provider.dart';
 import 'package:daily_chess_puzzle/providers/leaderboard_provider.dart';
 
 import 'package:flutter/material.dart';
@@ -33,7 +33,7 @@ void main() {
 
         expect(environment.apiService.requestCount, 1);
         expect(environment.apiService.requestedCountries, [null]);
-        expect(environment.apiService.requestedPeriods, ['daily']);
+        expect(environment.apiService.requestedPeriods, ['all']);
 
         expect(
           find.byType(CircularProgressIndicator),
@@ -288,6 +288,7 @@ class _TestEnvironment {
 
   late final _FakeLeaderboardApiService apiService;
   late final LeaderboardProvider provider;
+  final AuthProvider authProvider = AuthProvider();
 
   int locationRequestCount = 0;
 
@@ -313,8 +314,11 @@ class _TestEnvironment {
     );
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<LeaderboardProvider>.value(
-        value: provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+          ChangeNotifierProvider<LeaderboardProvider>.value(value: provider),
+        ],
         child: const MaterialApp(
           home: LeaderboardPage(),
         ),
@@ -411,6 +415,7 @@ class _TestEnvironment {
       );
 
       provider.dispose();
+      authProvider.dispose();
     }
   }
 }

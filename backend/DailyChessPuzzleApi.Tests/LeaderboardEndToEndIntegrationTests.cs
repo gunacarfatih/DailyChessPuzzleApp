@@ -589,15 +589,14 @@ public sealed class LeaderboardEndToEndIntegrationTests
         await using var context =
             database.CreateContext();
 
-        var hubContext = factory.Services
-            .GetRequiredService<
-                IHubContext<LeaderboardHub>>();
+        var publisher = factory.Services
+            .GetRequiredService<ILeaderboardPublisher>();
 
         var service = new LeaderboardOutboxService(
             context,
             cache,
             NullLogger<LeaderboardOutboxService>.Instance,
-            hubContext);
+            publisher);
 
         var hasMore = await service.ProcessPendingAsync(
             CancellationToken.None);

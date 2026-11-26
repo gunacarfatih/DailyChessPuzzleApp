@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/auth_provider.dart';
+import '../../../providers/leaderboard_provider.dart';
 
 import '../../../core/storage/client_id_storage.dart';
 import '../../auth/screens/login_page.dart';
 import '../../auth/screens/register_page.dart';
 import '../../leaderboard/models/leaderboard_entry.dart';
-import '../services/user_stats_api_service.dart';
+import '../../auth/screens/email_verification_page.dart';
 import 'password_management_page.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -22,7 +23,6 @@ class ProfilePage extends StatefulWidget {
 
 class ProfilePageState extends State<ProfilePage> {
   final ClientIdStorage _clientIdStorage = ClientIdStorage();
-  final UserStatsApiService _userStatsApiService = UserStatsApiService();
 
   bool _isLoading = true;
   bool _isLoggedIn = false;
@@ -38,7 +38,14 @@ class ProfilePageState extends State<ProfilePage> {
   String? _lastName;
   int? _userId;
 
-  LeaderboardEntry? _profileData;
+  int _profileGeneration = 0;
+
+  LeaderboardEntry? get _profileData {
+    final auth = context.read<AuthProvider>();
+    if (!auth.isLoggedIn || auth.userId != _userId) return null;
+    return context.read<LeaderboardProvider>()
+        .leaderboardFor(null, period: 'alltime')?.allTime.currentUser;
+  }
 
   @override
   void initState() {
@@ -46,93 +53,38 @@ class ProfilePageState extends State<ProfilePage> {
     _loadProfile();
   }
 
-  // Profil ekranını yeniler.
-  Future<void> refreshProfile() async {
-    if (!mounted || _isLoading || _isLoggingOut) return;
-
-    await _loadProfile();
+  Future<void> refreshProfile({bool forceRefresh = false}) async {
+    if (!mounted || _isLoggingOut) return;
+    await _loadProfile(forceRefresh: forceRefresh);
   }
 
-  // Oturum ve profil bilgilerini yükler.
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfile({bool forceRefresh = false}) async {
     if (!mounted) return;
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
+    final generation = ++_profileGeneration;
+    final auth = context.read<AuthProvider>();
+    final leaderboard = context.read<LeaderboardProvider>();
     try {
-      // Provider referanslarını asenkron işlemlerden önce al.
-      final authProvider = context.read<AuthProvider>();
-
-      // Uygulama açılışındaki oturum yüklemesinin tamamlanmasını bekle.
-      await authProvider.initialize();
-
+      await auth.initialize();
       final clientId = await _clientIdStorage.getClientId();
-
-      final isLoggedIn = authProvider.isLoggedIn;
-
-      final username = authProvider.username;
-      final email = authProvider.email;
-      final firstName = authProvider.firstName;
-      final lastName = authProvider.lastName;
-      final userId = authProvider.userId;
-      final hasPassword = authProvider.hasPassword;
-
-      if (!mounted) return;
-
-      LeaderboardEntry? currentUser;
-
-      // Yalnızca kayıtlı kullanıcıların leaderboard istatistikleri bulunur.
-      // Misafir kullanıcılar leaderboard sistemine dahil edilmez.
-      if (isLoggedIn) {
-        final statsResponse = await _userStatsApiService.getMyStats();
-
-        if (!mounted) return;
-
-        if (!statsResponse.success && statsResponse.data == null) {
-          setState(() {
-            _clientId = clientId;
-            _isLoggedIn = isLoggedIn;
-            _username = username;
-            _email = email;
-            _firstName = firstName;
-            _lastName = lastName;
-            _userId = userId;
-            _hasPassword = hasPassword;
-            _errorMessage =
-                statsResponse.message ?? 'Profil bilgileri alınamadı.';
-            _isLoading = false;
-          });
-
-          return;
-        }
-
-        currentUser = statsResponse.data;
-      }
-
-      if (!mounted) return;
-
+      if (!mounted || generation != _profileGeneration) return;
       setState(() {
         _clientId = clientId;
-        _isLoggedIn = isLoggedIn;
-        _username = username;
-        _email = email;
-        _firstName = firstName;
-        _lastName = lastName;
-        _userId = userId;
-        _hasPassword = hasPassword;
-        _profileData = currentUser;
+        _isLoggedIn = auth.isLoggedIn;
+        _username = auth.username;
+        _email = auth.email;
+        _firstName = auth.firstName;
+        _lastName = auth.lastName;
+        _userId = auth.userId;
+        _hasPassword = auth.hasPassword;
+        _errorMessage = null;
         _isLoading = false;
       });
-    } catch (error) {
-      if (!mounted) return;
-
-      if (kDebugMode) {
-        debugPrint('Profil yükleme hatası: $error');
+      if (auth.isLoggedIn) {
+        await leaderboard.loadLeaderboard(period: 'alltime', forceRefresh: forceRefresh);
       }
-
+    } catch (error) {
+      if (!mounted || generation != _profileGeneration) return;
+      if (kDebugMode) debugPrint('Profil yükleme hatası: $error');
       setState(() {
         _errorMessage = 'Profil bilgileri alınırken bir hata oluştu.';
         _isLoading = false;
@@ -257,6 +209,29 @@ class ProfilePageState extends State<ProfilePage> {
       await _loadProfile();
     }
   }
+
+
+  Future<void> _openEmailVerificationPage() async {
+    final authProvider = context.read<AuthProvider>();
+    final email = authProvider.email?.trim();
+
+    if (!authProvider.isLoggedIn ||
+        authProvider.emailVerified ||
+        email == null ||
+        email.isEmpty) {
+      return;
+    }
+
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EmailVerificationPage(
+          email: email,
+        ),
+      ),
+    );
+  }
+
 
   // Şifre belirleme/değiştirme ekranını açar.
   Future<void> _openPasswordManagementPage() async {
@@ -417,6 +392,14 @@ class ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
+    context.watch<LeaderboardProvider>();
+    final auth = context.watch<AuthProvider>();
+    if (!_isLoading && (auth.isLoggedIn != _isLoggedIn || auth.userId != _userId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadProfile();
+      });
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -425,20 +408,22 @@ class ProfilePageState extends State<ProfilePage> {
         ),
         actions: [
           IconButton(
-            onPressed: _isLoading ? null : refreshProfile,
+            onPressed: _isLoading ? null : () => refreshProfile(forceRefresh: true),
             icon: const Icon(Icons.refresh),
             tooltip: 'Yenile',
           ),
           const SizedBox(width: 8),
         ],
       ),
-      body: RefreshIndicator(onRefresh: refreshProfile, child: _buildBody()),
+      body: RefreshIndicator(onRefresh: () => refreshProfile(forceRefresh: true), child: _buildBody()),
     );
   }
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
     }
 
     if (_errorMessage != null) {
@@ -450,16 +435,29 @@ class ProfilePageState extends State<ProfilePage> {
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 30),
       children: [
         _buildProfileHeader(),
+
+        if (_isLoggedIn) ...[
+          const SizedBox(height: 16),
+          _buildEmailVerificationCard(),
+        ],
+
         const SizedBox(height: 20),
-        if (_isLoggedIn) _buildLoggedInActions() else _buildGuestActions(),
+
+        if (_isLoggedIn)
+          _buildLoggedInActions()
+        else
+          _buildGuestActions(),
+
         const SizedBox(height: 24),
         _buildSectionTitle('İstatistikler'),
         const SizedBox(height: 14),
         _buildStatistics(),
+
         const SizedBox(height: 24),
         _buildSectionTitle('Oyuncu Bilgileri'),
         const SizedBox(height: 14),
         _buildPlayerInformation(),
+
         if (_isLoggedIn) ...[
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -468,6 +466,7 @@ class ProfilePageState extends State<ProfilePage> {
             label: const Text('Google hesabını bağla'),
           ),
         ],
+
         const SizedBox(height: 24),
         _buildInformationCard(),
       ],
@@ -476,6 +475,7 @@ class ProfilePageState extends State<ProfilePage> {
 
   @override
   void dispose() {
+    _profileGeneration++;
     super.dispose();
   }
 
@@ -483,6 +483,13 @@ class ProfilePageState extends State<ProfilePage> {
     final displayName = _isLoggedIn ? _displayFullName : 'Satranç Oyuncusu';
 
     final subtitle = _isLoggedIn ? (_email ?? '') : _displayClientId;
+
+    final emailVerified = context.select<AuthProvider, bool>(
+          (provider) =>
+      provider.isLoggedIn &&
+          provider.userId == _userId &&
+          provider.emailVerified,
+    );
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -505,7 +512,7 @@ class ProfilePageState extends State<ProfilePage> {
               border: Border.all(color: const Color(0xFFB7D7A8), width: 2),
             ),
             child: Icon(
-              _isLoggedIn ? Icons.verified_user : Icons.person,
+              emailVerified ? Icons.verified_user : Icons.person,
               size: 52,
               color: const Color(0xFFB7D7A8),
             ),
@@ -533,7 +540,9 @@ class ProfilePageState extends State<ProfilePage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  _isLoggedIn ? Icons.verified : Icons.workspace_premium,
+                  _isLoggedIn
+                      ? (emailVerified ? Icons.verified : Icons.person_outline)
+                      : Icons.workspace_premium,
                   size: 16,
                   color: const Color(0xFFD6B46A),
                 ),
@@ -606,6 +615,100 @@ class ProfilePageState extends State<ProfilePage> {
     );
   }
 
+
+  Widget _buildEmailVerificationCard() {
+    final authProvider = context.watch<AuthProvider>();
+
+    if (!authProvider.isLoggedIn ||
+        authProvider.userId != _userId) {
+      return const SizedBox.shrink();
+    }
+
+    final emailVerified = authProvider.emailVerified;
+
+    final statusColor = emailVerified
+        ? const Color(0xFFB7D7A8)
+        : const Color(0xFFD6B46A);
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1B2923),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                emailVerified
+                    ? Icons.verified_user_outlined
+                    : Icons.mark_email_unread_outlined,
+                color: statusColor,
+                size: 25,
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'E-posta doğrulaması',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            emailVerified
+                ? 'E-posta doğrulandı'
+                : 'E-posta doğrulanmadı',
+            style: TextStyle(
+              color: statusColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            emailVerified
+                ? 'E-posta adresin başarıyla doğrulandı.'
+                : 'Hesap güvenliğini artırmak için '
+                'e-posta adresini doğrulayabilirsin.',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+          if (!emailVerified) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 46,
+              child: ElevatedButton.icon(
+                onPressed: _isLoggingOut || authProvider.isLoading
+                    ? null
+                    : _openEmailVerificationPage,
+                icon: const Icon(Icons.email_outlined),
+                label: const Text('E-postayı Doğrula'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFD6B46A),
+                  foregroundColor: const Color(0xFF101A17),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+
   Widget _buildLoggedInActions() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -669,6 +772,17 @@ class ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildStatistics() {
+    final provider = context.read<LeaderboardProvider>();
+    if (_isLoggedIn && provider.leaderboardFor(null, period: 'alltime') == null) {
+      final error = provider.errorFor(null, period: 'alltime');
+      if (error != null) {
+        return TextButton(
+          onPressed: () => refreshProfile(forceRefresh: true),
+          child: Text('$error — Tekrar dene'),
+        );
+      }
+      return const Center(child: CircularProgressIndicator());
+    }
     final totalScore = _profileData?.totalScore ?? 0;
     final solvedCount = _profileData?.solvedCount ?? 0;
     final rank = _profileData?.rank;

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../../core/services/location_service.dart';
 import '../../../providers/leaderboard_provider.dart';
+import '../../../providers/auth_provider.dart';
 import '../models/leaderboard_entry.dart';
 import '../models/leaderboard_period.dart';
 import '../models/leaderboard_response.dart';
@@ -30,6 +31,10 @@ class LeaderboardPageState extends State<LeaderboardPage> {
   String? _detectedCountryCode;
   String? _detectedCountryName;
 
+  String? _countryFor(AuthProvider auth) => auth.isLoggedIn
+      ? auth.countryCode?.trim().toUpperCase()
+      : _detectedCountryCode;
+
   @override
   void initState() {
     super.initState();
@@ -48,6 +53,10 @@ class LeaderboardPageState extends State<LeaderboardPage> {
         _detectedCountryCode = countryInfo.code;
         _detectedCountryName = countryInfo.name;
       });
+      final country = _countryFor(context.read<AuthProvider>());
+      if (country != null && country.isNotEmpty) {
+        await context.read<LeaderboardProvider>().loadLeaderboard(country: country);
+      }
     } catch (error) {
       if (kDebugMode) {
         debugPrint('Konum bilgisi yükleme hatası: $error');
@@ -69,35 +78,17 @@ class LeaderboardPageState extends State<LeaderboardPage> {
 
     final country = _selectedCountry == 'Global'
         ? null
-        : _detectedCountryCode;
+        : _countryFor(context.read<AuthProvider>());
 
     await context.read<LeaderboardProvider>().loadLeaderboard(
       country: country,
-      period: _selectedPeriod.toLowerCase(),
+      period: 'all',
       forceRefresh: forceRefresh,
     );
   }
 
-  // MainNavigationPage ve SignalR tarafından çağrılır.
-  // Mevcut leaderboard verisini zorla yeniler.
-  Future<void> refreshLeaderboard() async {
-    if (kDebugMode) {
-      debugPrint(
-        'LEADERBOARD PAGE: refreshLeaderboard() çağrıldı.',
-      );
-    }
-
-    if (!mounted) return;
-
-    final country = _selectedCountry == 'Global'
-        ? null
-        : _detectedCountryCode;
-
-    await context.read<LeaderboardProvider>().refreshLeaderboard(
-      country: country,
-      period: 'all',
-    );
-  }
+  // Navigasyon sırasında mevcut önbelleği kullanır.
+  Future<void> refreshLeaderboard() => _loadLeaderboard();
 
   // API yanıtından seçili dönemin verisini alır.
   LeaderboardPeriod? _getSelectedLeaderboard(
@@ -136,14 +127,16 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     context.watch<LeaderboardProvider>();
 
     // Seçili ülkenin leaderboard anahtarı.
+    final auth = context.watch<AuthProvider>();
+    final availableCountry = _countryFor(auth);
     final selectedCountryCode = _selectedCountry == 'Global'
         ? null
-        : _detectedCountryCode;
+        : availableCountry;
 
     // Provider'dan seçili ülkenin verisini alır.
     final leaderboard = leaderboardProvider.leaderboardFor(
       selectedCountryCode,
-      period: _selectedPeriod.toLowerCase(),
+      period: 'all',
     );
 
     // Seçili dönemin verisini belirler.
@@ -153,12 +146,12 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     // Yüklenme ve hata durumlarını Provider'dan alır.
     final isLoading = leaderboardProvider.isLoadingFor(
       selectedCountryCode,
-      period: _selectedPeriod.toLowerCase(),
+      period: 'all',
     );
 
     final errorMessage = leaderboardProvider.errorFor(
       selectedCountryCode,
-      period: _selectedPeriod.toLowerCase(),
+      period: 'all',
     );
 
     return Scaffold(
@@ -175,13 +168,13 @@ class LeaderboardPageState extends State<LeaderboardPage> {
         elevation: 0,
       ),
       body: SafeArea(
-        child: isLoading
+        child: isLoading && selectedLeaderboard == null
             ? const Center(
           child: CircularProgressIndicator(
             color: Color(0xFFB7D7A8),
           ),
         )
-            : errorMessage != null
+            : errorMessage != null && selectedLeaderboard == null
             ? _buildError(errorMessage)
             : selectedLeaderboard == null
             ? _buildEmpty()
@@ -191,14 +184,20 @@ class LeaderboardPageState extends State<LeaderboardPage> {
           ),
           color: const Color(0xFFB7D7A8),
           child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(16),
             children: [
               _buildHeader(),
               const SizedBox(height: 20),
-              _buildCountrySelector(),
+              _buildCountrySelector(availableCountry),
               const SizedBox(height: 16),
               _buildPeriodSelector(),
               const SizedBox(height: 24),
+
+              if (isLoading)
+                const LinearProgressIndicator(color: Color(0xFFB7D7A8)),
+              if (errorMessage != null)
+                Text(errorMessage, style: const TextStyle(color: Colors.white70)),
 
               // Sıralama ve kullanıcı verisi yoksa
               // bilgilendirme mesajı göster.
@@ -270,7 +269,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     );
   }
 
-  Widget _buildCountrySelector() {
+  Widget _buildCountrySelector(String? country) {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -283,11 +282,12 @@ class LeaderboardPageState extends State<LeaderboardPage> {
             label: 'Global',
             value: 'Global',
           ),
-          if (_detectedCountryCode != null &&
-              _detectedCountryName != null)
+          if (country != null && country.isNotEmpty)
             _buildCountryButton(
-              label: _detectedCountryName!,
-              value: _detectedCountryCode!,
+              label: country == _detectedCountryCode
+                  ? (_detectedCountryName ?? country)
+                  : country,
+              value: 'Country',
             ),
         ],
       ),
@@ -298,7 +298,8 @@ class LeaderboardPageState extends State<LeaderboardPage> {
     required String label,
     required String value,
   }) {
-    final isSelected = _selectedCountry == value;
+    final isSelected = _selectedCountry == value ||
+        (value == 'Global' && _countryFor(context.read<AuthProvider>()) == null);
 
     return Expanded(
       child: GestureDetector(

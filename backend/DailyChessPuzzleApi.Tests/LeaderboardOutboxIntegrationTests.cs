@@ -90,7 +90,7 @@ public sealed class LeaderboardOutboxIntegrationTests
             context,
             cache,
             NullLogger<LeaderboardOutboxService>.Instance,
-            hubContext: null!);
+            publisher: new NoOpLeaderboardPublisher());
 
         var hasMore = await service.ProcessPendingAsync(CancellationToken.None);
         var score = await context.LeaderboardScores.SingleAsync();
@@ -254,7 +254,7 @@ public sealed class LeaderboardOutboxIntegrationTests
                 context,
                 cache,
                 NullLogger<LeaderboardOutboxService>.Instance,
-                hubContext: null!);
+                publisher: new NoOpLeaderboardPublisher());
 
             var hasMore = await service.ProcessPendingAsync(
                 CancellationToken.None);
@@ -329,7 +329,7 @@ public sealed class LeaderboardOutboxIntegrationTests
                 context,
                 new RecordingLeaderboardCacheService(),
                 NullLogger<LeaderboardOutboxService>.Instance,
-                hubContext: null!);
+                publisher: new NoOpLeaderboardPublisher());
 
             await service.ProcessPendingAsync(
                 CancellationToken.None);
@@ -381,6 +381,20 @@ public sealed class LeaderboardOutboxIntegrationTests
             await verificationContext
                 .LeaderboardCacheOutboxDeliveries.CountAsync());
     }
+
+    private sealed class NoOpLeaderboardPublisher
+    : ILeaderboardPublisher
+    {
+        public Task PublishAsync(
+            string period,
+            string periodKey,
+            string? countryCode,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class RecordingLeaderboardCacheService : ILeaderboardCacheService
     {
         public string? LastUpdatedKey { get; private set; }

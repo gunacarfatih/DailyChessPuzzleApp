@@ -388,6 +388,9 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 builder.Services.AddScoped<IPuzzleService, PuzzleService>();
 
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
+builder.Services.AddSingleton<
+    ILeaderboardPublisher,
+    LeaderboardPublisher>();
 
 // PublicId üretim servisi.
 builder.Services.AddSingleton<IPublicIdService, PublicIdService>();
@@ -404,6 +407,7 @@ builder.Services.AddScoped<IDailyPuzzleService, DailyPuzzleService>();
 
 builder.Services.AddHostedService<DailyPuzzleBackgroundService>();
 
+builder.Services.AddSingleton<LeaderboardOutboxSignal>();
 builder.Services.AddHostedService<LeaderboardOutboxBackgroundService>();
 
 builder.Services.AddHostedService<RefreshTokenCleanupBackgroundService>();
