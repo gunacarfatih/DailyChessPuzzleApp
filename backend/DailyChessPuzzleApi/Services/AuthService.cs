@@ -1,4 +1,4 @@
-﻿using DailyChessPuzzleApi.Data;
+using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.DTOs.Auth;
 using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Services.Interfaces;
@@ -149,26 +149,44 @@ namespace DailyChessPuzzleApi.Services
             CancellationToken cancellationToken)
         {
             var email = request.Email.Trim().ToLowerInvariant();
-            var user = await _context.Users.FirstOrDefaultAsync(
-                x => x.Email == email,
-                cancellationToken);
-
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
+            var userId = await _context.Users.AsNoTracking()
+                .Where(x => x.Email == email)
+                .Select(x => (int?)x.Id)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (!userId.HasValue)
+                throw new AppException(400, "EMAIL_VERIFICATION_CODE_INVALID");
+            var user = await GetLockedUserAsync(userId.Value, cancellationToken);
             if (user == null || user.EmailVerified ||
                 user.EmailVerificationCodeHash == null ||
-                !user.EmailVerificationCodeExpiresAtUtc.HasValue ||
-                user.EmailVerificationCodeExpiresAtUtc.Value <= DateTime.UtcNow ||
-                !CryptographicOperations.FixedTimeEquals(
-                    Convert.FromHexString(user.EmailVerificationCodeHash),
-                    Convert.FromHexString(HashEmailVerificationCode(email, request.Code))))
+                user.EmailVerificationCodeExpiresAtUtc <= DateTime.UtcNow ||
+                user.EmailVerificationFailedAttempts >= 5)
+                throw new AppException(400, "EMAIL_VERIFICATION_CODE_INVALID");
+
+            var codeMatches = CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(user.EmailVerificationCodeHash),
+                Convert.FromHexString(HashEmailVerificationCode(email, request.Code)));
+            if (!codeMatches)
             {
+                user.EmailVerificationFailedAttempts++;
+                if (user.EmailVerificationFailedAttempts >= 5)
+                {
+                    user.EmailVerificationCodeHash = null;
+                    user.EmailVerificationCodeExpiresAtUtc = null;
+                }
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
                 throw new AppException(400, "EMAIL_VERIFICATION_CODE_INVALID");
             }
 
             user.EmailVerified = true;
             user.EmailVerificationCodeHash = null;
             user.EmailVerificationCodeExpiresAtUtc = null;
+            user.EmailVerificationFailedAttempts = 0;
             user.UpdatedAtUtc = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
         public async Task ResendVerificationAsync(
@@ -188,6 +206,7 @@ namespace DailyChessPuzzleApi.Services
             var code = GenerateEmailVerificationCode();
             user.EmailVerificationCodeHash = HashEmailVerificationCode(email, code);
             user.EmailVerificationCodeExpiresAtUtc = DateTime.UtcNow.AddMinutes(15);
+            user.EmailVerificationFailedAttempts = 0;
             user.UpdatedAtUtc = DateTime.UtcNow;
             await _context.SaveChangesAsync(cancellationToken);
             try
@@ -202,6 +221,84 @@ namespace DailyChessPuzzleApi.Services
             {
                 throw new AppException(503, "EMAIL_DELIVERY_FAILED");
             }
+        }
+
+        public async Task RequestPasswordResetAsync(
+            PasswordResetCodeRequest request,
+            CancellationToken cancellationToken)
+        {
+            var email = request.Email.Trim().ToLowerInvariant();
+            var user = await _context.Users.SingleOrDefaultAsync(
+                candidate => candidate.Email == email &&
+                    candidate.PasswordHash != null,
+                cancellationToken);
+            if (user == null)
+                return;
+
+            _emailSender.EnsureConfigured();
+            var code = GenerateEmailVerificationCode();
+            user.PasswordResetCodeHash = HashEmailVerificationCode(email, code);
+            user.PasswordResetCodeExpiresAtUtc = DateTime.UtcNow.AddMinutes(15);
+            user.PasswordResetFailedAttempts = 0;
+            user.UpdatedAtUtc = DateTime.UtcNow;
+            await _context.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await _emailSender.SendPasswordResetCodeAsync(email, code, cancellationToken);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { throw new AppException(503, "EMAIL_DELIVERY_FAILED"); }
+        }
+
+        public async Task ResetPasswordAsync(
+            ResetPasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            var email = request.Email.Trim().ToLowerInvariant();
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
+            var userId = await _context.Users.AsNoTracking()
+                .Where(candidate => candidate.Email == email)
+                .Select(candidate => (int?)candidate.Id)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (!userId.HasValue)
+                throw new AppException(400, "PASSWORD_RESET_CODE_INVALID");
+            var user = await GetLockedUserAsync(userId.Value, cancellationToken);
+            if (user == null || string.IsNullOrWhiteSpace(user.PasswordHash))
+                throw new AppException(400, "PASSWORD_RESET_CODE_INVALID");
+
+            var valid = user.PasswordResetFailedAttempts < 5 &&
+                user.PasswordResetCodeHash != null &&
+                user.PasswordResetCodeExpiresAtUtc > DateTime.UtcNow &&
+                CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(user.PasswordResetCodeHash),
+                    Convert.FromHexString(HashEmailVerificationCode(email, request.Code)));
+            if (!valid)
+            {
+                user.PasswordResetFailedAttempts++;
+                if (user.PasswordResetFailedAttempts >= 5)
+                {
+                    user.PasswordResetCodeHash = null;
+                    user.PasswordResetCodeExpiresAtUtc = null;
+                }
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                throw new AppException(400, "PASSWORD_RESET_CODE_INVALID");
+            }
+
+            var now = DateTime.UtcNow;
+            user.PasswordHash = _passwordHasher.HashPassword(user, request.NewPassword);
+            user.PasswordResetCodeHash = null;
+            user.PasswordResetCodeExpiresAtUtc = null;
+            user.PasswordResetFailedAttempts = 0;
+            user.TokenVersion++;
+            user.UpdatedAtUtc = now;
+            await _context.RefreshTokens
+                .Where(token => token.UserId == user.Id && token.RevokedAtUtc == null)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(
+                    token => token.RevokedAtUtc, now), cancellationToken);
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
         public async Task<AuthResponse> LoginAsync(
@@ -774,6 +871,44 @@ namespace DailyChessPuzzleApi.Services
                 await transaction.RollbackAsync(cancellationToken);
                 throw;
             }
+        }
+
+        public async Task DeleteAccountAsync(
+            int userId,
+            CancellationToken cancellationToken)
+        {
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken);
+            var user = await GetLockedUserAsync(userId, cancellationToken);
+            if (user == null)
+                return;
+
+            var attemptIds = await _context.PuzzleAttempts
+                .Where(attempt => attempt.UserId == userId)
+                .Select(attempt => attempt.Id)
+                .ToListAsync(cancellationToken);
+
+            await _context.LeaderboardCacheOutboxes
+                .Where(outbox => outbox.UserId == userId ||
+                    (outbox.PuzzleAttemptId.HasValue &&
+                     attemptIds.Contains(outbox.PuzzleAttemptId.Value)))
+                .ExecuteDeleteAsync(cancellationToken);
+            await _context.BonusPuzzleAssignments
+                .Where(assignment => assignment.UserId == userId)
+                .ExecuteDeleteAsync(cancellationToken);
+            await _context.PuzzleGameSessions
+                .Where(session => session.UserId == userId)
+                .ExecuteDeleteAsync(cancellationToken);
+            await _context.LeaderboardScores
+                .Where(score => score.UserId == userId)
+                .ExecuteDeleteAsync(cancellationToken);
+            await _context.PuzzleAttempts
+                .Where(attempt => attempt.UserId == userId)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            _context.Users.Remove(user);
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
         private Task<bool> UsernameExistsAsync(

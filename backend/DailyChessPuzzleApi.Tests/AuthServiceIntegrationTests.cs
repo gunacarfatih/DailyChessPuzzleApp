@@ -1502,5 +1502,14 @@ public sealed class AuthServiceIntegrationTests
             LastCode = code;
             return Task.CompletedTask;
         }
+
+        public Task SendPasswordResetCodeAsync(
+            string email,
+            string code,
+            CancellationToken cancellationToken)
+        {
+            LastCode = code;
+            return Task.CompletedTask;
+        }
     }
 }

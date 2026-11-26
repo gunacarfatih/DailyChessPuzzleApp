@@ -325,6 +325,47 @@ class ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> _confirmDeleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Hesabı sil?'),
+        content: const Text(
+          'Hesabınız ve hesaba bağlı bulmaca ilerlemeniz kalıcı olarak silinecek. Bu işlem geri alınamaz.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Hesabı sil'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final result = await context.read<AuthProvider>().deleteAccount();
+      if (!mounted) return;
+      if (result.success) {
+        await _loadProfile();
+        await widget.onAuthChanged?.call();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.message ?? 'Hesap silinemedi.')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Hesap silinemedi. Lütfen tekrar deneyin.')),
+      );
+    }
+  }
+
   // JWT oturumunu temizler ve misafir profilini yükler.
   Future<void> _logout() async {
     if (!mounted) return;
@@ -608,6 +649,12 @@ class ProfilePageState extends State<ProfilePage> {
                   : const Icon(Icons.logout),
               label: Text(_isLoggingOut ? 'Çıkış yapılıyor...' : 'Çıkış Yap'),
             ),
+          ),
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: _isLoggingOut ? null : _confirmDeleteAccount,
+            icon: const Icon(Icons.delete_forever_outlined, color: Colors.red),
+            label: const Text('Hesabı Sil', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),

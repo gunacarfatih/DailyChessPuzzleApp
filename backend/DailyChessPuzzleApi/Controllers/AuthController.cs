@@ -1,4 +1,4 @@
-﻿using DailyChessPuzzleApi.DTOs.Auth;
+using DailyChessPuzzleApi.DTOs.Auth;
 using DailyChessPuzzleApi.Responses;
 using DailyChessPuzzleApi.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -61,6 +61,31 @@ namespace DailyChessPuzzleApi.Controllers
                 HttpContext,
                 "If the account needs verification, a new code has been sent.",
                 new { accepted = true }));
+        }
+
+        [AllowAnonymous]
+        [HttpPost("password/reset/request")]
+        [EnableRateLimiting("auth-verification")]
+        public async Task<IActionResult> RequestPasswordReset(
+            [FromBody] PasswordResetCodeRequest request,
+            CancellationToken cancellationToken)
+        {
+            await _authService.RequestPasswordResetAsync(request, cancellationToken);
+            return Ok(ResponseFactory.Success(HttpContext,
+                "If the account exists, a reset code has been sent.",
+                new { accepted = true }));
+        }
+
+        [AllowAnonymous]
+        [HttpPost("password/reset")]
+        [EnableRateLimiting("auth-verification")]
+        public async Task<IActionResult> ResetPassword(
+            [FromBody] ResetPasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            await _authService.ResetPasswordAsync(request, cancellationToken);
+            return Ok(ResponseFactory.Success(HttpContext,
+                "Password reset successfully.", new { reset = true }));
         }
 
         [HttpPost("login")]
@@ -179,6 +204,20 @@ namespace DailyChessPuzzleApi.Controllers
                 HttpContext,
                 "Password has been changed successfully.",
                 new { HasPassword = true }));
+        }
+
+        [Authorize]
+        [HttpDelete("account")]
+        [EnableRateLimiting("auth-sensitive")]
+        public async Task<IActionResult> DeleteAccount(
+            CancellationToken cancellationToken)
+        {
+            await _authService.DeleteAccountAsync(
+                GetAuthenticatedUserId(), cancellationToken);
+            return Ok(ResponseFactory.Success(
+                HttpContext,
+                "Account deleted successfully.",
+                new { deleted = true }));
         }
 
 

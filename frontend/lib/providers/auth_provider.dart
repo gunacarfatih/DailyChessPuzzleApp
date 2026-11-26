@@ -433,6 +433,21 @@ class AuthProvider extends ChangeNotifier {
     });
   }
 
+  Future<ApiResponse<Map<String, dynamic>>> requestPasswordReset({
+    required String email,
+  }) => _withLoading(() =>
+      _authApiService.requestPasswordReset(email: email));
+
+  Future<ApiResponse<Map<String, dynamic>>> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) => _withLoading(() => _authApiService.resetPassword(
+        email: email,
+        code: code,
+        newPassword: newPassword,
+      ));
+
   // Google ile giriş.
   Future<ApiResponse<AuthResponse>> loginWithGoogle() {
     return _performLogin(
@@ -526,6 +541,20 @@ class AuthProvider extends ChangeNotifier {
     _logoutOperations[generation] = operation;
 
     return operation;
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> deleteAccount() {
+    return _withLoading(() async {
+      final generation = _authStorage.sessionGeneration;
+      _ensureCurrentSession(generation);
+      final result = await _authApiService.deleteAccount();
+      if (result.success) {
+        _initializationFuture = null;
+        _clearUserData();
+        _notifySafely();
+      }
+      return result;
+    });
   }
 
   Future<void> _performLogout(

@@ -1,4 +1,4 @@
-﻿
+
 using DailyChessPuzzleApi.DTOs.Auth;
 
 namespace DailyChessPuzzleApi.Services.Interfaces
@@ -47,5 +47,11 @@ namespace DailyChessPuzzleApi.Services.Interfaces
             int userId,
             ChangePasswordRequest request,
             CancellationToken cancellationToken);
+
+        Task DeleteAccountAsync(int userId, CancellationToken cancellationToken);
+
+        Task RequestPasswordResetAsync(PasswordResetCodeRequest request, CancellationToken cancellationToken);
+
+        Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken cancellationToken);
     }
 }

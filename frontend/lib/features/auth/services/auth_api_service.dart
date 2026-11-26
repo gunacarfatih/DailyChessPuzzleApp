@@ -134,6 +134,22 @@ class AuthApiService {
     );
   }
 
+  Future<ApiResponse<Map<String, dynamic>>> requestPasswordReset({
+    required String email,
+  }) => _postMap(ApiConstants.requestPasswordResetEndpoint, {
+        'email': email.trim(),
+      });
+
+  Future<ApiResponse<Map<String, dynamic>>> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) => _postMap(ApiConstants.resetPasswordEndpoint, {
+        'email': email.trim(),
+        'code': code.trim(),
+        'newPassword': newPassword,
+      });
+
   Future<ApiResponse<Map<String, dynamic>>> _postMap(
       String path,
       Map<String, dynamic> data,
@@ -525,5 +541,23 @@ class AuthApiService {
 
     // Yeni bir oturum açılmış olabileceğinden
     // burada tekrar clearSession çağrılmaz.
+  }
+
+  Future<ApiResponse<Map<String, dynamic>>> deleteAccount() async {
+    final generation = _authStorage.sessionGeneration;
+    final options = await _getAuthenticatedOptions(generation);
+    final response = await _dio.delete(
+      '/api/auth/account',
+      options: options,
+    );
+    _authStorage.ensureCurrentGeneration(generation);
+    final result = ApiResponse<Map<String, dynamic>>.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+      fromJsonT: (json) => Map<String, dynamic>.from(json as Map),
+    );
+    if (result.success) {
+      await _authStorage.clearSession(expectedGeneration: generation);
+    }
+    return result;
   }
 }

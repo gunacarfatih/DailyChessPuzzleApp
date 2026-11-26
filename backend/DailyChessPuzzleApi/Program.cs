@@ -449,6 +449,13 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+if (app.Environment.IsProduction())
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var database = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    await database.Database.MigrateAsync();
+}
+
 var forwardedHeaders = new ForwardedHeadersOptions
 {
     ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
@@ -468,13 +475,11 @@ app.UseMiddleware<GlobalExceptionMiddleware>();
 
 app.UseSerilogRequestLogging();
 
-//if (app.Environment.IsDevelopment())
-//{
-//    app.UseSwagger();
-//    app.UseSwaggerUI();
-//}
-app.UseSwagger();
-app.UseSwaggerUI();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 if (!app.Environment.IsDevelopment())
 {

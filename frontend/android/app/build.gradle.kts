@@ -4,6 +4,23 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+val keyAliasValue = System.getenv("ANDROID_KEY_ALIAS")
+val keyPasswordValue = System.getenv("ANDROID_KEY_PASSWORD")
+val storePasswordValue = System.getenv("ANDROID_STORE_PASSWORD")
+val hasReleaseKey = listOf(keystorePath, keyAliasValue, keyPasswordValue, storePasswordValue)
+    .all { !it.isNullOrBlank() }
+val releaseBuildRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+
+if (releaseBuildRequested && !hasReleaseKey) {
+    throw GradleException(
+        "Release signing is not configured. Set ANDROID_KEYSTORE_PATH, " +
+            "ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD and ANDROID_STORE_PASSWORD."
+    )
+}
+
 android {
     namespace = "com.gunacarfatih.dailychesspuzzle"
     compileSdk = flutter.compileSdkVersion
@@ -29,13 +46,6 @@ android {
         versionName = flutter.versionName
     }
 
-    val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
-    val keyAliasValue = System.getenv("ANDROID_KEY_ALIAS")
-    val keyPasswordValue = System.getenv("ANDROID_KEY_PASSWORD")
-    val storePasswordValue = System.getenv("ANDROID_STORE_PASSWORD")
-    val hasReleaseKey = listOf(keystorePath, keyAliasValue, keyPasswordValue, storePasswordValue)
-        .all { !it.isNullOrBlank() }
-
     if (hasReleaseKey) {
         signingConfigs.create("release") {
             storeFile = file(keystorePath!!)
@@ -47,11 +57,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (hasReleaseKey) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
         }
     }
 }

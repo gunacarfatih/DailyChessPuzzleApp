@@ -10,6 +10,7 @@ on:
       - 'fix/**'
     paths:
       - 'backend/**'
+      - 'frontend/**'
       - '.github/workflows/backend-ci.yml'
 
   pull_request:
@@ -18,6 +19,7 @@ on:
       - develop
     paths:
       - 'backend/**'
+      - 'frontend/**'
       - '.github/workflows/backend-ci.yml'
 
   workflow_dispatch:
@@ -49,8 +51,19 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       DCP_TEST_POSTGRES: "Host=localhost;Port=5432;Database=dailychess_test;Username=dailychess_test;Password=ci_test_password"
+      DCP_TEST_REDIS: "localhost:6379"
 
     steps:
       - name: Checkout repository
@@ -97,7 +110,7 @@ jobs:
 
     if: >-
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/fix/production-readiness'
+      github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -131,3 +144,30 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+
+  flutter-checks:
+    name: Analyze and Test Flutter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-dependency-path: frontend/pubspec.lock
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: frontend
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        working-directory: frontend
+        run: flutter test

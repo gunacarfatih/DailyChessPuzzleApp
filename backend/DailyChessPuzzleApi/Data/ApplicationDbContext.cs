@@ -1,4 +1,4 @@
-﻿using DailyChessPuzzleApi.Models;
+using DailyChessPuzzleApi.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace DailyChessPuzzleApi.Data
@@ -58,6 +58,9 @@ namespace DailyChessPuzzleApi.Data
                     .IsRequired();
 
                 entity.Property(x => x.EmailVerificationCodeHash)
+                    .HasMaxLength(64);
+
+                entity.Property(x => x.PasswordResetCodeHash)
                     .HasMaxLength(64);
 
                 entity.Property(x => x.PasswordHash)

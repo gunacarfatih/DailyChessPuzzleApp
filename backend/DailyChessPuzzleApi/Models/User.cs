@@ -1,4 +1,4 @@
-﻿
+
 namespace DailyChessPuzzleApi.Models
 {
     public class User
@@ -20,6 +20,14 @@ namespace DailyChessPuzzleApi.Models
         public string? EmailVerificationCodeHash { get; set; }
 
         public DateTime? EmailVerificationCodeExpiresAtUtc { get; set; }
+
+        public int EmailVerificationFailedAttempts { get; set; }
+
+        public string? PasswordResetCodeHash { get; set; }
+
+        public DateTime? PasswordResetCodeExpiresAtUtc { get; set; }
+
+        public int PasswordResetFailedAttempts { get; set; }
 
         // Normal kayıt olan kullanıcılarda parola hash'i bulunur.
         // Google ile kayıt olan kullanıcılarda null olur.

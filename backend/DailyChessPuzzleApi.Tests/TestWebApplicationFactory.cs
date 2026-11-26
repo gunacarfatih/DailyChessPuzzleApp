@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.Services.Interfaces;
@@ -171,6 +171,15 @@ internal sealed class TestWebApplicationFactory
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            return Task.CompletedTask;
+        }
+
+        public Task SendPasswordResetCodeAsync(
+            string email,
+            string code,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             return Task.CompletedTask;
         }
     }

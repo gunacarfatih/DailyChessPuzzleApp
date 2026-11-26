@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../providers/auth_provider.dart';
 import 'register_page.dart';
+import 'password_reset_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -231,6 +232,21 @@ class _LoginPageState extends State<LoginPage> {
                   ),
 
                   const SizedBox(height: 26),
+
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: isLoading
+                          ? null
+                          : () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const PasswordResetPage(),
+                                ),
+                              ),
+                      child: const Text('Şifremi unuttum'),
+                    ),
+                  ),
 
                   SizedBox(
                     height: 52,

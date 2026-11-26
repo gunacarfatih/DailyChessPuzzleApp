@@ -45,4 +45,7 @@ class ApiConstants {
   static const String verifyEmailEndpoint = '/api/auth/verify-email';
   static const String resendVerificationEndpoint =
       '/api/auth/verification/resend';
+  static const String requestPasswordResetEndpoint =
+      '/api/auth/password/reset/request';
+  static const String resetPasswordEndpoint = '/api/auth/password/reset';
 }
