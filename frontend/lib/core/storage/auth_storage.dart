@@ -61,6 +61,7 @@ class AuthStorage {
   static const String _lastNameKey = 'auth_last_name';
   static const String _countryCodeKey = 'auth_country_code';
   static const String _hasPasswordKey = 'auth_has_password';
+  static const String _emailVerifiedKey = 'auth_email_verified';
   static const String _expiresAtKey = 'auth_expires_at';
 
   // Yeni bir oturum başlatır ve önceki oturumu geçersiz kılar.
@@ -77,13 +78,44 @@ class AuthStorage {
     return generation;
   }
 
-  // Oturum bilgilerini yalnızca ilgili oturum hâlâ geçerliyse kaydeder.
+// Oturum bilgilerini yalnızca ilgili oturum hâlâ geçerliyse kaydeder.
   Future<void> saveSession(
       AuthResponse response, {
         required int expectedGeneration,
       }) {
     return _enqueue(() async {
       ensureCurrentGeneration(expectedGeneration);
+
+      final storedUserId = await _storage.read(
+        key: _userIdKey,
+      );
+
+      ensureCurrentGeneration(expectedGeneration);
+
+      final storedEmail = await _storage.read(
+        key: _emailKey,
+      );
+
+      ensureCurrentGeneration(expectedGeneration);
+
+      final storedEmailVerified = await _storage.read(
+        key: _emailVerifiedKey,
+      );
+
+      ensureCurrentGeneration(expectedGeneration);
+
+      // Mevcut doğrulama bilgisinin aynı kullanıcıya ve
+      // aynı e-posta adresine ait olduğunu kontrol et.
+      final isSameAccount =
+          storedUserId == response.userId.toString() &&
+              storedEmail?.trim().toLowerCase() ==
+                  response.email.trim().toLowerCase();
+
+      // Eski refresh yanıtının başarılı doğrulamayı
+      // geri almasını engelle.
+      final emailVerified =
+          response.emailVerified ||
+              (isSameAccount && storedEmailVerified == 'true');
 
       final values = <String, String>{
         _tokenKey: response.accessToken,
@@ -94,6 +126,7 @@ class AuthStorage {
         _lastNameKey: response.lastName ?? '',
         _countryCodeKey: response.countryCode ?? '',
         _hasPasswordKey: response.hasPassword.toString(),
+        _emailVerifiedKey: emailVerified.toString(),
         _expiresAtKey: response.expiresAtUtc.toIso8601String(),
       };
 
@@ -115,12 +148,14 @@ class AuthStorage {
 
         ensureCurrentGeneration(expectedGeneration);
       } catch (_) {
-        // Kısmen yazılmış oturum bilgilerinin kullanılmasını engeller.
+        // Kısmen yazılmış oturum bilgilerinin
+        // kullanılmasını engeller.
         await _deleteSessionData();
         rethrow;
       }
     });
   }
+
 
   // Depolama okumalarını da işlem kuyruğundan geçirir.
   Future<String?> _read(String key) {
@@ -238,6 +273,32 @@ class AuthStorage {
     });
   }
 
+
+// E-posta doğrulama durumunu güvenli depolamadan okur.
+  Future<bool> getEmailVerified() async {
+    final value = await _read(_emailVerifiedKey);
+
+    return value == 'true';
+  }
+
+// E-posta doğrulama durumu yalnızca ilgili oturum için güncellenir.
+  Future<void> updateEmailVerified(
+      bool emailVerified, {
+        required int expectedGeneration,
+      }) {
+    return _enqueue(() async {
+      ensureCurrentGeneration(expectedGeneration);
+
+      await _storage.write(
+        key: _emailVerifiedKey,
+        value: emailVerified.toString(),
+      );
+
+      ensureCurrentGeneration(expectedGeneration);
+    });
+  }
+
+
   // Oturumu geçersiz kılar ve güvenli depolamayı temizler.
   Future<void> clearSession({
     required int expectedGeneration,
@@ -281,6 +342,8 @@ class AuthStorage {
     await _storage.delete(key: _lastNameKey);
     await _storage.delete(key: _countryCodeKey);
     await _storage.delete(key: _hasPasswordKey);
+    await _storage.delete(key: _emailVerifiedKey);
     await _storage.delete(key: _expiresAtKey);
   }
+
 }

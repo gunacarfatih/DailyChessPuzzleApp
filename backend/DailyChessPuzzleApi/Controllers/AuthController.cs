@@ -37,26 +37,40 @@ namespace DailyChessPuzzleApi.Controllers
                     result));
         }
 
+        [Authorize]
         [HttpPost("verify-email")]
         [EnableRateLimiting("auth-verification")]
         public async Task<IActionResult> VerifyEmail(
             [FromBody] EmailVerificationRequest request,
             CancellationToken cancellationToken)
         {
-            await _authService.VerifyEmailAsync(request, cancellationToken);
+            int userId = GetAuthenticatedUserId();
+
+            await _authService.VerifyEmailAsync(
+                userId,
+                request,
+                cancellationToken);
+
             return Ok(ResponseFactory.Success(
                 HttpContext,
                 "Email address verified successfully.",
                 new { emailVerified = true }));
         }
 
+        [Authorize]
         [HttpPost("verification/resend")]
         [EnableRateLimiting("auth-verification")]
         public async Task<IActionResult> ResendVerification(
             [FromBody] ResendVerificationRequest request,
             CancellationToken cancellationToken)
         {
-            await _authService.ResendVerificationAsync(request, cancellationToken);
+            int userId = GetAuthenticatedUserId();
+
+            await _authService.ResendVerificationAsync(
+                userId,
+                request,
+                cancellationToken);
+
             return Ok(ResponseFactory.Success(
                 HttpContext,
                 "If the account needs verification, a new code has been sent.",

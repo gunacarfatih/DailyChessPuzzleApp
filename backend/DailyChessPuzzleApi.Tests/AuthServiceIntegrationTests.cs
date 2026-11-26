@@ -24,9 +24,13 @@ public sealed class AuthServiceIntegrationTests
     [PostgresFact]
     public async Task Registration_verification_login_and_refresh_rotation_work_as_one_flow()
     {
-        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var database =
+            await PostgresTestDatabase.CreateAsync();
+
         await using var context = database.CreateContext();
+
         var emailSender = new RecordingEmailSender();
+
         var jwtSettings = new JwtSettings
         {
             Secret = new string('s', 64),
@@ -34,7 +38,9 @@ public sealed class AuthServiceIntegrationTests
             Audience = "DailyChessPuzzleClient.Tests",
             ExpirationMinutes = 60
         };
+
         var configuration = new ConfigurationBuilder().Build();
+
         var service = new AuthService(
             context,
             new PasswordHasher<User>(),
@@ -54,28 +60,18 @@ public sealed class AuthServiceIntegrationTests
             },
             CancellationToken.None);
 
-        Assert.True(registration.EmailVerificationRequired);
         Assert.Equal("auth@example.test", registration.Email);
-        Assert.Matches(new Regex("^[0-9]{6}$"), emailSender.LastCode!);
 
-        var unverifiedLogin = await Assert.ThrowsAsync<AppException>(() =>
-            service.LoginAsync(
-                new LoginRequest
-                {
-                    Email = "auth@example.test",
-                    Password = "a-strong-password"
-                },
-                CancellationToken.None));
-        Assert.Equal("EMAIL_NOT_VERIFIED", unverifiedLogin.ErrorCode);
+        // Kayıt sırasında doğrulama kodu gönderilmemeli.
+        Assert.Null(emailSender.LastCode);
 
-        await service.VerifyEmailAsync(
-            new EmailVerificationRequest
-            {
-                Email = "auth@example.test",
-                Code = emailSender.LastCode!
-            },
-            CancellationToken.None);
+        var registeredUser = await context.Users.SingleAsync();
 
+        Assert.False(registeredUser.EmailVerified);
+        Assert.Null(registeredUser.EmailVerificationCodeHash);
+        Assert.Null(registeredUser.EmailVerificationCodeExpiresAtUtc);
+
+        // E-posta doğrulanmadan giriş yapılabilmeli.
         var login = await service.LoginAsync(
             new LoginRequest
             {
@@ -84,11 +80,51 @@ public sealed class AuthServiceIntegrationTests
             },
             CancellationToken.None);
 
+        Assert.Equal(registeredUser.Id, login.UserId);
+        Assert.False(login.EmailVerified);
         Assert.Null(login.CountryCode);
-        Assert.False(string.IsNullOrWhiteSpace(login.AccessToken));
-        Assert.False(string.IsNullOrWhiteSpace(login.RefreshToken));
 
+        Assert.False(
+            string.IsNullOrWhiteSpace(login.AccessToken));
 
+        Assert.False(
+            string.IsNullOrWhiteSpace(login.RefreshToken));
+
+        // Kullanıcı profil üzerinden doğrulama kodu ister.
+        await service.ResendVerificationAsync(
+            login.UserId,
+            new ResendVerificationRequest
+            {
+                Email = "auth@example.test"
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(emailSender.LastCode);
+
+        Assert.Matches(
+            new Regex("^[0-9]{6}$"),
+            emailSender.LastCode!);
+
+        // Kullanıcı kendi hesabını doğrular.
+        await service.VerifyEmailAsync(
+            login.UserId,
+            new EmailVerificationRequest
+            {
+                Email = "auth@example.test",
+                Code = emailSender.LastCode!
+            },
+            CancellationToken.None);
+
+        context.ChangeTracker.Clear();
+
+        var verifiedUser = await context.Users.SingleAsync();
+
+        Assert.True(verifiedUser.EmailVerified);
+        Assert.Null(verifiedUser.EmailVerificationCodeHash);
+        Assert.Null(verifiedUser.EmailVerificationCodeExpiresAtUtc);
+        Assert.Equal(0, verifiedUser.EmailVerificationFailedAttempts);
+
+        // Refresh response güncel doğrulama durumunu taşımalı.
         var refresh = await service.RefreshAsync(
             new RefreshTokenRequest
             {
@@ -96,14 +132,22 @@ public sealed class AuthServiceIntegrationTests
             },
             CancellationToken.None);
 
-        Assert.NotEqual(login.RefreshToken, refresh.RefreshToken);
-        Assert.Equal(2, context.RefreshTokens.Count());
+        Assert.True(refresh.EmailVerified);
+        Assert.Equal(login.UserId, refresh.UserId);
 
-        // Yeni API istegini simule etmek icin takip edilen entity'leri temizle.
+        Assert.NotEqual(
+            login.RefreshToken,
+            refresh.RefreshToken);
+
+        Assert.Equal(
+            2,
+            await context.RefreshTokens.CountAsync());
+
         context.ChangeTracker.Clear();
 
-        var replayedRefresh = await Assert.ThrowsAsync<AppException>(() =>
-            service.RefreshAsync(
+        // Kullanılmış refresh token tekrar kullanılamamalı.
+        var replayedRefresh = await Assert.ThrowsAsync<AppException>(
+            () => service.RefreshAsync(
                 new RefreshTokenRequest
                 {
                     RefreshToken = login.RefreshToken
@@ -114,16 +158,15 @@ public sealed class AuthServiceIntegrationTests
             "REFRESH_TOKEN_REUSE_DETECTED",
             replayedRefresh.ErrorCode);
 
-        // Veritabaninda aktif refresh token kalmadigini dogrula.
         Assert.Equal(
             0,
-            context.RefreshTokens.Count(token => token.RevokedAtUtc == null));
+            await context.RefreshTokens.CountAsync(
+                token => token.RevokedAtUtc == null));
 
-        // Eski entity durumlarinin kullanilmasini engelle.
         context.ChangeTracker.Clear();
 
-        var revokedRefresh = await Assert.ThrowsAsync<AppException>(() =>
-            service.RefreshAsync(
+        var revokedRefresh = await Assert.ThrowsAsync<AppException>(
+            () => service.RefreshAsync(
                 new RefreshTokenRequest
                 {
                     RefreshToken = refresh.RefreshToken
@@ -133,8 +176,8 @@ public sealed class AuthServiceIntegrationTests
         Assert.Equal(
             "INVALID_REFRESH_TOKEN",
             revokedRefresh.ErrorCode);
-
     }
+
 
     private const string TestEmail = "race@example.test";
     private const string Password = "a-strong-password";

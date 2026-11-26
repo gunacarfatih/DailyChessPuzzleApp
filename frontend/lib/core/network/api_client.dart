@@ -182,7 +182,20 @@ class ApiClient {
 
   // Auth endpoint'lerinin mevcut davranışını korur.
   static bool _isAuthEndpoint(RequestOptions options) {
-    return options.uri.path.startsWith('/api/auth/');
+    final path = options.uri.path;
+
+    if (!path.startsWith('/api/auth/')) {
+      return false;
+    }
+
+    // E-posta doğrulama işlemleri JWT gerektirir
+    // ve otomatik token yenilemeden yararlanabilir.
+    const refreshableAuthEndpoints = <String>{
+      '/api/auth/verify-email',
+      '/api/auth/verification/resend',
+    };
+
+    return !refreshableAuthEndpoints.contains(path);
   }
 
   static bool _hasAuthorization(RequestOptions options) {

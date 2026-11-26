@@ -113,19 +113,14 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _openRegisterPage() async {
-    final result = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => const RegisterPage(),
       ),
     );
-
-    if (!mounted) return;
-
-    if (result == true) {
-      Navigator.pop(context, true);
-    }
   }
+
 
   @override
   Widget build(BuildContext context) {

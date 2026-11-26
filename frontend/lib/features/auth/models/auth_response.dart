@@ -1,3 +1,4 @@
+
 class AuthResponse {
   final int userId;
   final String username;
@@ -6,6 +7,7 @@ class AuthResponse {
   final String? lastName;
   final String? countryCode;
   final bool hasPassword;
+  final bool emailVerified;
   final String accessToken;
   final String? refreshToken;
   final DateTime expiresAtUtc;
@@ -19,6 +21,7 @@ class AuthResponse {
     this.lastName,
     this.countryCode,
     this.hasPassword = false,
+    this.emailVerified = false,
     required this.accessToken,
     this.refreshToken,
     required this.expiresAtUtc,
@@ -34,6 +37,7 @@ class AuthResponse {
       lastName: json['lastName']?.toString(),
       countryCode: json['countryCode']?.toString(),
       hasPassword: json['hasPassword'] == true,
+      emailVerified: json['emailVerified'] == true,
       accessToken: json['accessToken']?.toString() ?? '',
       refreshToken: json['refreshToken']?.toString(),
       expiresAtUtc: DateTime.parse(
@@ -42,8 +46,8 @@ class AuthResponse {
       refreshTokenExpiresAtUtc: json['refreshTokenExpiresAtUtc'] == null
           ? null
           : DateTime.parse(
-              json['refreshTokenExpiresAtUtc'].toString(),
-            ).toUtc(),
+        json['refreshTokenExpiresAtUtc'].toString(),
+      ).toUtc(),
     );
   }
 }

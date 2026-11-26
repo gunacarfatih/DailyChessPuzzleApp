@@ -10,10 +10,12 @@ namespace DailyChessPuzzleApi.Services.Interfaces
             CancellationToken cancellationToken);
 
         Task VerifyEmailAsync(
+            int userId,
             EmailVerificationRequest request,
             CancellationToken cancellationToken);
 
         Task ResendVerificationAsync(
+            int userId,
             ResendVerificationRequest request,
             CancellationToken cancellationToken);
 

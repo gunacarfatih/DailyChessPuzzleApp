@@ -45,11 +45,9 @@ namespace DailyChessPuzzleApi.Services
         }
 
         public async Task<RegistrationResponse> RegisterAsync(
-    RegisterRequest request,
-    CancellationToken cancellationToken)
+            RegisterRequest request,
+            CancellationToken cancellationToken)
         {
-            _emailSender.EnsureConfigured();
-
             string username = request.Username.Trim();
             string firstName = request.FirstName.Trim();
             string lastName = request.LastName.Trim();
@@ -59,10 +57,13 @@ namespace DailyChessPuzzleApi.Services
                 throw new AppException(400, "INVALID_USERNAME");
 
             bool usernameExists = await UsernameExistsAsync(
-                username, cancellationToken);
+                username,
+                cancellationToken);
 
             if (usernameExists)
-                throw new AppException(409, "USERNAME_ALREADY_EXISTS");
+                throw new AppException(
+                    409,
+                    "USERNAME_ALREADY_EXISTS");
 
             bool emailExists = await _context.Users
                 .AnyAsync(
@@ -70,9 +71,9 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
 
             if (emailExists)
-                throw new AppException(409, "EMAIL_ALREADY_EXISTS");
-
-            var verificationCode = GenerateEmailVerificationCode();
+                throw new AppException(
+                    409,
+                    "EMAIL_ALREADY_EXISTS");
 
             var user = new User
             {
@@ -80,13 +81,15 @@ namespace DailyChessPuzzleApi.Services
                 FirstName = firstName,
                 LastName = lastName,
                 Email = email,
+
                 CountryCode = null,
                 CountryChangedAtUtc = null,
+
                 EmailVerified = false,
-                EmailVerificationCodeHash =
-                    HashEmailVerificationCode(email, verificationCode),
-                EmailVerificationCodeExpiresAtUtc =
-                    DateTime.UtcNow.AddMinutes(15),
+                EmailVerificationCodeHash = null,
+                EmailVerificationCodeExpiresAtUtc = null,
+                EmailVerificationFailedAttempts = 0,
+
                 CreatedAtUtc = DateTime.UtcNow
             };
 
@@ -98,11 +101,13 @@ namespace DailyChessPuzzleApi.Services
 
             try
             {
-                await _context.SaveChangesAsync(cancellationToken);
+                await _context.SaveChangesAsync(
+                    cancellationToken);
             }
             catch (DbUpdateException exception)
-                when (exception.InnerException is PostgresException postgres &&
-                      postgres.SqlState == PostgresErrorCodes.UniqueViolation)
+                when (
+                    exception.InnerException is PostgresException postgres &&
+                    postgres.SqlState == PostgresErrorCodes.UniqueViolation)
             {
                 _context.Entry(user).State = EntityState.Detached;
 
@@ -110,32 +115,18 @@ namespace DailyChessPuzzleApi.Services
                 {
                     case "IX_Users_Email":
                         throw new AppException(
-                            409, "EMAIL_ALREADY_EXISTS");
+                            409,
+                            "EMAIL_ALREADY_EXISTS");
 
                     case "IX_Users_Username":
                     case "IX_Users_NormalizedUsername":
                         throw new AppException(
-                            409, "USERNAME_ALREADY_EXISTS");
+                            409,
+                            "USERNAME_ALREADY_EXISTS");
 
                     default:
                         throw;
                 }
-            }
-
-            try
-            {
-                await _emailSender.SendVerificationCodeAsync(
-                    email,
-                    verificationCode,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception)
-            {
-                throw new AppException(503, "EMAIL_DELIVERY_FAILED");
             }
 
             return new RegistrationResponse
@@ -144,74 +135,169 @@ namespace DailyChessPuzzleApi.Services
             };
         }
 
+
         public async Task VerifyEmailAsync(
+            int userId,
             EmailVerificationRequest request,
             CancellationToken cancellationToken)
         {
             var email = request.Email.Trim().ToLowerInvariant();
+
             await using var transaction = await _context.Database
                 .BeginTransactionAsync(cancellationToken);
-            var userId = await _context.Users.AsNoTracking()
-                .Where(x => x.Email == email)
-                .Select(x => (int?)x.Id)
-                .SingleOrDefaultAsync(cancellationToken);
-            if (!userId.HasValue)
-                throw new AppException(400, "EMAIL_VERIFICATION_CODE_INVALID");
-            var user = await GetLockedUserAsync(userId.Value, cancellationToken);
-            if (user == null || user.EmailVerified ||
-                user.EmailVerificationCodeHash == null ||
-                user.EmailVerificationCodeExpiresAtUtc <= DateTime.UtcNow ||
+
+            // Kullanıcıyı JWT'den gelen kimlik ile bul ve kilitle.
+            var user = await GetLockedUserAsync(
+                userId,
+                cancellationToken);
+
+            if (user == null)
+                throw new AppException(404, "USER_NOT_FOUND");
+
+            // Başka bir hesabın e-posta adresiyle
+            // doğrulama yapılmasını engelle.
+            if (!string.Equals(
+                    user.Email,
+                    email,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new AppException(
+                    403,
+                    "EMAIL_MISMATCH");
+            }
+
+            // Daha önce doğrulanmış hesap için
+            // işlemi başarılı kabul et.
+            if (user.EmailVerified)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+
+            if (user.EmailVerificationCodeHash == null ||
+                !user.EmailVerificationCodeExpiresAtUtc.HasValue ||
+                user.EmailVerificationCodeExpiresAtUtc.Value <= now ||
                 user.EmailVerificationFailedAttempts >= 5)
-                throw new AppException(400, "EMAIL_VERIFICATION_CODE_INVALID");
+            {
+                throw new AppException(
+                    400,
+                    "EMAIL_VERIFICATION_CODE_INVALID");
+            }
 
             var codeMatches = CryptographicOperations.FixedTimeEquals(
-                Convert.FromHexString(user.EmailVerificationCodeHash),
-                Convert.FromHexString(HashEmailVerificationCode(email, request.Code)));
+                Convert.FromHexString(
+                    user.EmailVerificationCodeHash),
+                Convert.FromHexString(
+                    HashEmailVerificationCode(email, request.Code)));
+
             if (!codeMatches)
             {
                 user.EmailVerificationFailedAttempts++;
+
                 if (user.EmailVerificationFailedAttempts >= 5)
                 {
                     user.EmailVerificationCodeHash = null;
                     user.EmailVerificationCodeExpiresAtUtc = null;
                 }
-                await _context.SaveChangesAsync(cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                throw new AppException(400, "EMAIL_VERIFICATION_CODE_INVALID");
+
+                user.UpdatedAtUtc = now;
+
+                await _context.SaveChangesAsync(
+                    cancellationToken);
+
+                await transaction.CommitAsync(
+                    cancellationToken);
+
+                throw new AppException(
+                    400,
+                    "EMAIL_VERIFICATION_CODE_INVALID");
             }
 
             user.EmailVerified = true;
             user.EmailVerificationCodeHash = null;
             user.EmailVerificationCodeExpiresAtUtc = null;
             user.EmailVerificationFailedAttempts = 0;
-            user.UpdatedAtUtc = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            user.UpdatedAtUtc = now;
+
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            await transaction.CommitAsync(
+                cancellationToken);
         }
 
+
+
         public async Task ResendVerificationAsync(
+            int userId,
             ResendVerificationRequest request,
             CancellationToken cancellationToken)
         {
-            _emailSender.EnsureConfigured();
-
             var email = request.Email.Trim().ToLowerInvariant();
-            var user = await _context.Users.FirstOrDefaultAsync(
-                x => x.Email == email,
-                cancellationToken);
 
-            if (user == null || user.EmailVerified)
-                return;
+            string code;
 
-            var code = GenerateEmailVerificationCode();
-            user.EmailVerificationCodeHash = HashEmailVerificationCode(email, code);
-            user.EmailVerificationCodeExpiresAtUtc = DateTime.UtcNow.AddMinutes(15);
-            user.EmailVerificationFailedAttempts = 0;
-            user.UpdatedAtUtc = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
+            await using (var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken))
+            {
+                // VerifyEmailAsync ile aynı kullanıcı kilidini kullan.
+                var user = await GetLockedUserAsync(
+                    userId,
+                    cancellationToken);
+
+                if (user == null)
+                    throw new AppException(404, "USER_NOT_FOUND");
+
+                if (!string.Equals(
+                        user.Email,
+                        email,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new AppException(
+                        403,
+                        "EMAIL_MISMATCH");
+                }
+
+                // Doğrulanmış hesap için yeni kod üretme.
+                if (user.EmailVerified)
+                {
+                    await transaction.CommitAsync(
+                        cancellationToken);
+
+                    return;
+                }
+
+                _emailSender.EnsureConfigured();
+
+                var now = DateTime.UtcNow;
+
+                code = GenerateEmailVerificationCode();
+
+                user.EmailVerificationCodeHash =
+                    HashEmailVerificationCode(email, code);
+
+                user.EmailVerificationCodeExpiresAtUtc =
+                    now.AddMinutes(15);
+
+                user.EmailVerificationFailedAttempts = 0;
+                user.UpdatedAtUtc = now;
+
+                await _context.SaveChangesAsync(
+                    cancellationToken);
+
+                await transaction.CommitAsync(
+                    cancellationToken);
+            }
+
+            // SMTP işlemi sırasında veritabanı kilidini tutma.
             try
             {
-                await _emailSender.SendVerificationCodeAsync(email, code, cancellationToken);
+                await _emailSender.SendVerificationCodeAsync(
+                    email,
+                    code,
+                    cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -219,87 +305,207 @@ namespace DailyChessPuzzleApi.Services
             }
             catch (Exception)
             {
-                throw new AppException(503, "EMAIL_DELIVERY_FAILED");
+                throw new AppException(
+                    503,
+                    "EMAIL_DELIVERY_FAILED");
             }
         }
+
 
         public async Task RequestPasswordResetAsync(
             PasswordResetCodeRequest request,
             CancellationToken cancellationToken)
         {
             var email = request.Email.Trim().ToLowerInvariant();
-            var user = await _context.Users.SingleOrDefaultAsync(
-                candidate => candidate.Email == email &&
-                    candidate.PasswordHash != null,
-                cancellationToken);
-            if (user == null)
-                return;
 
-            _emailSender.EnsureConfigured();
-            var code = GenerateEmailVerificationCode();
-            user.PasswordResetCodeHash = HashEmailVerificationCode(email, code);
-            user.PasswordResetCodeExpiresAtUtc = DateTime.UtcNow.AddMinutes(15);
-            user.PasswordResetFailedAttempts = 0;
-            user.UpdatedAtUtc = DateTime.UtcNow;
-            await _context.SaveChangesAsync(cancellationToken);
+            string code;
+
+            await using (var transaction = await _context.Database
+                .BeginTransactionAsync(cancellationToken))
+            {
+                var userId = await _context.Users
+                    .AsNoTracking()
+                    .Where(candidate => candidate.Email == email)
+                    .Select(candidate => (int?)candidate.Id)
+                    .SingleOrDefaultAsync(cancellationToken);
+
+                if (!userId.HasValue)
+                    return;
+
+                var user = await GetLockedUserAsync(
+                    userId.Value,
+                    cancellationToken);
+
+                if (user == null ||
+                    user.Email != email ||
+                    string.IsNullOrWhiteSpace(user.PasswordHash))
+                {
+                    return;
+                }
+
+                _emailSender.EnsureConfigured();
+
+                var now = DateTime.UtcNow;
+
+                code = GenerateEmailVerificationCode();
+
+                user.PasswordResetCodeHash =
+                    HashEmailVerificationCode(email, code);
+
+                user.PasswordResetCodeExpiresAtUtc =
+                    now.AddMinutes(15);
+
+                user.PasswordResetFailedAttempts = 0;
+                user.UpdatedAtUtc = now;
+
+                await _context.SaveChangesAsync(
+                    cancellationToken);
+
+                await transaction.CommitAsync(
+                    cancellationToken);
+            }
+
+            // SMTP gönderimi transaction dışında yapılır.
             try
             {
-                await _emailSender.SendPasswordResetCodeAsync(email, code, cancellationToken);
+                await _emailSender.SendPasswordResetCodeAsync(
+                    email,
+                    code,
+                    cancellationToken);
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception) { throw new AppException(503, "EMAIL_DELIVERY_FAILED"); }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                throw new AppException(
+                    503,
+                    "EMAIL_DELIVERY_FAILED");
+            }
         }
+
+
 
         public async Task ResetPasswordAsync(
             ResetPasswordRequest request,
             CancellationToken cancellationToken)
         {
             var email = request.Email.Trim().ToLowerInvariant();
+
             await using var transaction = await _context.Database
                 .BeginTransactionAsync(cancellationToken);
-            var userId = await _context.Users.AsNoTracking()
+
+            var userId = await _context.Users
+                .AsNoTracking()
                 .Where(candidate => candidate.Email == email)
                 .Select(candidate => (int?)candidate.Id)
                 .SingleOrDefaultAsync(cancellationToken);
-            if (!userId.HasValue)
-                throw new AppException(400, "PASSWORD_RESET_CODE_INVALID");
-            var user = await GetLockedUserAsync(userId.Value, cancellationToken);
-            if (user == null || string.IsNullOrWhiteSpace(user.PasswordHash))
-                throw new AppException(400, "PASSWORD_RESET_CODE_INVALID");
 
-            var valid = user.PasswordResetFailedAttempts < 5 &&
-                user.PasswordResetCodeHash != null &&
-                user.PasswordResetCodeExpiresAtUtc > DateTime.UtcNow &&
+            if (!userId.HasValue)
+            {
+                throw new AppException(
+                    400,
+                    "PASSWORD_RESET_CODE_INVALID");
+            }
+
+            var user = await GetLockedUserAsync(
+                userId.Value,
+                cancellationToken);
+
+            if (user == null ||
+                user.Email != email ||
+                string.IsNullOrWhiteSpace(user.PasswordHash))
+            {
+                throw new AppException(
+                    400,
+                    "PASSWORD_RESET_CODE_INVALID");
+            }
+
+            var now = DateTime.UtcNow;
+
+            if (user.PasswordResetFailedAttempts >= 5 ||
+                user.PasswordResetCodeHash == null ||
+                !user.PasswordResetCodeExpiresAtUtc.HasValue ||
+                user.PasswordResetCodeExpiresAtUtc.Value <= now)
+            {
+                throw new AppException(
+                    400,
+                    "PASSWORD_RESET_CODE_INVALID");
+            }
+
+            var codeMatches =
                 CryptographicOperations.FixedTimeEquals(
-                    Convert.FromHexString(user.PasswordResetCodeHash),
-                    Convert.FromHexString(HashEmailVerificationCode(email, request.Code)));
-            if (!valid)
+                    Convert.FromHexString(
+                        user.PasswordResetCodeHash),
+                    Convert.FromHexString(
+                        HashEmailVerificationCode(
+                            email,
+                            request.Code)));
+
+            if (!codeMatches)
             {
                 user.PasswordResetFailedAttempts++;
+
                 if (user.PasswordResetFailedAttempts >= 5)
                 {
                     user.PasswordResetCodeHash = null;
                     user.PasswordResetCodeExpiresAtUtc = null;
                 }
-                await _context.SaveChangesAsync(cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                throw new AppException(400, "PASSWORD_RESET_CODE_INVALID");
+
+                user.UpdatedAtUtc = now;
+
+                await _context.SaveChangesAsync(
+                    cancellationToken);
+
+                await transaction.CommitAsync(
+                    cancellationToken);
+
+                throw new AppException(
+                    400,
+                    "PASSWORD_RESET_CODE_INVALID");
             }
 
-            var now = DateTime.UtcNow;
-            user.PasswordHash = _passwordHasher.HashPassword(user, request.NewPassword);
+            // Yeni şifreyi kaydet.
+            user.PasswordHash = _passwordHasher.HashPassword(
+                user,
+                request.NewPassword);
+
+            // Şifre sıfırlama kodunu tüket.
             user.PasswordResetCodeHash = null;
             user.PasswordResetCodeExpiresAtUtc = null;
             user.PasswordResetFailedAttempts = 0;
+
+            // Kullanıcı e-posta sahipliğini kanıtladı.
+            user.EmailVerified = true;
+
+            // Eski e-posta doğrulama kodlarını temizle.
+            user.EmailVerificationCodeHash = null;
+            user.EmailVerificationCodeExpiresAtUtc = null;
+            user.EmailVerificationFailedAttempts = 0;
+
+            // Eski access token'ları geçersiz hale getir.
             user.TokenVersion++;
             user.UpdatedAtUtc = now;
+
+            // Tüm mevcut refresh token'ları iptal et.
             await _context.RefreshTokens
-                .Where(token => token.UserId == user.Id && token.RevokedAtUtc == null)
-                .ExecuteUpdateAsync(setters => setters.SetProperty(
-                    token => token.RevokedAtUtc, now), cancellationToken);
-            await _context.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+                .Where(token =>
+                    token.UserId == user.Id &&
+                    token.RevokedAtUtc == null)
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(
+                        token => token.RevokedAtUtc,
+                        now),
+                    cancellationToken);
+
+            await _context.SaveChangesAsync(
+                cancellationToken);
+
+            await transaction.CommitAsync(
+                cancellationToken);
         }
+
 
         public async Task<AuthResponse> LoginAsync(
     LoginRequest request,
@@ -349,13 +555,6 @@ namespace DailyChessPuzzleApi.Services
                 throw new AppException(
                     401,
                     "INVALID_CREDENTIALS");
-            }
-
-            if (!user.EmailVerified)
-            {
-                throw new AppException(
-                    403,
-                    "EMAIL_NOT_VERIFIED");
             }
 
             if (verificationResult ==
@@ -543,6 +742,7 @@ namespace DailyChessPuzzleApi.Services
                 "GOOGLE_LOGIN_TEMPORARILY_UNAVAILABLE");
         }
 
+
         private async Task<AuthResponse> ExecuteGoogleLoginAsync(
             GoogleJsonWebSignature.Payload payload,
             CancellationToken cancellationToken)
@@ -554,20 +754,12 @@ namespace DailyChessPuzzleApi.Services
                 await _context.Database.BeginTransactionAsync(
                     cancellationToken);
 
+            // Öncelikle Google kimliği üzerinden kullanıcıyı ara.
             var userId = await _context.Users
                 .AsNoTracking()
                 .Where(x => x.GoogleId == googleId)
                 .Select(x => (int?)x.Id)
                 .SingleOrDefaultAsync(cancellationToken);
-
-            if (!userId.HasValue)
-            {
-                userId = await _context.Users
-                    .AsNoTracking()
-                    .Where(x => x.Email == email)
-                    .Select(x => (int?)x.Id)
-                    .SingleOrDefaultAsync(cancellationToken);
-            }
 
             User user;
 
@@ -580,67 +772,81 @@ namespace DailyChessPuzzleApi.Services
                         409,
                         "GOOGLE_ACCOUNT_LINK_REQUIRED");
 
+                // Kullanıcı kilitlendikten sonra kimliği tekrar doğrula.
                 if (user.GoogleId != googleId)
                 {
-                    if (user.Email != email ||
-                        user.EmailVerified ||
-                        !string.IsNullOrWhiteSpace(user.GoogleId))
-                    {
-                        throw new AppException(
-                            409,
-                            "GOOGLE_ACCOUNT_LINK_REQUIRED");
-                    }
-
-                    var now = DateTime.UtcNow;
-
-                    user.GoogleId = googleId;
-                    user.EmailVerified = true;
-                    user.PasswordHash = null;
-                    user.EmailVerificationCodeHash = null;
-                    user.EmailVerificationCodeExpiresAtUtc = null;
-                    user.UpdatedAtUtc = now;
-                    user.TokenVersion++;
-
-                    await _context.RefreshTokens
-                        .Where(token =>
-                            token.UserId == user.Id &&
-                            token.RevokedAtUtc == null)
-                        .ExecuteUpdateAsync(
-                            setters => setters.SetProperty(
-                                token => token.RevokedAtUtc,
-                                now),
-                            cancellationToken);
-
-                    await _context.SaveChangesAsync(
-                        cancellationToken);
+                    throw new AppException(
+                        409,
+                        "GOOGLE_ACCOUNT_LINK_REQUIRED");
                 }
             }
             else
             {
-                string username = await GenerateGoogleUsernameAsync(
-                    email,
-                    cancellationToken);
+                // Google kimliği bulunamadıysa e-posta adresini kontrol et.
+                var existingUserId = await _context.Users
+                    .AsNoTracking()
+                    .Where(x => x.Email == email)
+                    .Select(x => (int?)x.Id)
+                    .SingleOrDefaultAsync(cancellationToken);
 
-                user = new User
+                if (existingUserId.HasValue)
                 {
-                    Username = username,
-                    FirstName =
-                        payload.GivenName?.Trim() ?? string.Empty,
-                    LastName =
-                        payload.FamilyName?.Trim() ?? string.Empty,
-                    Email = email,
-                    GoogleId = googleId,
-                    EmailVerified = true,
-                    PasswordHash = null,
-                    CountryCode = null,
-                    CountryChangedAtUtc = null,
-                    CreatedAtUtc = DateTime.UtcNow
-                };
+                    var existingUser = await GetLockedUserAsync(
+                        existingUserId.Value,
+                        cancellationToken);
 
-                _context.Users.Add(user);
+                    // Eş zamanlı hesap bağlama işlemi tamamlanmış olabilir.
+                    if (existingUser != null &&
+                        existingUser.GoogleId == googleId)
+                    {
+                        user = existingUser;
+                    }
+                    else
+                    {
+                        // E-posta eşleşmesi tek başına mevcut hesabı
+                        // devralmak için yeterli değildir.
+                        throw new AppException(
+                            409,
+                            "GOOGLE_ACCOUNT_LINK_REQUIRED");
+                    }
+                }
+                else
+                {
+                    string username = await GenerateGoogleUsernameAsync(
+                        email,
+                        cancellationToken);
 
-                await _context.SaveChangesAsync(
-                    cancellationToken);
+                    user = new User
+                    {
+                        Username = username,
+
+                        FirstName =
+                            payload.GivenName?.Trim() ?? string.Empty,
+
+                        LastName =
+                            payload.FamilyName?.Trim() ?? string.Empty,
+
+                        Email = email,
+                        GoogleId = googleId,
+
+                        EmailVerified = true,
+                        EmailVerificationCodeHash = null,
+                        EmailVerificationCodeExpiresAtUtc = null,
+                        EmailVerificationFailedAttempts = 0,
+
+                        PasswordHash = null,
+
+                        CountryCode = null,
+                        CountryChangedAtUtc = null,
+
+                        CreatedAtUtc = DateTime.UtcNow
+                    };
+
+                    _context.Users.Add(user);
+
+                    await _context.SaveChangesAsync(
+                        cancellationToken);
+                }
             }
 
             var response = await CreateAuthResponseAsync(
@@ -653,6 +859,7 @@ namespace DailyChessPuzzleApi.Services
             return response;
         }
 
+
         private static bool IsGoogleRegistrationConflict(
             DbUpdateException exception)
         {
@@ -664,10 +871,11 @@ namespace DailyChessPuzzleApi.Services
                        "IX_Users_NormalizedUsername" or
                        "IX_Users_GoogleId";
         }
+
         public async Task LinkGoogleAccountAsync(
-    int userId,
-    LinkGoogleAccountRequest request,
-    CancellationToken cancellationToken)
+            int userId,
+            LinkGoogleAccountRequest request,
+            CancellationToken cancellationToken)
         {
             var payload = await _googleTokenValidator.ValidateAsync(
                 request.IdToken,
@@ -695,6 +903,7 @@ namespace DailyChessPuzzleApi.Services
                     "PASSWORD_NOT_SET");
             }
 
+            // Mevcut hesap şifresini doğrula.
             if (_passwordHasher.VerifyHashedPassword(
                     user,
                     user.PasswordHash,
@@ -706,6 +915,9 @@ namespace DailyChessPuzzleApi.Services
                     "INVALID_CREDENTIALS");
             }
 
+            // Google hesabının doğrulanmış olduğunu ve
+            // mevcut hesapla aynı e-posta adresine sahip
+            // olduğunu kontrol et.
             if (string.IsNullOrWhiteSpace(payload.Subject) ||
                 !payload.EmailVerified ||
                 !string.Equals(
@@ -718,6 +930,7 @@ namespace DailyChessPuzzleApi.Services
                     "GOOGLE_EMAIL_MISMATCH");
             }
 
+            // Farklı bir Google hesabı zaten bağlıysa reddet.
             if (!string.IsNullOrWhiteSpace(user.GoogleId) &&
                 user.GoogleId != payload.Subject)
             {
@@ -726,6 +939,8 @@ namespace DailyChessPuzzleApi.Services
                     "GOOGLE_ACCOUNT_ALREADY_LINKED");
             }
 
+            // Google kimliğinin başka kullanıcıya ait
+            // olmadığını kontrol et.
             var alreadyLinked = await _context.Users.AnyAsync(
                 x => x.Id != userId &&
                      x.GoogleId == payload.Subject,
@@ -738,8 +953,31 @@ namespace DailyChessPuzzleApi.Services
                     "GOOGLE_ACCOUNT_ALREADY_LINKED");
             }
 
+            // Aynı Google hesabı zaten bağlıysa
+            // işlemi idempotent olarak başarılı kabul et.
+            if (user.GoogleId == payload.Subject &&
+                user.EmailVerified)
+            {
+                await transaction.CommitAsync(
+                    cancellationToken);
+
+                return;
+            }
+
             user.GoogleId = payload.Subject;
             user.EmailVerified = true;
+
+            // Artık e-posta doğrulama koduna ihtiyaç yok.
+            user.EmailVerificationCodeHash = null;
+            user.EmailVerificationCodeExpiresAtUtc = null;
+            user.EmailVerificationFailedAttempts = 0;
+
+            // Daha önce üretilmiş şifre sıfırlama
+            // kodlarını geçersiz hale getir.
+            user.PasswordResetCodeHash = null;
+            user.PasswordResetCodeExpiresAtUtc = null;
+            user.PasswordResetFailedAttempts = 0;
+
             user.UpdatedAtUtc = DateTime.UtcNow;
 
             try
@@ -751,9 +989,10 @@ namespace DailyChessPuzzleApi.Services
                     cancellationToken);
             }
             catch (DbUpdateException exception)
-                when (exception.InnerException is PostgresException postgres &&
-                      postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
-                      postgres.ConstraintName == "IX_Users_GoogleId")
+                when (
+                    exception.InnerException is PostgresException postgres &&
+                    postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                    postgres.ConstraintName == "IX_Users_GoogleId")
             {
                 await transaction.RollbackAsync(
                     cancellationToken);
@@ -765,6 +1004,7 @@ namespace DailyChessPuzzleApi.Services
                     "GOOGLE_ACCOUNT_ALREADY_LINKED");
             }
         }
+
 
         public async Task SetPasswordAsync(
     int userId,
@@ -1021,6 +1261,7 @@ namespace DailyChessPuzzleApi.Services
             });
             await _context.SaveChangesAsync(cancellationToken);
 
+
             return new AuthResponse
             {
                 UserId = user.Id,
@@ -1029,6 +1270,7 @@ namespace DailyChessPuzzleApi.Services
                 LastName = user.LastName,
                 Email = user.Email,
                 CountryCode = user.CountryCode,
+                EmailVerified = user.EmailVerified,
                 HasPassword = !string.IsNullOrWhiteSpace(
                     user.PasswordHash),
                 AccessToken = new JwtSecurityTokenHandler()

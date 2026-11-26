@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/auth_provider.dart';
-import 'email_verification_page.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -24,7 +23,6 @@ class _RegisterPageState extends State<RegisterPage> {
 
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
-  String? _pendingVerificationEmail;
 
   @override
   void dispose() {
@@ -37,12 +35,8 @@ class _RegisterPageState extends State<RegisterPage> {
     super.dispose();
   }
 
-  Future<void> _register() async {
-    if (_pendingVerificationEmail != null) {
-      await _verifyEmail();
-      return;
-    }
 
+  Future<void> _register() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -58,21 +52,14 @@ class _RegisterPageState extends State<RegisterPage> {
 
       if (!mounted) return;
 
-      if (response.success && response.data != null) {
-        setState(() {
-          _pendingVerificationEmail =
-              response.data!['email']?.toString() ??
-                  _emailController.text.trim();
-        });
-        await _verifyEmail();
-      } else if (response.errorCode == 'EMAIL_DELIVERY_FAILED') {
-        setState(() {
-          _pendingVerificationEmail = _emailController.text.trim();
-        });
-        _showError(
-          'Hesap oluşturuldu, ancak e-posta gönderilemedi. Kodu yeniden iste.',
+      if (response.success ||
+          response.errorCode == 'EMAIL_DELIVERY_FAILED') {
+        _showInfo(
+          'Hesabın oluşturuldu. Giriş yaptıktan sonra '
+              'profil ekranından e-postanı doğrulayabilirsin.',
         );
-        await _verifyEmail();
+
+        Navigator.pop(context, true);
       } else {
         _showError(response.message ?? 'Kayıt işlemi başarısız.');
       }
@@ -83,36 +70,6 @@ class _RegisterPageState extends State<RegisterPage> {
         'Sunucuya bağlanırken bir hata oluştu. '
             'Lütfen tekrar deneyin.',
       );
-    }
-  }
-
-  Future<void> _verifyEmail() async {
-    final email = _pendingVerificationEmail;
-    if (email == null) return;
-
-    final verified = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => EmailVerificationPage(email: email)),
-    );
-    if (!mounted || verified != true) return;
-    Navigator.pop(context, true);
-  }
-
-  Future<void> _resendVerification() async {
-    final email = _pendingVerificationEmail;
-    if (email == null) return;
-
-    try {
-      final result = await context.read<AuthProvider>().resendVerification(
-        email: email,
-      );
-      if (!mounted) return;
-      if (result.success) {
-        _showInfo('Kod gönderme isteği alındı. Gelen kutunu kontrol et.');
-      } else {
-        _showError(result.message ?? 'Kod yeniden gönderilemedi.');
-      }
-    } catch (_) {
-      if (mounted) _showError('Kod yeniden gönderilemedi.');
     }
   }
 
@@ -352,24 +309,16 @@ class _RegisterPageState extends State<RegisterPage> {
                           ? const SizedBox(
                         width: 22,
                         height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
                       )
-                          : Text(
-                        _pendingVerificationEmail == null
-                            ? 'Hesap Oluştur'
-                            : 'E-postayı Doğrula',
-                        style: const TextStyle(fontSize: 16),
+                          : const Text(
+                        'Hesap Oluştur',
+                        style: TextStyle(fontSize: 16),
                       ),
                     ),
                   ),
-
-                  if (_pendingVerificationEmail != null) ...[
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: isLoading ? null : _resendVerification,
-                      child: const Text('Doğrulama kodunu yeniden gönder'),
-                    ),
-                  ],
 
                   const SizedBox(height: 16),
 

@@ -110,6 +110,7 @@ class AuthApiService {
     );
   }
 
+
   Future<ApiResponse<Map<String, dynamic>>> verifyEmail({
     required String email,
     required String code,
@@ -120,6 +121,7 @@ class AuthApiService {
         'email': email.trim(),
         'code': code.trim(),
       },
+      authenticated: true,
     );
   }
 
@@ -131,6 +133,7 @@ class AuthApiService {
       {
         'email': email.trim(),
       },
+      authenticated: true,
     );
   }
 
@@ -150,19 +153,27 @@ class AuthApiService {
         'newPassword': newPassword,
       });
 
+
   Future<ApiResponse<Map<String, dynamic>>> _postMap(
       String path,
-      Map<String, dynamic> data,
-      ) async {
+      Map<String, dynamic> data, {
+        bool authenticated = false,
+      }) async {
     final generation = _authStorage.sessionGeneration;
 
     dynamic responseData;
 
     try {
+      final options = authenticated
+          ? await _getAuthenticatedOptions(generation)
+          : _getSessionOptions(generation);
+
+      _authStorage.ensureCurrentGeneration(generation);
+
       final response = await _dio.post(
         path,
         data: data,
-        options: _getSessionOptions(generation),
+        options: options,
       );
 
       responseData = response.data;

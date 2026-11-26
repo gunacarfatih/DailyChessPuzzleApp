@@ -53,6 +53,7 @@ class AuthProvider extends ChangeNotifier {
   String? _lastName;
   String? _countryCode;
   bool _hasPassword = false;
+  bool _emailVerified = false;
 
   // Dışarıya açılan değişkenler.
   bool get isLoggedIn => _isLoggedIn;
@@ -65,6 +66,7 @@ class AuthProvider extends ChangeNotifier {
   String? get lastName => _lastName;
   String? get countryCode => _countryCode;
   bool get hasPassword => _hasPassword;
+  bool get emailVerified => _emailVerified;
 
   // Provider'ın ve ilgili oturumun hâlâ geçerli
   // olup olmadığını kontrol eder.
@@ -163,6 +165,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // Kayıtlı oturum bilgilerini güvenli depolamadan okur.
+
   Future<void> _loadSession(int generation) async {
     if (!_isCurrentSession(generation)) return;
 
@@ -176,8 +179,6 @@ class AuthProvider extends ChangeNotifier {
       return;
     }
 
-    // Kullanıcı bilgileri önce yerel değişkenlere alınır.
-    // Okuma işlemi tamamlanmadan Provider state'i değiştirilmez.
     final userId = await _authStorage.getUserId();
 
     if (!_isCurrentSession(generation)) return;
@@ -204,7 +205,10 @@ class AuthProvider extends ChangeNotifier {
 
     final hasPassword = await _authStorage.getHasPassword();
 
-    // Bütün okumalar tamamlandıktan sonra son oturum kontrolü.
+    if (!_isCurrentSession(generation)) return;
+
+    final emailVerified = await _authStorage.getEmailVerified();
+
     if (!_isCurrentSession(generation)) return;
 
     _isLoggedIn = true;
@@ -215,6 +219,7 @@ class AuthProvider extends ChangeNotifier {
     _lastName = lastName;
     _countryCode = countryCode;
     _hasPassword = hasPassword;
+    _emailVerified = emailVerified;
 
     _notifySafely();
   }
@@ -316,6 +321,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // Mevcut kullanıcı hesabına Google hesabı bağlar.
+
   Future<ApiResponse<Map<String, dynamic>>> linkGoogleAccount({
     required String currentPassword,
   }) async {
@@ -329,8 +335,22 @@ class AuthProvider extends ChangeNotifier {
 
     _ensureCurrentSession(generation);
 
+    if (result.success && _isLoggedIn) {
+      await _authStorage.updateEmailVerified(
+        true,
+        expectedGeneration: generation,
+      );
+
+      _ensureCurrentSession(generation);
+
+      _emailVerified = true;
+
+      _notifySafely();
+    }
+
     return result;
   }
+
 
   // Ortak loading yönetimi.
   // Bir işlem tamamlandığında diğer işlemler devam ediyorsa
@@ -400,12 +420,15 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // E-posta doğrulama işlemi.
+
   Future<ApiResponse<Map<String, dynamic>>> verifyEmail({
     required String email,
     required String code,
   }) {
     return _withLoading(() async {
       final generation = _authStorage.sessionGeneration;
+
+      _ensureCurrentSession(generation);
 
       final result = await _authApiService.verifyEmail(
         email: email,
@@ -414,9 +437,26 @@ class AuthProvider extends ChangeNotifier {
 
       _ensureCurrentSession(generation);
 
+      if (result.success &&
+          _isLoggedIn &&
+          _email?.trim().toLowerCase() ==
+              email.trim().toLowerCase()) {
+        await _authStorage.updateEmailVerified(
+          true,
+          expectedGeneration: generation,
+        );
+
+        _ensureCurrentSession(generation);
+
+        _emailVerified = true;
+
+        _notifySafely();
+      }
+
       return result;
     });
   }
+
 
   // E-posta doğrulama kodunu tekrar gönderir.
   Future<ApiResponse<Map<String, dynamic>>> resendVerification({
@@ -623,6 +663,7 @@ class AuthProvider extends ChangeNotifier {
     _lastName = null;
     _countryCode = null;
     _hasPassword = false;
+    _emailVerified = false;
   }
 
   @override
