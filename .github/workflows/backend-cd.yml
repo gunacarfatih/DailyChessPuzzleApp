@@ -53,7 +53,7 @@ jobs:
           RUN_ID=$(gh api \
             --method GET \
             "repos/$REPOSITORY/actions/workflows/backend-ci.yml/runs" \
-            -f branch="fix/production-readiness" \
+            -f branch="main" \
             -f head_sha="$COMMIT_SHA" \
             -f event="push" \
             -f status="success" \

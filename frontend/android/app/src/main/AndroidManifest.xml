@@ -4,11 +4,15 @@
     <!-- İnternet bağlantısı izni -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Konum izinleri -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <application
-        android:label="daily_chess_puzzle"
+        android:label="Checkrix"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        >
 
         <activity
             android:name=".MainActivity"

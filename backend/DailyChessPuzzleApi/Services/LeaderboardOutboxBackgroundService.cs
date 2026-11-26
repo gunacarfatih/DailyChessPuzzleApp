@@ -1,63 +1,85 @@
-﻿
-using DailyChessPuzzleApi.Services.Interfaces;
+﻿using DailyChessPuzzleApi.Services.Interfaces;
 
 namespace DailyChessPuzzleApi.Services
 {
-    public class LeaderboardOutboxBackgroundService : BackgroundService
+    public class LeaderboardOutboxBackgroundService
+        : BackgroundService
     {
+        private static readonly TimeSpan PollingInterval =
+            TimeSpan.FromSeconds(10);
+
         private readonly IServiceScopeFactory _scopeFactory;
-        private readonly ILogger<LeaderboardOutboxBackgroundService> _logger;
+
+        private readonly ILogger<LeaderboardOutboxBackgroundService>
+            _logger;
+
+        private readonly LeaderboardOutboxSignal _signal;
 
         public LeaderboardOutboxBackgroundService(
             IServiceScopeFactory scopeFactory,
-            ILogger<LeaderboardOutboxBackgroundService> logger)
+            ILogger<LeaderboardOutboxBackgroundService> logger,
+            LeaderboardOutboxSignal signal)
         {
             _scopeFactory = scopeFactory;
             _logger = logger;
+            _signal = signal;
         }
 
         protected override async Task ExecuteAsync(
             CancellationToken stoppingToken)
         {
             _logger.LogInformation(
-                "Leaderboard Outbox Background Service başlatıldı."
-            );
+                "Leaderboard Outbox Background Service başlatıldı.");
+
+            DateOnly? lastCleanupDate = null;
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    // Her işlem için yeni bir DI scope oluşturulur.
-                    using var scope = _scopeFactory.CreateScope();
+                    using var scope =
+                        _scopeFactory.CreateScope();
 
-                    // Outbox servisi DI üzerinden alınır.
                     var outboxService = scope.ServiceProvider
                         .GetRequiredService<ILeaderboardOutboxService>();
 
-                    // Bekleyen görevler işlenir.
-                    await outboxService.ProcessPendingAsync(stoppingToken);
+                    var hasMore =
+                        await outboxService.ProcessPendingAsync(
+                            stoppingToken);
+
+                    var today =
+                        DateOnly.FromDateTime(DateTime.UtcNow);
+
+                    if (lastCleanupDate != today)
+                    {
+                        await outboxService.CleanupCompletedAsync(
+                            stoppingToken);
+
+                        lastCleanupDate = today;
+                    }
+
+                    if (hasMore)
+                    {
+                        continue;
+                    }
                 }
                 catch (OperationCanceledException)
                     when (stoppingToken.IsCancellationRequested)
                 {
-                    // Uygulama kapatılırken döngü kontrollü sonlandırılır.
                     break;
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(
                         ex,
-                        "Leaderboard Outbox Background Service işleminde hata oluştu."
-                    );
+                        "Leaderboard Outbox Background Service işleminde hata oluştu.");
                 }
 
                 try
                 {
-                    // Bir sonraki kontrol için 10 saniye beklenir.
-                    await Task.Delay(
-                        TimeSpan.FromSeconds(10),
-                        stoppingToken
-                    );
+                    await _signal.WaitAsync(
+                        PollingInterval,
+                        stoppingToken);
                 }
                 catch (OperationCanceledException)
                     when (stoppingToken.IsCancellationRequested)
@@ -67,8 +89,7 @@ namespace DailyChessPuzzleApi.Services
             }
 
             _logger.LogInformation(
-                "Leaderboard Outbox Background Service durduruldu."
-            );
+                "Leaderboard Outbox Background Service durduruldu.");
         }
     }
 }

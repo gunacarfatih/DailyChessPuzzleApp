@@ -1,5 +1,4 @@
-﻿
-namespace DailyChessPuzzleApi.DTOs
+﻿namespace DailyChessPuzzleApi.DTOs
 {
     public class LeaderboardResponse
     {

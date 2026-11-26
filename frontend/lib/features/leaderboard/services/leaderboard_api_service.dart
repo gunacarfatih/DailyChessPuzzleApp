@@ -7,32 +7,35 @@ import '../../../core/network/api_client.dart';
 import '../models/leaderboard_response.dart';
 
 class LeaderboardApiService {
-  final Dio _dio = ApiClient.dio;
+  LeaderboardApiService({Dio? dio}) : _dio = dio ?? ApiClient.dio;
+
+  final Dio _dio;
 
   Future<ApiResponse<LeaderboardResponse>> getLeaderboard({
-    required String clientId,
     String? country,
     int limit = 10,
     DateTime? startDate,
     DateTime? endDate,
+    String? period,
   }) async {
     final queryParameters = <String, dynamic>{
-      'clientId': clientId,
       'limit': limit,
     };
+
+    if (period != null && period != 'all') {
+      queryParameters['period'] = period;
+    }
 
     if (country != null && country.isNotEmpty) {
       queryParameters['country'] = country;
     }
 
     if (startDate != null) {
-      queryParameters['startDate'] =
-          _formatDate(startDate);
+      queryParameters['startDate'] = _formatDate(startDate);
     }
 
     if (endDate != null) {
-      queryParameters['endDate'] =
-          _formatDate(endDate);
+      queryParameters['endDate'] = _formatDate(endDate);
     }
 
     final response = await _dio.get(

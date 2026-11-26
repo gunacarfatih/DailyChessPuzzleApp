@@ -8,6 +8,8 @@ namespace DailyChessPuzzleApi.Models
         // Kullanıcının kimliği.
         public string ClientId { get; set; } = string.Empty;
 
+        public int? UserId { get; set; }
+
         // Liderlik tablosunun dönemi: daily, weekly, monthly veya alltime.
         public string Period { get; set; } = string.Empty;
 

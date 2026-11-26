@@ -1,0 +1,180 @@
+
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'fix/**'
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/backend-ci.yml'
+
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/backend-ci.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and Test Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+
+        env:
+          POSTGRES_DB: dailychess_test
+          POSTGRES_USER: dailychess_test
+          POSTGRES_PASSWORD: ci_test_password
+
+        ports:
+          - 5432:5432
+
+        options: >-
+          --health-cmd "pg_isready -U dailychess_test -d dailychess_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DCP_TEST_POSTGRES: "Host=localhost;Port=5432;Database=dailychess_test;Username=dailychess_test;Password=ci_test_password"
+      DCP_TEST_REDIS: "localhost:6379"
+      PublicIdSettings__Secret: "ci-public-id-secret-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789"
+      ConnectionStrings__DefaultConnection: "Host=localhost;Port=5432;Database=dailychess_test;Username=dailychess_test;Password=ci_test_password"
+      ConnectionStrings__Redis: "localhost:6379"
+      JwtSettings__Secret: "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+      JwtSettings__Issuer: "DailyChessPuzzleApi.Tests"
+      JwtSettings__Audience: "DailyChessPuzzleClient.Tests"
+      JwtSettings__ExpirationMinutes: "60"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore backend/DailyChessPuzzleApi.Tests/DailyChessPuzzleApi.Tests.csproj
+
+      - name: Build backend
+        run: >
+          dotnet build
+          backend/DailyChessPuzzleApi.Tests/DailyChessPuzzleApi.Tests.csproj
+          --configuration Release
+          --no-restore
+
+      - name: Run backend tests
+        run: >
+          dotnet test
+          backend/DailyChessPuzzleApi.Tests/DailyChessPuzzleApi.Tests.csproj
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=backend-tests.trx"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: TestResults/
+          retention-days: 14
+
+      - name: Build Docker image
+        run: docker build -t dailychess-api:ci ./backend
+
+  publish-image:
+    name: Publish ARM64 Docker Image
+    needs: build-and-test
+
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish ARM64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/gunacarfatih/dailychess-api:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  flutter-checks:
+    name: Analyze and Test Flutter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          pub-cache-key: ${{ hashFiles('frontend/pubspec.lock') }}
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: frontend
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run Flutter tests
+        working-directory: frontend
+        run: flutter test

@@ -92,7 +92,7 @@ packages:
   daily_chess_puzzle:
     dependency: "direct main"
     description:
-      path: "C:\\Users\\RzgrFG\\source\\repos\\DailyChessPuzzleApp\\frontend"
+      path: "C:\\Users\\RzgrFG\\source\\dailychesspuzzle\\DailyChessPuzzleApp\\frontend"
       relative: false
     source: path
     version: "1.0.0+1"

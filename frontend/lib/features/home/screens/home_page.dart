@@ -1,8 +1,10 @@
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../../../core/storage/client_id_storage.dart';
-import '../../leaderboard/services/leaderboard_api_service.dart';
+import '../../../providers/auth_provider.dart';
+import '../../leaderboard/models/leaderboard_entry.dart';
+import '../../profile/services/user_stats_api_service.dart';
 
 class HomePage extends StatefulWidget {
   final VoidCallback onOpenPuzzle;
@@ -15,13 +17,11 @@ class HomePage extends StatefulWidget {
   });
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomePage> createState() => HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
-  final ClientIdStorage _clientIdStorage = ClientIdStorage();
-  final LeaderboardApiService _leaderboardApiService =
-  LeaderboardApiService();
+class HomePageState extends State<HomePage> {
+  final UserStatsApiService _userStatsApiService = UserStatsApiService();
 
   bool _isLoadingStats = true;
 
@@ -35,19 +35,39 @@ class _HomePageState extends State<HomePage> {
     _loadStatistics();
   }
 
-  Future<void> _loadStatistics() async {
-    try {
-      final clientId = await _clientIdStorage.getClientId();
+  // Ana sayfaya dönüldüğünde dışarıdan çağrılır.
+  void refreshStatistics() {
+    _loadStatistics();
+  }
 
-      final response = await _leaderboardApiService.getLeaderboard(
-        clientId: clientId,
-        limit: 10,
-      );
+  Future<void> _loadStatistics() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoadingStats = true;
+    });
+
+    try {
+      final authProvider = context.read<AuthProvider>();
+      await authProvider.initialize();
+
+      if (!authProvider.isLoggedIn) {
+        if (!mounted) return;
+        setState(() {
+          _totalScore = 0;
+          _solvedCount = 0;
+          _rank = null;
+          _isLoadingStats = false;
+        });
+        return;
+      }
+
+      final response = await _userStatsApiService.getMyStats();
 
       if (!mounted) return;
 
       if (response.success && response.data != null) {
-        final user = response.data!.allTime.currentUser;
+        final LeaderboardEntry? user = response.data;
 
         setState(() {
           _totalScore = user?.totalScore ?? 0;
@@ -60,8 +80,12 @@ class _HomePageState extends State<HomePage> {
           _isLoadingStats = false;
         });
       }
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
+
+      if (kDebugMode) {
+        debugPrint('Ana sayfa istatistik yükleme hatası: $error');
+      }
 
       setState(() {
         _isLoadingStats = false;
@@ -98,26 +122,22 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
-          children: [
-            Icon(
-              Icons.grid_view_rounded,
-              color: Color(0xFFB7D7A8),
-              size: 23,
-            ),
-            SizedBox(width: 9),
-            Text(
-              'Daily Chess Puzzle',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 19,
-              ),
-            ),
-          ],
+        centerTitle: false,
+        toolbarHeight: 72,
+        title: Align(
+          alignment: Alignment.centerLeft,
+          child: Image.asset(
+            'assets/branding/checkrix_logo.png',
+            height: 56,
+            width: 180,
+            fit: BoxFit.contain,
+            alignment: Alignment.centerLeft,
+            semanticLabel: 'Checkrix',
+          ),
         ),
         actions: [
           IconButton(
-            onPressed: _refresh,
+            onPressed: _isLoadingStats ? null : _refresh,
             icon: const Icon(Icons.refresh),
             tooltip: 'İstatistikleri yenile',
           ),

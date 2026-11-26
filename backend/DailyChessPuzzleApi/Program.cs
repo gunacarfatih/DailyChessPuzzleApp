@@ -1,91 +1,364 @@
 
-using ReusableCaching.Extensions;
-using DailyChessPuzzleApi.Services;
-using DailyChessPuzzleApi.Services.Interfaces;
+using System.Runtime.InteropServices;
+using System.Security.Claims;
+using System.Text;
+
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.Middlewares;
+using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Responses;
+using DailyChessPuzzleApi.Services;
+using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
+using DailyChessPuzzleApi.Hubs;
+using DailyChessPuzzleApi.HealthChecks;
 
-using StackExchange.Redis;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
+using ReusableCaching.Extensions;
 using Serilog;
-using System.Runtime.InteropServices;
+using StackExchange.Redis;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Leaderboard ayarlarını appsettings.json üzerinden yükle.
+// UseSerilog is the sole logging provider. Keeping the default console
+// provider here can print every application log twice in development.
+builder.Logging.ClearProviders();
+
+// --------------------------------------------------
+// LEADERBOARD AYARLARI
+// --------------------------------------------------
+
 builder.Services.Configure<LeaderboardSettings>(
     builder.Configuration.GetSection("LeaderboardSettings"));
 
-// Redis veya Memory cache altyapısını yapılandırır.
+// --------------------------------------------------
+// PUBLIC ID AYARLARI
+// --------------------------------------------------
+
+var publicIdSettings = builder.Configuration
+    .GetSection("PublicIdSettings")
+    .Get<PublicIdSettings>()
+    ?? throw new InvalidOperationException(
+        "PublicIdSettings yapılandırması bulunamadı.");
+
+if (string.IsNullOrWhiteSpace(publicIdSettings.Secret) ||
+    Encoding.UTF8.GetByteCount(publicIdSettings.Secret) < 32)
+{
+    throw new InvalidOperationException(
+        "PublicId Secret en az 32 byte uzunluğunda olmalıdır.");
+}
+
+builder.Services.Configure<PublicIdSettings>(
+    builder.Configuration.GetSection("PublicIdSettings"));
+
+// --------------------------------------------------
+// JWT AYARLARI
+// --------------------------------------------------
+
+var jwtSettings = builder.Configuration
+    .GetSection("JwtSettings")
+    .Get<JwtSettings>()
+    ?? throw new InvalidOperationException(
+        "JwtSettings yapılandırması bulunamadı.");
+
+if (string.IsNullOrWhiteSpace(jwtSettings.Secret) ||
+    Encoding.UTF8.GetByteCount(jwtSettings.Secret) < 32)
+{
+    throw new InvalidOperationException(
+        "JWT Secret en az 32 byte uzunluğunda olmalıdır.");
+}
+
+if (string.IsNullOrWhiteSpace(jwtSettings.Issuer) ||
+    string.IsNullOrWhiteSpace(jwtSettings.Audience) ||
+    jwtSettings.ExpirationMinutes <= 0)
+{
+    throw new InvalidOperationException(
+        "JWT yapılandırmasındaki Issuer, Audience ve ExpirationMinutes değerlerini kontrol edin.");
+}
+
+builder.Services.Configure<JwtSettings>(
+    builder.Configuration.GetSection("JwtSettings"));
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwtSettings.Issuer,
+
+            ValidateAudience = true,
+            ValidAudience = jwtSettings.Audience,
+
+            ValidateLifetime = true,
+
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(jwtSettings.Secret)),
+
+            ClockSkew = TimeSpan.FromSeconds(30)
+        };
+
+        // SignalR WebSocket bağlantılarında token query string üzerinden gelebilir.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken =
+                    context.Request.Query["access_token"];
+
+                var path = context.HttpContext.Request.Path;
+
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    path.StartsWithSegments("/hubs/leaderboard"))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            },
+
+            OnTokenValidated = async context =>
+            {
+                var userIdValue = context.Principal?
+                    .FindFirst(ClaimTypes.NameIdentifier)?
+                    .Value;
+
+                var tokenVersionValue = context.Principal?
+                    .FindFirst("token_version")?
+                    .Value;
+
+                if (!int.TryParse(userIdValue, out var userId) ||
+                    !int.TryParse(
+                        tokenVersionValue,
+                        out var tokenVersion))
+                {
+                    context.Fail("INVALID_TOKEN_CLAIMS");
+                    return;
+                }
+
+                var dbContext = context.HttpContext
+                    .RequestServices
+                    .GetRequiredService<ApplicationDbContext>();
+
+                var currentTokenVersion = await dbContext.Users
+                    .AsNoTracking()
+                    .Where(user => user.Id == userId)
+                    .Select(user => (int?)user.TokenVersion)
+                    .SingleOrDefaultAsync(
+                        context.HttpContext.RequestAborted);
+
+                if (!currentTokenVersion.HasValue ||
+                    currentTokenVersion.Value != tokenVersion)
+                {
+                    context.Fail("TOKEN_REVOKED");
+                }
+            }
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            success = false,
+            status = StatusCodes.Status429TooManyRequests,
+            errorCode = "RATE_LIMIT_EXCEEDED",
+            message = "Too many requests. Please try again later."
+        }, cancellationToken);
+    };
+
+    AddIpPolicy(
+    options,
+    "auth-register",
+    permitLimit: 5,
+    window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-login",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-refresh",
+        permitLimit: 30,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-verification",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-google",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
+
+    AddIpPolicy(
+        options,
+        "auth-sensitive",
+        permitLimit: 10,
+        window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "puzzle-write", permitLimit: 60, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "puzzle-move", permitLimit: 30, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "puzzle-read", permitLimit: 60, window: TimeSpan.FromMinutes(1));
+    AddIpPolicy(options, "leaderboard", permitLimit: 30, window: TimeSpan.FromMinutes(1));
+});
+
+static void AddIpPolicy(
+    RateLimiterOptions options,
+    string name,
+    int permitLimit,
+    TimeSpan window)
+{
+    options.AddPolicy(name, context =>
+    {
+        var key = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            key,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = permitLimit,
+                Window = window,
+                QueueLimit = 0,
+                AutoReplenishment = true
+            });
+    });
+}
+
+// --------------------------------------------------
+// AUTH SERVİSLERİ
+// --------------------------------------------------
+
+builder.Services.AddScoped<
+    IPasswordHasher<User>,
+    PasswordHasher<User>>();
+
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
+
+builder.Services.AddScoped<
+    IGoogleTokenValidator,
+    GoogleTokenValidator>();
+
+// --------------------------------------------------
+// CACHE
+// --------------------------------------------------
+
 builder.Services.AddReusableCaching(builder.Configuration);
 
-// Redis bağlantısını uygulama boyunca tek bir instance olarak kullanır.
+var redisConnectionString = builder.Configuration
+    .GetConnectionString("Redis");
+
+if (string.IsNullOrWhiteSpace(redisConnectionString))
+{
+    throw new InvalidOperationException(
+        "Redis connection string bulunamadı.");
+}
+
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
-    var redisConnection = builder.Configuration
-        .GetConnectionString("Redis");
-
-    if (string.IsNullOrWhiteSpace(redisConnection))
-    {
-        throw new InvalidOperationException(
-            "Redis connection string bulunamadı.");
-    }
-
-    // Redis bağlantı ayarlarını oluştur.
-    var redisOptions = ConfigurationOptions.Parse(redisConnection);
+    var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
 
     // Redis kapalı olsa bile uygulamanın açılmasına izin ver.
-    // Bağlantı kesilirse ConnectionMultiplexer yeniden bağlanmayı dener.
     redisOptions.AbortOnConnectFail = false;
 
     return ConnectionMultiplexer.Connect(redisOptions);
 });
 
-// Leaderboard cache servisini DI sistemine kaydeder.
 builder.Services.AddSingleton<
     ILeaderboardCacheService,
     LeaderboardCacheService>();
 
-// İşletim sistemine göre log dosyalarının tutulacağı klasörü belirle.
-var logDirectory = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-    ? "C:/DailyChess/logs"
-    : "/var/log/dailychess";
+// --------------------------------------------------
+// SIGNALR
+// --------------------------------------------------
 
-// Log klasörü mevcut değilse oluştur.
-Directory.CreateDirectory(logDirectory);
+builder.Services
+    .AddSignalR()
+    .AddStackExchangeRedis(
+        redisConnectionString,
+        options =>
+        {
+            options.Configuration.ChannelPrefix =
+                RedisChannel.Literal("DailyChessPuzzle");
+        });
 
-// Log dosyasının yolunu belirle.
-var logFilePath = Path.Combine(logDirectory, "log-.txt");
+// --------------------------------------------------
+// SERILOG
+// --------------------------------------------------
 
-// Serilog yapılandırması.
+var logDirectory = builder.Configuration["Logging:Directory"];
+
+var logFilePath = string.IsNullOrWhiteSpace(logDirectory)
+    ? null
+    : Path.Combine(logDirectory, "log-.txt");
+
 builder.Host.UseSerilog((context, configuration) =>
 {
-    configuration
-        .ReadFrom.Configuration(context.Configuration)
-        .WriteTo.File(
+    configuration.ReadFrom.Configuration(context.Configuration);
+
+    if (!string.IsNullOrWhiteSpace(logFilePath))
+    {
+        Directory.CreateDirectory(logDirectory!);
+        configuration.WriteTo.File(
             path: logFilePath,
             rollingInterval: RollingInterval.Day,
             retainedFileCountLimit: 10,
-            outputTemplate:
-                "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}"
-        );
+            outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] [{CorrelationId}] {Message:lj}{NewLine}{Exception}");
+    }
 });
 
-// PostgreSQL bağlantısını ApplicationDbContext üzerinden yapılandır.
+// --------------------------------------------------
+// DATABASE
+// --------------------------------------------------
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection")
     )
 );
 
-// API Controller servislerini kaydet.
+// --------------------------------------------------
+// CONTROLLERS VE VALIDATION
+// --------------------------------------------------
+
 builder.Services.AddControllers();
 
-// Model doğrulama hatalarını BaseResponse formatında döndür.
+// PostgreSQL ve Redis sağlık kontrolleri.
+builder.Services.AddHealthChecks()
+    .AddCheck<PostgreSqlHealthCheck>(
+        name: "PostgreSQL",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: new[] { "ready", "database" },
+        timeout: TimeSpan.FromSeconds(5))
+    .AddCheck<RedisHealthCheck>(
+        name: "Redis",
+        failureStatus: HealthStatus.Degraded,
+        tags: new[] { "ready", "cache" },
+        timeout: TimeSpan.FromSeconds(3));
+
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
@@ -108,55 +381,128 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
     };
 });
 
-// PuzzleService kaydı.
+// --------------------------------------------------
+// APPLICATION SERVICES
+// --------------------------------------------------
+
 builder.Services.AddScoped<IPuzzleService, PuzzleService>();
 
-// LeaderboardService kaydı.
 builder.Services.AddScoped<ILeaderboardService, LeaderboardService>();
+builder.Services.AddSingleton<
+    ILeaderboardPublisher,
+    LeaderboardPublisher>();
 
-// Leaderboard Outbox servisi.
+// PublicId üretim servisi.
+builder.Services.AddSingleton<IPublicIdService, PublicIdService>();
+
 builder.Services.AddScoped<
     ILeaderboardOutboxService,
     LeaderboardOutboxService>();
 
-// Günlük puzzle atama servisi.
 builder.Services.AddScoped<IDailyPuzzleService, DailyPuzzleService>();
 
-// Günlük puzzle atama arka plan servisi.
+// --------------------------------------------------
+// BACKGROUND SERVICES
+// --------------------------------------------------
+
 builder.Services.AddHostedService<DailyPuzzleBackgroundService>();
 
-// Leaderboard Outbox arka plan servisi.
+builder.Services.AddSingleton<LeaderboardOutboxSignal>();
 builder.Services.AddHostedService<LeaderboardOutboxBackgroundService>();
 
-// Swagger servisleri.
+builder.Services.AddHostedService<RefreshTokenCleanupBackgroundService>();
+
+// --------------------------------------------------
+// SWAGGER
+// --------------------------------------------------
+
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
+builder.Services.AddSwaggerGen(options =>
+{
+    // JWT Bearer Authentication tanımı.
+    options.AddSecurityDefinition(
+        JwtBearerDefaults.AuthenticationScheme,
+        new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Description = "JWT token değerini girin."
+        });
+
+    // Swagger güvenlik gereksinimi.
+    options.AddSecurityRequirement(document =>
+        new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecuritySchemeReference(
+                    JwtBearerDefaults.AuthenticationScheme,
+                    document
+                ),
+                new List<string>()
+            }
+        });
+});
+
+// --------------------------------------------------
+// APPLICATION PIPELINE
+// --------------------------------------------------
 
 var app = builder.Build();
 
-// Her HTTP isteğine benzersiz Correlation ID atanır.
+if (app.Environment.IsProduction())
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var database = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    await database.Database.MigrateAsync();
+}
+
+var forwardedHeaders = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+                       Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+    ForwardLimit = 1
+};
+foreach (var proxy in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+{
+    if (System.Net.IPAddress.TryParse(proxy, out var address))
+        forwardedHeaders.KnownProxies.Add(address);
+}
+app.UseForwardedHeaders(forwardedHeaders);
+
 app.UseMiddleware<CorrelationIdMiddleware>();
 
-// Beklenmeyen hataları yakalar.
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
-// HTTP isteklerini loglar.
 app.UseSerilogRequestLogging();
 
-// Swagger yalnızca Development ortamında etkinleştirilir.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// HTTPS yönlendirmesi.
-//app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+    app.UseHsts();
+}
 
-// Yetkilendirme middleware'i.
+app.UseRouting();
+app.UseAuthentication();
+app.UseRateLimiter();
+
 app.UseAuthorization();
 
-// Controller endpointlerini eşleştir.
 app.MapControllers();
 
+app.MapHub<LeaderboardHub>("/hubs/leaderboard");
+
 app.Run();
+
+public partial class Program
+{
+}

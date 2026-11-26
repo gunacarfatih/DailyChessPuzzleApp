@@ -1,7 +1,7 @@
-﻿
+﻿using System.Net;
 using System.Runtime.ExceptionServices;
-using System.Net;
 using DailyChessPuzzleApi.Responses;
+using DailyChessPuzzleApi.Exceptions;
 
 namespace DailyChessPuzzleApi.Middlewares
 {
@@ -28,45 +28,42 @@ namespace DailyChessPuzzleApi.Middlewares
             catch (OperationCanceledException) when (
                 context.RequestAborted.IsCancellationRequested)
             {
-                // İstemci isteği iptal ettiğinde hata cevabı üretmeyiz.
                 _logger.LogInformation(
-                    "HTTP request was cancelled by the client."
-                );
+                    "HTTP request was cancelled by the client.");
 
                 throw;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                await HandleExceptionAsync(
+                    context,
+                    ex,
+                    HttpStatusCode.Unauthorized);
+            }
+            catch (AppException ex)
+            {
+                await HandleAppExceptionAsync(context, ex);
             }
             catch (KeyNotFoundException ex)
             {
                 await HandleExceptionAsync(
                     context,
                     ex,
-                    HttpStatusCode.NotFound
-                );
-            }
-            catch (InvalidOperationException ex)
-            {
-                await HandleExceptionAsync(
-                    context,
-                    ex,
-                    HttpStatusCode.Conflict
-                );
+                    HttpStatusCode.NotFound);
             }
             catch (ArgumentException ex)
             {
                 await HandleExceptionAsync(
                     context,
                     ex,
-                    HttpStatusCode.BadRequest
-                );
+                    HttpStatusCode.BadRequest);
             }
             catch (Exception ex)
             {
-                // Yukarıdaki kategorilere girmeyen hatalar 500 döndürür.
                 await HandleExceptionAsync(
                     context,
                     ex,
-                    HttpStatusCode.InternalServerError
-                );
+                    HttpStatusCode.InternalServerError);
             }
         }
 
@@ -76,60 +73,72 @@ namespace DailyChessPuzzleApi.Middlewares
             Exception exception,
             HttpStatusCode statusCode)
         {
-            // HTTP cevabı gönderilmeye başlandıysa yeni cevap yazılamaz.
             if (context.Response.HasStarted)
             {
                 ExceptionDispatchInfo.Capture(exception).Throw();
                 return;
             }
 
-            // Hata ayrıntıları sunucu loglarına kaydedilir.
             _logger.LogError(
                 exception,
                 "Request failed. Method: {Method}, Path: {Path}, StatusCode: {StatusCode}",
                 context.Request.Method,
                 context.Request.Path,
-                (int)statusCode
-            );
+                (int)statusCode);
 
-            var isInternalServerError =
-                statusCode == HttpStatusCode.InternalServerError;
+            var message = statusCode switch
+            {
+                HttpStatusCode.Unauthorized => "Authentication is required or invalid.",
+                HttpStatusCode.NotFound => "The requested resource was not found.",
+                HttpStatusCode.BadRequest => "The request is invalid.",
+                _ => "An unexpected error occurred."
+            };
 
-            // Beklenmeyen sunucu hatalarında iç detayları istemciye göstermeyiz.
-            var message = isInternalServerError
-                ? "An unexpected error occurred."
-                : exception.Message;
-
-            // HTTP durum koduna göre hata kodu belirlenir.
             var errorCode = statusCode switch
             {
                 HttpStatusCode.BadRequest => "BAD_REQUEST",
+                HttpStatusCode.Unauthorized => "UNAUTHORIZED",
                 HttpStatusCode.NotFound => "RESOURCE_NOT_FOUND",
-                HttpStatusCode.Conflict => "CONFLICT",
-                HttpStatusCode.InternalServerError => "INTERNAL_SERVER_ERROR",
+                HttpStatusCode.InternalServerError =>
+                    "INTERNAL_SERVER_ERROR",
                 _ => "UNKNOWN_ERROR"
             };
 
-            // Hata detayları yalnızca beklenen hata türlerinde döndürülür.
-            var errors = isInternalServerError
-                ? null
-                : new List<string> { exception.Message };
+            var errors = (List<string>?)null;
 
-            // Standart hata cevabı ResponseFactory üzerinden oluşturulur.
             var response = ResponseFactory.Failure<object>(
                 context,
                 message,
                 (int)statusCode,
                 errorCode,
-                errors
-            );
+                errors);
 
-            // HTTP cevabı hazırlanır.
             context.Response.Clear();
             context.Response.StatusCode = (int)statusCode;
             context.Response.ContentType = "application/json";
 
-            // JSON formatında istemciye gönderilir.
+            await context.Response.WriteAsJsonAsync(response);
+        }
+
+        private async Task HandleAppExceptionAsync(
+            HttpContext context,
+            AppException exception)
+        {
+            if (context.Response.HasStarted)
+            {
+                ExceptionDispatchInfo.Capture(exception).Throw();
+                return;
+            }
+
+            _logger.LogInformation(exception, "Request rejected with {ErrorCode}", exception.ErrorCode);
+            var response = ResponseFactory.Failure<object>(
+                context,
+                "The request could not be completed.",
+                exception.StatusCode,
+                exception.ErrorCode);
+            context.Response.Clear();
+            context.Response.StatusCode = exception.StatusCode;
+            context.Response.ContentType = "application/json";
             await context.Response.WriteAsJsonAsync(response);
         }
     }

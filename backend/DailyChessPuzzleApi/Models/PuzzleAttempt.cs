@@ -1,4 +1,5 @@
-﻿namespace DailyChessPuzzleApi.Models
+﻿
+namespace DailyChessPuzzleApi.Models
 {
     public class PuzzleAttempt
     {
@@ -8,7 +9,13 @@
 
         public Puzzle? Puzzle { get; set; }
 
-        public string ClientId { get; set; } = string.Empty;
+        // Misafir kullanıcı kimliği.
+        public string? ClientId { get; set; }
+
+        // Kayıtlı kullanıcı kimliği. Misafirlerde null olur.
+        public int? UserId { get; set; }
+
+        public User? User { get; set; }
 
         public int Seconds { get; set; }
 

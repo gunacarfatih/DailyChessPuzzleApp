@@ -1,0 +1,82 @@
+﻿using Microsoft.EntityFrameworkCore.Migrations;
+
+#nullable disable
+
+namespace DailyChessPuzzleApi.Migrations
+{
+    /// <inheritdoc />
+    public partial class AddUserNamesAndGoogleAuthentication : Migration
+    {
+        /// <inheritdoc />
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.AlterColumn<string>(
+                name: "PasswordHash",
+                table: "Users",
+                type: "text",
+                nullable: true,
+                oldClrType: typeof(string),
+                oldType: "text");
+
+            migrationBuilder.AddColumn<string>(
+                name: "FirstName",
+                table: "Users",
+                type: "character varying(50)",
+                maxLength: 50,
+                nullable: false,
+                defaultValue: "");
+
+            migrationBuilder.AddColumn<string>(
+                name: "GoogleId",
+                table: "Users",
+                type: "character varying(100)",
+                maxLength: 100,
+                nullable: true);
+
+            migrationBuilder.AddColumn<string>(
+                name: "LastName",
+                table: "Users",
+                type: "character varying(50)",
+                maxLength: 50,
+                nullable: false,
+                defaultValue: "");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Users_GoogleId",
+                table: "Users",
+                column: "GoogleId",
+                unique: true,
+                filter: "\"GoogleId\" IS NOT NULL");
+        }
+
+        /// <inheritdoc />
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropIndex(
+                name: "IX_Users_GoogleId",
+                table: "Users");
+
+            migrationBuilder.DropColumn(
+                name: "FirstName",
+                table: "Users");
+
+            migrationBuilder.DropColumn(
+                name: "GoogleId",
+                table: "Users");
+
+            migrationBuilder.DropColumn(
+                name: "LastName",
+                table: "Users");
+
+            migrationBuilder.AlterColumn<string>(
+                name: "PasswordHash",
+                table: "Users",
+                type: "text",
+                nullable: false,
+                defaultValue: "",
+                oldClrType: typeof(string),
+                oldType: "text",
+                oldNullable: true);
+        }
+    }
+}

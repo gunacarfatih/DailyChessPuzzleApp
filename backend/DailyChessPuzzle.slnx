@@ -1,5 +1,7 @@
 <Solution>
   <Project Path="DailyChessPuzzle.DataImporter/DailyChessPuzzle.DataImporter.csproj" />
+  <Project Path="DailyChessPuzzle.SignalRTester/DailyChessPuzzle.SignalRTester.csproj" Id="c465cbc8-01a0-406f-b91a-22e56f6203fd" />
   <Project Path="DailyChessPuzzleApi/DailyChessPuzzleApi.csproj" />
+  <Project Path="DailyChessPuzzleApi.Tests/DailyChessPuzzleApi.Tests.csproj" />
   <Project Path="ReusableCaching/ReusableCaching.csproj" />
 </Solution>

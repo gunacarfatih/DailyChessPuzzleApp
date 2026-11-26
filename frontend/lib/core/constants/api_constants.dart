@@ -1,10 +1,51 @@
+
 class ApiConstants {
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:5053',
+    defaultValue: 'https://dailychesspuzzle.duckdns.org',
   );
 
+  // Daily Puzzle
   static const String todayPuzzleEndpoint = '/api/puzzle/today';
-  static const String submitPuzzleEndpoint = '/api/puzzle/submit';
+
+  static const String startPuzzleSessionEndpoint =
+      '/api/puzzle/session/start';
+
+  static const String submitPuzzleMoveEndpoint =
+      '/api/puzzle/move';
+
+  static const String usePuzzleHintEndpoint =
+      '/api/puzzle/hint';
+
+  // Bonus Puzzle
+  static const String bonusPuzzleEndpoint = '/api/puzzle/bonus';
+
+  static const String startBonusPuzzleEndpoint =
+      '/api/puzzle/bonus/start';
+
+  static const String submitBonusMoveEndpoint =
+      '/api/puzzle/bonus/move';
+
+  static const String useBonusHintEndpoint =
+      '/api/puzzle/bonus/hint';
+
+  static const String submitBonusPuzzleEndpoint =
+      '/api/puzzle/bonus/submit';
+
+  // Leaderboard
   static const String leaderboardEndpoint = '/api/leaderboard';
+  static const String updateCountryEndpoint = '/api/users/me';
+  static const String myStatsEndpoint = '/api/users/me/stats';
+
+  // Authentication
+  static const String registerEndpoint = '/api/auth/register';
+  static const String loginEndpoint = '/api/auth/login';
+  static const String refreshTokenEndpoint = '/api/auth/refresh';
+  static const String logoutEndpoint = '/api/auth/logout';
+  static const String verifyEmailEndpoint = '/api/auth/verify-email';
+  static const String resendVerificationEndpoint =
+      '/api/auth/verification/resend';
+  static const String requestPasswordResetEndpoint =
+      '/api/auth/password/reset/request';
+  static const String resetPasswordEndpoint = '/api/auth/password/reset';
 }

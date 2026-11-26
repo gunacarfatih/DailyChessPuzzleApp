@@ -1,7 +1,9 @@
-﻿using System.Globalization;
+﻿
+using System.Globalization;
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.DTOs;
 using DailyChessPuzzleApi.Models;
+using DailyChessPuzzleApi.Exceptions;
 using DailyChessPuzzleApi.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -10,317 +12,1228 @@ namespace DailyChessPuzzleApi.Services
 {
     public class PuzzleService : IPuzzleService
     {
+        private const int BonusDurationSeconds = 300;
+        private const int BonusMinimumRating = 2500;
+
         private readonly ApplicationDbContext _context;
         private readonly ILogger<PuzzleService> _logger;
+        private readonly IDailyPuzzleService _dailyPuzzleService;
+        private readonly LeaderboardOutboxSignal? _outboxSignal;
 
         public PuzzleService(
             ApplicationDbContext context,
-            ILogger<PuzzleService> logger)
+            ILogger<PuzzleService> logger,
+            IDailyPuzzleService dailyPuzzleService,
+            LeaderboardOutboxSignal? outboxSignal = null)
         {
             _context = context;
             _logger = logger;
+            _dailyPuzzleService = dailyPuzzleService;
+            _outboxSignal = outboxSignal;
         }
 
-        // Günün bulmacasını ve kullanıcının önceki sonucunu getirir.
+        // ---------------------------------------------------------
+        // GÜNÜN BULMACASI
+        // ---------------------------------------------------------
+
         public async Task<PuzzleTodayResponse?> GetTodayAsync(
-            string clientId,
+            int? userId,
+            string? clientId,
             CancellationToken cancellationToken = default)
         {
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+            clientId = NormalizeClientId(clientId);
+
+            if (!userId.HasValue && clientId == null)
+                throw new ArgumentException("CLIENT_ID_REQUIRED");
+
+            var audience = userId.HasValue
+                ? PuzzleAudience.Registered
+                : PuzzleAudience.Guest;
 
             var puzzle = await _context.DailyPuzzles
                 .AsNoTracking()
                 .Where(dp =>
                     dp.PuzzleDate == today &&
+                    dp.Audience == audience &&
                     dp.Puzzle.IsActive)
                 .Select(dp => dp.Puzzle)
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (puzzle == null)
             {
+                await _dailyPuzzleService.AssignDailyPuzzleAsync(today, cancellationToken);
+                puzzle = await _context.DailyPuzzles
+                    .AsNoTracking()
+                    .Where(dp => dp.PuzzleDate == today &&
+                                 dp.Audience == audience &&
+                                 dp.Puzzle.IsActive)
+                    .Select(dp => dp.Puzzle)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+
+            if (puzzle == null)
+            {
                 _logger.LogWarning(
-                    "No active puzzle found for today: {PuzzleDate}",
-                    today
-                );
+                    "No active puzzle found. Date: {Date}, Audience: {Audience}",
+                    today,
+                    audience);
 
                 return null;
             }
 
-            // Kullanıcının bu bulmaca için daha önce kaydettiği denemeyi bul.
-            var previousAttempt = await _context.PuzzleAttempts
+            var attemptsQuery = _context.PuzzleAttempts
                 .AsNoTracking()
-                .FirstOrDefaultAsync(
-                    a => a.PuzzleId == puzzle.Id &&
-                         a.ClientId == clientId,
-                    cancellationToken
-                );
+                .Where(a =>
+                    a.PuzzleId == puzzle.Id &&
+                    a.PlayedOn == today);
 
-            bool isSolved = previousAttempt != null;
+            if (userId.HasValue)
+            {
+                attemptsQuery = attemptsQuery.Where(
+                    a => a.UserId == userId.Value);
+            }
+            else
+            {
+                attemptsQuery = attemptsQuery.Where(
+                    a => a.UserId == null &&
+                         a.ClientId == clientId);
+            }
 
-            _logger.LogInformation(
-                "Today's puzzle retrieved. PuzzleId: {PuzzleId}, IsSolved: {IsSolved}, PreviousScore: {PreviousScore}",
-                puzzle.Id,
-                isSolved,
-                previousAttempt?.Score
-            );
+            var previousAttempt = await attemptsQuery
+                .FirstOrDefaultAsync(cancellationToken);
 
             return new PuzzleTodayResponse
             {
                 Id = puzzle.Id,
-                Fen = puzzle.Fen,
-                Moves = puzzle.Moves,
                 Difficulty = GetDifficulty(puzzle.Rating),
-                IsSolved = isSolved,
+                IsSolved = previousAttempt != null,
                 PreviousScore = previousAttempt?.Score
             };
         }
 
-        // Bulmaca sonucunu hesaplar ve PostgreSQL'e kaydeder.
-        // Daha önce kayıt varsa mevcut sonucu tekrar döndürür.
-        public async Task<PuzzleSubmitResponse> SubmitAsync(
-            PuzzleSubmitRequest request,
+        // ---------------------------------------------------------
+        // GÜNLÜK BULMACA OTURUMU
+        // Her çağrıda yeni bir oturum oluşturulur.
+        // ---------------------------------------------------------
+
+        public async Task<PuzzleSessionResponse> StartSessionAsync(
+            int? userId,
+            string? clientId,
             CancellationToken cancellationToken = default)
         {
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-            var puzzle = await _context.DailyPuzzles
-                .Where(dp =>
-                    dp.PuzzleId == request.PuzzleId &&
-                    dp.PuzzleDate == today &&
-                    dp.Puzzle.IsActive)
-                .Select(dp => dp.Puzzle)
-                .FirstOrDefaultAsync(cancellationToken);
+            clientId = NormalizeClientId(clientId);
+
+            if (!userId.HasValue && clientId == null)
+                throw new ArgumentException("CLIENT_ID_REQUIRED");
+
+            var existingSession = await FindActiveDailySessionAsync(
+                userId,
+                clientId,
+                today,
+                cancellationToken);
+            if (existingSession != null)
+                return ToSessionResponse(existingSession);
+
+            var puzzle = await GetDailyPuzzleAsync(
+                userId,
+                today,
+                cancellationToken);
 
             if (puzzle == null)
             {
-                _logger.LogWarning(
-                    "Puzzle submission failed. Puzzle not found. PuzzleId: {PuzzleId}",
-                    request.PuzzleId
-                );
-
-                throw new KeyNotFoundException(
-                    "Today's puzzle was not found."
-                );
+                await _dailyPuzzleService.AssignDailyPuzzleAsync(today, cancellationToken);
+                puzzle = await GetDailyPuzzleAsync(userId, today, cancellationToken);
             }
 
-            // Önceden kayıtlı sonuç varsa yeni kayıt oluşturma.
-            var previousAttempt = await _context.PuzzleAttempts
-                .AsNoTracking()
-                .FirstOrDefaultAsync(
-                    a => a.PuzzleId == request.PuzzleId &&
-                         a.ClientId == request.ClientId,
-                    cancellationToken
-                );
+            if (puzzle == null)
+                throw new KeyNotFoundException("Today's puzzle was not found.");
 
-            if (previousAttempt != null)
+            var moves = GetMoves(puzzle.Moves);
+
+            if (moves.Length == 0)
+                throw new AppException(500, "PUZZLE_MOVES_INVALID");
+
+            string? countryCode = null;
+
+            if (userId.HasValue)
             {
-                _logger.LogInformation(
-                    "Previous puzzle result returned. PuzzleId: {PuzzleId}, Score: {Score}",
-                    request.PuzzleId,
-                    previousAttempt.Score
-                );
+                countryCode = await _context.Users
+                    .AsNoTracking()
+                    .Where(x => x.Id == userId.Value)
+                    .Select(x => x.CountryCode)
+                    .FirstOrDefaultAsync(cancellationToken);
 
-                return CreateSubmitResponse(
-                    previousAttempt,
-                    "Bu bulmacayı daha önce çözdün. Önceki puanın gösteriliyor."
-                );
+                countryCode = NormalizeCountryCode(countryCode);
             }
 
-            // Puan hesaplaması.
-            long timePenalty = (long)request.Seconds * 2;
-            long wrongMovePenalty = (long)request.WrongMoves * 150;
-            long hintPenalty = request.UsedHint ? 250 : 0;
+            var now = DateTime.UtcNow;
 
-            int score = (int)Math.Max(
-                0L,
-                1000L - timePenalty - wrongMovePenalty - hintPenalty
-            );
-
-            string? countryCode = string.IsNullOrWhiteSpace(request.CountryCode)
-                ? null
-                : request.CountryCode.Trim().ToUpperInvariant();
-
-            var attempt = new PuzzleAttempt
+            var session = new PuzzleGameSession
             {
                 PuzzleId = puzzle.Id,
-                ClientId = request.ClientId,
-                Seconds = request.Seconds,
-                WrongMoves = request.WrongMoves,
-                UsedHint = request.UsedHint,
-                Score = score,
+                Puzzle = puzzle,
+                UserId = userId,
+                ClientId = userId.HasValue ? null : clientId,
                 CountryCode = countryCode,
-                PlayedOn = today,
-                SubmittedAtUtc = DateTime.UtcNow
+                PuzzleDate = today,
+                CurrentMoveIndex = 1,
+                WrongMoves = 0,
+                UsedHint = false,
+                StartedAtUtc = now,
+                CreatedAtUtc = now,
+                IsCompleted = false
             };
 
-            await using var transaction =
-                await _context.Database.BeginTransactionAsync(
-                    cancellationToken
-                );
+            _context.PuzzleGameSessions.Add(session);
 
             try
             {
-                // 1. Bulmaca denemesini kaydet.
-                await _context.PuzzleAttempts.AddAsync(
-                    attempt,
-                    cancellationToken
-                );
-
                 await _context.SaveChangesAsync(cancellationToken);
-
-                // 2. Leaderboard Outbox ve Delivery kayıtlarını oluştur.
-                await CreateLeaderboardOutboxEntriesAsync(
-                    attempt.Id,
-                    request.ClientId,
-                    today,
-                    countryCode,
-                    cancellationToken
-                );
-
-                // 3. Outbox ve Delivery kayıtlarını kaydet.
-                await _context.SaveChangesAsync(cancellationToken);
-
-                // 4. Transaction tamamla.
-                await transaction.CommitAsync(cancellationToken);
             }
-            catch (DbUpdateException ex) when (
-                ex.InnerException is PostgresException postgresException &&
-                postgresException.SqlState == PostgresErrorCodes.UniqueViolation)
+            catch (DbUpdateException exception) when (IsUniqueViolation(exception))
             {
-                await transaction.RollbackAsync(cancellationToken);
+                _context.Entry(session).State = EntityState.Detached;
+                var concurrentSession = await FindActiveDailySessionAsync(
+                    userId,
+                    clientId,
+                    today,
+                    cancellationToken);
+                if (concurrentSession != null)
+                    return ToSessionResponse(concurrentSession);
+                throw;
+            }
 
-                // Aynı anda gelen iki istekte diğer istek önce kaydetmiş olabilir.
-                // Bu durumda onun kaydını bulup mevcut puanı döndür.
-                var concurrentAttempt = await _context.PuzzleAttempts
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(
-                        a => a.PuzzleId == request.PuzzleId &&
-                             a.ClientId == request.ClientId,
-                        cancellationToken
-                    );
+            return ToSessionResponse(session);
+        }
 
-                if (concurrentAttempt != null)
+        // ---------------------------------------------------------
+        // GÜNLÜK BULMACA HAMLESİ
+        // ---------------------------------------------------------
+
+        public async Task<PuzzleSessionResponse> SubmitMoveAsync(
+            PuzzleMoveRequest request,
+            int? userId,
+            CancellationToken cancellationToken = default)
+        {
+            var clientId = NormalizeClientId(request.ClientId);
+
+            if (!userId.HasValue && clientId == null)
+                throw new ArgumentException("CLIENT_ID_REQUIRED");
+
+            if (!request.SessionId.HasValue ||
+                request.SessionId.Value <= 0)
+            {
+                throw new ArgumentException("SESSION_ID_REQUIRED");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Uci))
+                throw new ArgumentException("INVALID_MOVE");
+
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
+
+            try
+            {
+                var session = await GetLockedDailySessionAsync(
+                    request.SessionId.Value,
+                    userId,
+                    clientId,
+                    cancellationToken);
+
+                if (session == null)
+                    throw new AppException(404, "SESSION_NOT_FOUND");
+
+                // Tamamlanmış oturum tekrar gönderilirse
+                // aynı oturumun kendi puanı döndürülür.
+                if (session.IsCompleted)
                 {
-                    _logger.LogInformation(
-                        "Concurrent duplicate submission handled. PuzzleId: {PuzzleId}, Score: {Score}",
-                        request.PuzzleId,
-                        concurrentAttempt.Score
-                    );
+                    var completedScore =
+                        CalculateDailySessionScore(session);
 
-                    return CreateSubmitResponse(
-                        concurrentAttempt,
-                        "Bu bulmacayı daha önce çözdün. Önceki puanın gösteriliyor."
-                    );
+                    await transaction.CommitAsync(cancellationToken);
+                    await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
+
+                    return ToSessionResponse(
+                        session,
+                        score: completedScore);
                 }
 
-                // Unique ihlali başka bir tabloda oluştuysa gerçek hatayı koru.
-                throw;
+                var moves = GetMoves(session.Puzzle.Moves);
+
+                if (moves.Length == 0)
+                    throw new AppException(500, "PUZZLE_MOVES_INVALID");
+
+                if (session.CurrentMoveIndex == 0)
+                    session.CurrentMoveIndex = 1;
+
+                if (session.CurrentMoveIndex >= moves.Length)
+                {
+                    session.IsCompleted = true;
+                    session.CompletedAtUtc = DateTime.UtcNow;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+
+                    var (completedScore, outboxCreated) = await FinalizeDailySessionAsync(
+                        session,
+                        session.PuzzleDate,
+                        cancellationToken);
+
+                    await transaction.CommitAsync(cancellationToken);
+                    if (outboxCreated)
+                        _outboxSignal?.Notify();
+                    await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
+
+                    return ToSessionResponse(
+                        session,
+                        score: completedScore);
+                }
+
+                if (request.ExpectedMoveIndex.HasValue)
+                {
+                    var requestedIndex = request.ExpectedMoveIndex.Value;
+
+                    if (requestedIndex > session.CurrentMoveIndex)
+                    {
+                        throw new AppException(409, "INVALID_MOVE_INDEX");
+                    }
+
+                    if (requestedIndex < session.CurrentMoveIndex)
+                    {
+                        await transaction.CommitAsync(cancellationToken);
+
+                        return ToSessionResponse(session);
+                    }
+                }
+
+                var expectedMove = moves[session.CurrentMoveIndex];
+
+                if (!string.Equals(
+                        request.Uci.Trim(),
+                        expectedMove,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    session.WrongMoves++;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+
+                    return ToSessionResponse(session);
+                }
+
+                // Oyuncunun hamlesini ilerlet.
+                session.CurrentMoveIndex++;
+
+                // Rakibin otomatik cevabını da ilerlet.
+                if (session.CurrentMoveIndex < moves.Length)
+                    session.CurrentMoveIndex++;
+
+                if (session.CurrentMoveIndex >= moves.Length)
+                {
+                    session.CurrentMoveIndex = moves.Length;
+                    session.IsCompleted = true;
+                    session.CompletedAtUtc = DateTime.UtcNow;
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                int? score = null;
+                bool outboxCreatedForMove = false;
+
+                if (session.IsCompleted)
+                {
+                    (score, outboxCreatedForMove) = await FinalizeDailySessionAsync(
+                        session,
+                        session.PuzzleDate,
+                        cancellationToken);
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+                if (outboxCreatedForMove)
+                    _outboxSignal?.Notify();
+
+                if (session.IsCompleted)
+                    await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
+
+                return ToSessionResponse(
+                    session,
+                    score: score);
             }
             catch
             {
                 await transaction.RollbackAsync(cancellationToken);
                 throw;
             }
+        }
+
+        // ---------------------------------------------------------
+        // GÜNLÜK BULMACA İPUCU
+        // ---------------------------------------------------------
+
+        public async Task<PuzzleSessionResponse> UseHintAsync(
+            int sessionId,
+            int? userId,
+            string? clientId,
+            CancellationToken cancellationToken = default)
+        {
+            clientId = NormalizeClientId(clientId);
+
+            if (!userId.HasValue && clientId == null)
+                throw new ArgumentException("CLIENT_ID_REQUIRED");
+
+            if (sessionId <= 0)
+                throw new ArgumentException("SESSION_ID_REQUIRED");
+
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
+
+            try
+            {
+                var session = await GetLockedDailySessionAsync(
+                    sessionId,
+                    userId,
+                    clientId,
+                    cancellationToken);
+
+                if (session == null)
+                    throw new AppException(404, "SESSION_NOT_FOUND");
+
+                string? hintSquare = null;
+
+                if (!session.IsCompleted)
+                {
+                    var moves = GetMoves(session.Puzzle.Moves);
+
+                    if (session.CurrentMoveIndex < moves.Length)
+                    {
+                        var expectedMove = moves[session.CurrentMoveIndex];
+
+                        if (expectedMove.Length >= 4)
+                            hintSquare = expectedMove[..2];
+
+                        session.UsedHint = true;
+
+                        await _context.SaveChangesAsync(cancellationToken);
+                    }
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+
+                return ToSessionResponse(
+                    session,
+                    hintSquare);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
+        }
+
+        // ---------------------------------------------------------
+        // BONUS BULMACA
+        // ---------------------------------------------------------
+
+        public async Task<BonusPuzzleResponse> GetBonusAsync(
+            int userId,
+            CancellationToken cancellationToken = default)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+            var assignment = await _context.BonusPuzzleAssignments
+                .Include(x => x.Puzzle)
+                .Include(x => x.PuzzleAttempt)
+                .FirstOrDefaultAsync(
+                    x => x.UserId == userId &&
+                         x.PuzzleDate == today,
+                    cancellationToken);
+
+            if (assignment == null)
+            {
+                return new BonusPuzzleResponse
+                {
+                    IsEligible = false
+                };
+            }
+
+            return CreateBonusResponse(assignment);
+        }
+
+        public async Task<BonusPuzzleResponse> StartBonusAsync(
+            int userId,
+            CancellationToken cancellationToken = default)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+            await TryCreateBonusAssignmentAsync(
+                userId,
+                null,
+                today,
+                cancellationToken);
+
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
+
+            try
+            {
+                var assignment = await GetLockedBonusAssignmentAsync(
+                    userId,
+                    today,
+                    cancellationToken);
+
+                if (assignment == null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+
+                    return new BonusPuzzleResponse
+                    {
+                        IsEligible = false
+                    };
+                }
+
+                if (!assignment.StartedAtUtc.HasValue &&
+                    !assignment.IsCompleted)
+                {
+                    var user = await _context.Users
+                        .AsNoTracking()
+                        .Where(x => x.Id == userId)
+                        .Select(x => new { x.CountryCode })
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                    if (user == null)
+                        throw new UnauthorizedAccessException("USER_NOT_FOUND");
+
+                    assignment.CountryCode =
+                        NormalizeCountryCode(user.CountryCode);
+
+                    assignment.StartedAtUtc = DateTime.UtcNow;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+
+                return CreateBonusResponse(assignment);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
+        }
+
+        public async Task<PuzzleSessionResponse> SubmitBonusMoveAsync(
+            PuzzleMoveRequest request,
+            int userId,
+            CancellationToken cancellationToken = default)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
+
+            try
+            {
+                var assignment = await GetLockedBonusAssignmentAsync(
+                    userId,
+                    today,
+                    cancellationToken);
+
+                if (assignment == null)
+                    throw new KeyNotFoundException("BONUS_NOT_FOUND");
+
+                if (assignment.CompletedAtUtc.HasValue)
+                    throw new AppException(409, "BONUS_ALREADY_COMPLETED");
+
+                if (assignment.IsCompleted)
+                    throw new AppException(409, "BONUS_TIME_EXPIRED");
+
+                if (!assignment.StartedAtUtc.HasValue)
+                    throw new AppException(409, "BONUS_NOT_STARTED");
+
+                var now = DateTime.UtcNow;
+
+                if (IsBonusTimeExpired(assignment, now))
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+
+                    _context.ChangeTracker.Clear();
+
+                    await SubmitBonusAsync(userId, cancellationToken);
+
+                    throw new AppException(409, "BONUS_TIME_EXPIRED");
+                }
+
+                var moves = GetMoves(assignment.Puzzle.Moves);
+
+                if (moves.Length == 0)
+                    throw new AppException(500, "PUZZLE_MOVES_INVALID");
+
+                if (assignment.CurrentMoveIndex >= moves.Length)
+                {
+                    assignment.CompletedAtUtc = now;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+
+                    return ToBonusSessionResponse(assignment);
+                }
+
+                if (request.ExpectedMoveIndex.HasValue)
+                {
+                    var requestedIndex = request.ExpectedMoveIndex.Value;
+
+                    if (requestedIndex > assignment.CurrentMoveIndex)
+                    {
+                        throw new AppException(409, "INVALID_MOVE_INDEX");
+                    }
+
+                    if (requestedIndex < assignment.CurrentMoveIndex)
+                    {
+                        await transaction.CommitAsync(cancellationToken);
+
+                        return ToBonusSessionResponse(assignment);
+                    }
+                }
+
+                var expectedMove = moves[assignment.CurrentMoveIndex];
+
+                if (!string.Equals(
+                        request.Uci.Trim(),
+                        expectedMove,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    assignment.WrongMoves++;
+                }
+                else
+                {
+                    assignment.CurrentMoveIndex++;
+
+                    if (assignment.CurrentMoveIndex < moves.Length)
+                        assignment.CurrentMoveIndex++;
+
+                    if (assignment.CurrentMoveIndex >= moves.Length)
+                    {
+                        assignment.CurrentMoveIndex = moves.Length;
+                        assignment.CompletedAtUtc = now;
+                    }
+                }
+
+                await _context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                return ToBonusSessionResponse(assignment);
+            }
+            catch
+            {
+                if (_context.Database.CurrentTransaction != null)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                }
+
+                throw;
+            }
+        }
+
+        public async Task<PuzzleSessionResponse> UseBonusHintAsync(
+            int userId,
+            CancellationToken cancellationToken = default)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
+
+            try
+            {
+                var assignment = await GetLockedBonusAssignmentAsync(
+                    userId,
+                    today,
+                    cancellationToken);
+
+                if (assignment == null)
+                    throw new KeyNotFoundException("BONUS_NOT_FOUND");
+
+                if (assignment.IsCompleted)
+                    throw new AppException(409, "BONUS_ALREADY_COMPLETED");
+
+                if (assignment.CompletedAtUtc.HasValue)
+                    throw new AppException(409, "BONUS_ALREADY_SOLVED");
+
+                if (!assignment.StartedAtUtc.HasValue)
+                    throw new AppException(409, "BONUS_NOT_STARTED");
+
+                if (IsBonusTimeExpired(assignment))
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+
+                    _context.ChangeTracker.Clear();
+
+                    await SubmitBonusAsync(userId, cancellationToken);
+
+                    throw new AppException(409, "BONUS_TIME_EXPIRED");
+                }
+
+                var moves = GetMoves(assignment.Puzzle.Moves);
+
+                string? hintSquare = null;
+
+                if (assignment.CurrentMoveIndex < moves.Length)
+                {
+                    var expectedMove = moves[assignment.CurrentMoveIndex];
+
+                    if (expectedMove.Length >= 4)
+                        hintSquare = expectedMove[..2];
+
+                    assignment.UsedHint = true;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+
+                return ToBonusSessionResponse(
+                    assignment,
+                    hintSquare);
+            }
+            catch
+            {
+                if (_context.Database.CurrentTransaction != null)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                }
+
+                throw;
+            }
+        }
+
+        // ---------------------------------------------------------
+        // BONUS SONUÇLANDIRMA
+        // ---------------------------------------------------------
+
+        public async Task<BonusPuzzleSubmitResponse> SubmitBonusAsync(
+            int userId,
+            CancellationToken cancellationToken = default)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(
+                    cancellationToken);
+
+            try
+            {
+                var assignment = await GetLockedBonusAssignmentAsync(
+                    userId,
+                    today,
+                    cancellationToken);
+
+                if (assignment == null)
+                    throw new KeyNotFoundException("BONUS_NOT_FOUND");
+
+                if (assignment.PuzzleAttemptId.HasValue &&
+                    assignment.PuzzleAttempt == null)
+                {
+                    throw new AppException(
+                        500,
+                        "BONUS_ATTEMPT_NOT_FOUND");
+                }
+
+                if (assignment.PuzzleAttempt != null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+
+                    return new BonusPuzzleSubmitResponse
+                    {
+                        Score = assignment.PuzzleAttempt.Score,
+                        Seconds = assignment.PuzzleAttempt.Seconds,
+                        IsCompleted = true,
+                        Message = "Bonus sonucu daha önce kaydedilmiş."
+                    };
+                }
+
+                if (assignment.IsCompleted)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+
+                    return new BonusPuzzleSubmitResponse
+                    {
+                        Score = 0,
+                        Seconds = BonusDurationSeconds,
+                        IsCompleted = true,
+                        Message = "Bonus süresi doldu."
+                    };
+                }
+
+                if (!assignment.StartedAtUtc.HasValue)
+                    throw new AppException(409, "BONUS_NOT_STARTED");
+
+                var now = DateTime.UtcNow;
+
+                if (!assignment.CompletedAtUtc.HasValue)
+                {
+                    if (!IsBonusTimeExpired(assignment, now))
+                        throw new AppException(409, "BONUS_NOT_SOLVED");
+
+                    assignment.IsCompleted = true;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+
+                    return new BonusPuzzleSubmitResponse
+                    {
+                        Score = 0,
+                        Seconds = BonusDurationSeconds,
+                        IsCompleted = true,
+                        Message = "Bonus süresi doldu."
+                    };
+                }
+
+                var elapsed = (
+                    assignment.CompletedAtUtc.Value -
+                    assignment.StartedAtUtc.Value
+                ).TotalSeconds;
+
+                if (elapsed >= BonusDurationSeconds)
+                {
+                    assignment.IsCompleted = true;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+
+                    return new BonusPuzzleSubmitResponse
+                    {
+                        Score = 0,
+                        Seconds = BonusDurationSeconds,
+                        IsCompleted = true,
+                        Message = "Bonus süresi doldu."
+                    };
+                }
+
+                var seconds = Math.Clamp(
+                    (int)Math.Ceiling(elapsed),
+                    0,
+                    BonusDurationSeconds);
+
+                int score = DailyPuzzleScoreCalculator.Calculate(
+                    seconds,
+                    assignment.WrongMoves,
+                    assignment.UsedHint);
+
+                var userExists = await _context.Users
+                    .AnyAsync(
+                        x => x.Id == userId,
+                        cancellationToken);
+
+                if (!userExists)
+                    throw new UnauthorizedAccessException("USER_NOT_FOUND");
+
+                var countryCode = assignment.CountryCode;
+
+                var attempt = new PuzzleAttempt
+                {
+                    PuzzleId = assignment.PuzzleId,
+                    UserId = userId,
+                    ClientId = null,
+                    Seconds = seconds,
+                    WrongMoves = assignment.WrongMoves,
+                    UsedHint = assignment.UsedHint,
+                    Score = score,
+                    CountryCode = countryCode,
+                    PlayedOn = today,
+                    SubmittedAtUtc = now
+                };
+
+                _context.PuzzleAttempts.Add(attempt);
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                assignment.PuzzleAttemptId = attempt.Id;
+                assignment.IsCompleted = true;
+
+                await CreateLeaderboardOutboxEntriesAsync(
+                    attempt.Id,
+                    userId,
+                    today,
+                    countryCode,
+                    cancellationToken);
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+                _outboxSignal?.Notify();
+
+                _logger.LogInformation(
+                    "Bonus puzzle result saved. UserId: {UserId}, PuzzleId: {PuzzleId}, Score: {Score}",
+                    userId,
+                    assignment.PuzzleId,
+                    score);
+
+                return new BonusPuzzleSubmitResponse
+                {
+                    Score = score,
+                    Seconds = seconds,
+                    IsCompleted = true,
+                    Message = "Bonus puanınız kaydedildi."
+                };
+            }
+            catch
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw;
+            }
+        }
+
+        // ---------------------------------------------------------
+        // GÜNLÜK OTURUMU SONUÇLANDIRMA
+        // ---------------------------------------------------------
+
+        private async Task<(int Score, bool OutboxCreated)> FinalizeDailySessionAsync(
+            PuzzleGameSession session,
+            DateOnly today,
+            CancellationToken cancellationToken)
+        {
+            if (!session.IsCompleted)
+                throw new AppException(409, "SESSION_NOT_COMPLETED");
+
+            // Her oturum kendi puanını alır.
+            int score = CalculateDailySessionScore(session);
+
+            // Aynı bulmacayı tamamlayan oturumları sıraya al.
+            // Kilit transaction tamamlanana kadar tutulur.
+            var lockedPuzzle = await _context.Puzzles
+                .FromSqlInterpolated(
+                    $"""
+                    SELECT *
+                    FROM "Puzzles"
+                    WHERE "Id" = {session.PuzzleId}
+                    FOR UPDATE
+                    """)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (lockedPuzzle == null)
+                throw new KeyNotFoundException("PUZZLE_NOT_FOUND");
+
+            var previousQuery = _context.PuzzleAttempts
+                .Where(x =>
+                    x.PuzzleId == session.PuzzleId &&
+                    x.PlayedOn == today);
+
+            previousQuery = session.UserId.HasValue
+                ? previousQuery.Where(x =>
+                    x.UserId == session.UserId.Value)
+                : previousQuery.Where(x =>
+                    x.UserId == null &&
+                    x.ClientId == session.ClientId);
+
+            var previousAttempt = await previousQuery
+                .FirstOrDefaultAsync(cancellationToken);
+
+            // Daha önce başarılı çözüm varsa yeni PuzzleAttempt,
+            // leaderboard veya bonus kaydı oluşturma.
+            if (previousAttempt != null)
+                return (score, false);
+
+            var seconds = CalculateDailySessionSeconds(session);
+            var completedAt = session.CompletedAtUtc ?? DateTime.UtcNow;
+
+            var countryCode = session.UserId.HasValue
+                ? session.CountryCode
+                : null;
+
+            var attempt = new PuzzleAttempt
+            {
+                PuzzleId = session.PuzzleId,
+                UserId = session.UserId,
+                ClientId = session.UserId.HasValue
+                    ? null
+                    : session.ClientId,
+                Seconds = seconds,
+                WrongMoves = session.WrongMoves,
+                UsedHint = session.UsedHint,
+                Score = score,
+                CountryCode = countryCode,
+                PlayedOn = today,
+                SubmittedAtUtc = completedAt
+            };
+
+            _context.PuzzleAttempts.Add(attempt);
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // Yalnızca kayıtlı kullanıcılar leaderboard sistemine dahil edilir.
+            // Misafirlerin PuzzleAttempt kayıtları tutulur ancak Outbox oluşturulmaz.
+            if (session.UserId.HasValue)
+            {
+                await CreateLeaderboardOutboxEntriesAsync(
+                    attempt.Id,
+                    session.UserId.Value,
+                    today,
+                    countryCode,
+                    cancellationToken);
+
+                await _context.SaveChangesAsync(cancellationToken);
+
+            }
 
             _logger.LogInformation(
-                "Puzzle submission and leaderboard outbox event saved successfully. PuzzleId: {PuzzleId}, Score: {Score}",
-                puzzle.Id,
-                score
-            );
+                "Daily puzzle result saved. PuzzleId: {PuzzleId}, UserId: {UserId}, SessionId: {SessionId}, Score: {Score}",
+                session.PuzzleId,
+                session.UserId,
+                session.Id,
+                score);
 
-            return new PuzzleSubmitResponse
-            {
-                Score = score,
-                Seconds = request.Seconds,
-                WrongMoves = request.WrongMoves,
-                UsedHint = request.UsedHint,
-                Message = "Puzzle result saved successfully."
-            };
+            return (score, session.UserId.HasValue);
         }
 
-        // Mevcut denemeden sonuç DTO'su oluşturur.
-        private static PuzzleSubmitResponse CreateSubmitResponse(
-            PuzzleAttempt attempt,
-            string message)
+        private async Task TryCreateBonusAfterDailyCommitAsync(
+            PuzzleGameSession session,
+            CancellationToken cancellationToken)
         {
-            return new PuzzleSubmitResponse
+            if (!session.UserId.HasValue || session.WrongMoves != 0 || session.UsedHint)
+                return;
+
+            try
             {
-                Score = attempt.Score,
-                Seconds = attempt.Seconds,
-                WrongMoves = attempt.WrongMoves,
-                UsedHint = attempt.UsedHint,
-                Message = message
-            };
+                await TryCreateBonusAssignmentAsync(
+                    session.UserId.Value,
+                    session.PuzzleId,
+                    session.PuzzleDate,
+                    cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                _context.ChangeTracker.Clear();
+                _logger.LogError(exception,
+                    "Bonus puzzle assignment failed after daily result commit. UserId: {UserId}, Date: {PuzzleDate}",
+                    session.UserId,
+                    session.PuzzleDate);
+            }
         }
 
-        // Tek bir ana Outbox olayı oluşturur.
-        // Ardından günlük, haftalık, aylık ve tüm zamanlar
-        // için gerekli Delivery kayıtlarını oluşturur.
+        // ---------------------------------------------------------
+        // GÜNLÜK PUAN HESAPLAMA
+        // ---------------------------------------------------------
+
+        private static int CalculateDailySessionSeconds(
+            PuzzleGameSession session)
+        {
+            var completedAt =
+                session.CompletedAtUtc ?? DateTime.UtcNow;
+
+            var elapsed = (
+                completedAt - session.StartedAtUtc
+            ).TotalSeconds;
+
+            return Math.Max(
+                0,
+                (int)Math.Min(
+                    int.MaxValue,
+                    Math.Ceiling(elapsed)));
+        }
+
+        private static int CalculateDailySessionScore(
+            PuzzleGameSession session)
+        {
+            var seconds = CalculateDailySessionSeconds(session);
+            return DailyPuzzleScoreCalculator.Calculate(
+                seconds,
+                session.WrongMoves,
+                session.UsedHint);
+        }
+
+        // ---------------------------------------------------------
+        // BONUS ATAMA
+        // ---------------------------------------------------------
+
+        private async Task TryCreateBonusAssignmentAsync(
+            int userId,
+            int? mainPuzzleId,
+            DateOnly today,
+            CancellationToken cancellationToken)
+        {
+            if (userId <= 0)
+                return;
+
+            var existing = await _context.BonusPuzzleAssignments
+                .AnyAsync(
+                    x => x.UserId == userId &&
+                         x.PuzzleDate == today,
+                    cancellationToken);
+
+            if (existing)
+                return;
+
+            var registeredDailyPuzzleId = await _context.DailyPuzzles
+                .Where(x =>
+                    x.PuzzleDate == today &&
+                    x.Audience == PuzzleAudience.Registered)
+                .Select(x => (int?)x.PuzzleId)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (!registeredDailyPuzzleId.HasValue)
+            {
+                _logger.LogWarning(
+                    "Registered daily puzzle not found. UserId: {UserId}, Date: {Date}",
+                    userId,
+                    today);
+
+                return;
+            }
+
+            var mainAttempt = await _context.PuzzleAttempts
+                .AsNoTracking()
+                .Where(x =>
+                    x.UserId == userId &&
+                    x.PlayedOn == today &&
+                    x.PuzzleId == registeredDailyPuzzleId.Value &&
+                    x.WrongMoves == 0 &&
+                    !x.UsedHint)
+                .OrderByDescending(x => x.SubmittedAtUtc)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (mainAttempt == null)
+                return;
+
+            if (mainPuzzleId.HasValue &&
+                mainPuzzleId.Value != registeredDailyPuzzleId.Value)
+            {
+                _logger.LogWarning(
+                    "Submitted puzzle does not match registered daily puzzle. UserId: {UserId}",
+                    userId);
+
+                return;
+            }
+
+            var candidates = _context.Puzzles
+                .AsNoTracking()
+                .Where(p =>
+                    p.IsActive &&
+                    p.Rating > BonusMinimumRating &&
+                    p.Id != registeredDailyPuzzleId.Value &&
+                    !_context.PuzzleAttempts.Any(a =>
+                        a.UserId == userId &&
+                        a.PuzzleId == p.Id) &&
+                    !_context.PuzzleGameSessions.Any(s =>
+                        s.UserId == userId &&
+                        s.PuzzleId == p.Id));
+
+            var candidateCount = await candidates.CountAsync(cancellationToken);
+
+            if (candidateCount == 0)
+            {
+                _logger.LogWarning(
+                    "No available bonus candidates. UserId: {UserId}",
+                    userId);
+
+                return;
+            }
+
+            var selectedId = await candidates
+                .OrderBy(p => p.Id)
+                .Skip(Random.Shared.Next(candidateCount))
+                .Select(p => p.Id)
+                .FirstAsync(cancellationToken);
+
+            var assignment = new BonusPuzzleAssignment
+            {
+                UserId = userId,
+                PuzzleId = selectedId,
+                PuzzleDate = today,
+                CurrentMoveIndex = 1,
+                WrongMoves = 0,
+                UsedHint = false,
+                IsCompleted = false,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+
+            _context.BonusPuzzleAssignments.Add(assignment);
+
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation(
+                    "Bonus puzzle assigned. UserId: {UserId}, PuzzleId: {PuzzleId}",
+                    userId,
+                    selectedId);
+            }
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+            {
+                _context.Entry(assignment).State = EntityState.Detached;
+
+                _logger.LogInformation(
+                    "Bonus assignment already created concurrently. UserId: {UserId}",
+                    userId);
+            }
+        }
+
+        // ---------------------------------------------------------
+        // LEADERBOARD OUTBOX
+        // Yalnızca kayıtlı kullanıcılar için oluşturulur.
+        // ---------------------------------------------------------
+
         private async Task CreateLeaderboardOutboxEntriesAsync(
             int puzzleAttemptId,
-            string clientId,
+            int userId,
             DateOnly today,
             string? countryCode,
             CancellationToken cancellationToken)
         {
+            string leaderboardIdentity = $"user:{userId}";
+
             var outboxEntry = new LeaderboardCacheOutbox
             {
                 PuzzleAttemptId = puzzleAttemptId,
-                ClientId = clientId,
+                ClientId = leaderboardIdentity,
+                UserId = userId,
                 CreatedAtUtc = DateTime.UtcNow
             };
 
-            await _context.LeaderboardCacheOutbox.AddAsync(
-                outboxEntry,
-                cancellationToken
-            );
+            _context.LeaderboardCacheOutboxes.Add(outboxEntry);
 
-            // Günlük dönem.
             var dailyPeriod = (
                 Period: "daily",
                 PeriodKey: today.ToString("yyyy-MM-dd"),
-                StartDate: today
-            );
+                StartDate: today);
 
-            // Haftalık dönem: ISO standardına göre pazartesi başlangıcı.
-            int daysSinceMonday =
-                ((int)today.DayOfWeek + 6) % 7;
-
+            int daysSinceMonday = ((int)today.DayOfWeek + 6) % 7;
             var weeklyStartDate = today.AddDays(-daysSinceMonday);
 
             int isoYear = ISOWeek.GetYear(
-                today.ToDateTime(TimeOnly.MinValue)
-            );
+                today.ToDateTime(TimeOnly.MinValue));
 
             int isoWeek = ISOWeek.GetWeekOfYear(
-                today.ToDateTime(TimeOnly.MinValue)
-            );
+                today.ToDateTime(TimeOnly.MinValue));
 
             var weeklyPeriod = (
                 Period: "weekly",
                 PeriodKey: $"{isoYear}-W{isoWeek:D2}",
-                StartDate: weeklyStartDate
-            );
+                StartDate: weeklyStartDate);
 
-            // Aylık dönem.
             var monthlyStartDate = new DateOnly(
                 today.Year,
                 today.Month,
-                1
-            );
+                1);
 
             var monthlyPeriod = (
                 Period: "monthly",
                 PeriodKey: today.ToString("yyyy-MM"),
-                StartDate: monthlyStartDate
-            );
+                StartDate: monthlyStartDate);
 
-            // Tüm zamanlar dönemi.
             var allTimePeriod = (
                 Period: "alltime",
                 PeriodKey: "all",
-                StartDate: DateOnly.MinValue
-            );
+                StartDate: DateOnly.MinValue);
 
             var periods = new[]
             {
@@ -332,19 +1245,16 @@ namespace DailyChessPuzzleApi.Services
 
             foreach (var period in periods)
             {
-                // Global leaderboard Delivery kaydı.
                 await CreateLeaderboardOutboxDeliveryAsync(
                     outboxEntry,
                     period.Period,
                     period.PeriodKey,
                     period.StartDate,
                     today,
-                    clientId,
+                    userId,
                     null,
-                    cancellationToken
-                );
+                    cancellationToken);
 
-                // Ülke bazlı leaderboard Delivery kaydı.
                 if (countryCode != null)
                 {
                     await CreateLeaderboardOutboxDeliveryAsync(
@@ -353,49 +1263,36 @@ namespace DailyChessPuzzleApi.Services
                         period.PeriodKey,
                         period.StartDate,
                         today,
-                        clientId,
+                        userId,
                         countryCode,
-                        cancellationToken
-                    );
+                        cancellationToken);
                 }
             }
-
-            _logger.LogInformation(
-                "Leaderboard outbox event created. OutboxId: {OutboxId}, PuzzleAttemptId: {PuzzleAttemptId}, ClientId: {ClientId}",
-                outboxEntry.Id,
-                puzzleAttemptId,
-                clientId
-            );
         }
 
-        // Belirli bir Redis hedefi için Delivery kaydı oluşturur.
         private async Task CreateLeaderboardOutboxDeliveryAsync(
             LeaderboardCacheOutbox outboxEntry,
             string period,
             string periodKey,
             DateOnly startDate,
             DateOnly today,
-            string clientId,
+            int userId,
             string? countryCode,
             CancellationToken cancellationToken)
         {
+            // Yalnızca ilgili kayıtlı kullanıcının puanları toplanır.
             var query = _context.PuzzleAttempts
                 .AsNoTracking()
                 .Where(a =>
-                    a.ClientId == clientId &&
+                    a.UserId == userId &&
                     a.PlayedOn >= startDate &&
-                    a.PlayedOn <= today
-                );
+                    a.PlayedOn <= today);
 
             if (countryCode != null)
-            {
-                query = query.Where(
-                    a => a.CountryCode == countryCode
-                );
-            }
+                query = query.Where(a => a.CountryCode == countryCode);
 
             var aggregate = await query
-                .GroupBy(a => a.ClientId)
+                .GroupBy(a => 1)
                 .Select(group => new
                 {
                     TotalScore = group.Sum(a => a.Score),
@@ -404,16 +1301,17 @@ namespace DailyChessPuzzleApi.Services
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (aggregate == null)
-            {
                 return;
-            }
 
             string cacheKey =
-                $"DailyChessPuzzle_leaderboard:{period}:{periodKey}:{countryCode ?? "global"}";
+                $"DailyChessPuzzle_leaderboard:v2:{period}:{periodKey}:{countryCode ?? "global"}";
 
             var delivery = new LeaderboardCacheOutboxDelivery
             {
                 Outbox = outboxEntry,
+                TargetClientId = $"user:{userId}",
+                TargetUserId = userId,
+                IsRemoval = false,
                 Period = period,
                 PeriodKey = periodKey,
                 CountryCode = countryCode,
@@ -425,21 +1323,289 @@ namespace DailyChessPuzzleApi.Services
                 CreatedAtUtc = DateTime.UtcNow
             };
 
-            await _context.LeaderboardCacheOutboxDeliveries.AddAsync(
-                delivery,
-                cancellationToken
-            );
-
-            _logger.LogInformation(
-                "Leaderboard delivery created. Period: {Period}, PeriodKey: {PeriodKey}, ClientId: {ClientId}, Country: {Country}",
-                period,
-                periodKey,
-                clientId,
-                countryCode ?? "Global"
-            );
+            _context.LeaderboardCacheOutboxDeliveries.Add(delivery);
         }
 
-        // Rating değerinden zorluk seviyesini belirler.
+        // ---------------------------------------------------------
+        // SATIR KİLİDİ YARDIMCILARI
+        // ---------------------------------------------------------
+
+        private Task<PuzzleGameSession?> FindActiveDailySessionAsync(
+            int? userId,
+            string? clientId,
+            DateOnly puzzleDate,
+            CancellationToken cancellationToken)
+        {
+            var query = _context.PuzzleGameSessions
+                .Include(x => x.Puzzle)
+                .Where(x => !x.IsCompleted && x.PuzzleDate == puzzleDate);
+
+            query = userId.HasValue
+                ? query.Where(x => x.UserId == userId.Value)
+                : query.Where(x => x.UserId == null && x.ClientId == clientId);
+
+            return query.OrderByDescending(x => x.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        private async Task<PuzzleGameSession?> GetLockedDailySessionAsync(
+            int sessionId,
+            int? userId,
+            string? clientId,
+            CancellationToken cancellationToken)
+        {
+            PuzzleGameSession? session;
+
+            if (userId.HasValue)
+            {
+                session = await _context.PuzzleGameSessions
+                    .FromSqlInterpolated(
+                        $"""
+                        SELECT *
+                        FROM "PuzzleGameSessions"
+                        WHERE "Id" = {sessionId}
+                          AND "UserId" = {userId.Value}
+                        FOR UPDATE
+                        """)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+            else
+            {
+                session = await _context.PuzzleGameSessions
+                    .FromSqlInterpolated(
+                        $"""
+                        SELECT *
+                        FROM "PuzzleGameSessions"
+                        WHERE "Id" = {sessionId}
+                          AND "UserId" IS NULL
+                          AND "ClientId" = {clientId}
+                        FOR UPDATE
+                        """)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+
+            if (session == null)
+                return null;
+
+            await _context.Entry(session)
+                .Reference(x => x.Puzzle)
+                .LoadAsync(cancellationToken);
+
+            return session;
+        }
+
+        private async Task<BonusPuzzleAssignment?> GetLockedBonusAssignmentAsync(
+            int userId,
+            DateOnly today,
+            CancellationToken cancellationToken)
+        {
+            var assignment = await _context.BonusPuzzleAssignments
+                .FromSqlInterpolated(
+                    $"""
+                    SELECT *
+                    FROM "BonusPuzzleAssignments"
+                    WHERE "UserId" = {userId}
+                      AND "PuzzleDate" = {today}
+                    FOR UPDATE
+                    """)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (assignment != null)
+            {
+                await _context.Entry(assignment)
+                    .Reference(x => x.Puzzle)
+                    .LoadAsync(cancellationToken);
+
+                await _context.Entry(assignment)
+                    .Reference(x => x.PuzzleAttempt)
+                    .LoadAsync(cancellationToken);
+            }
+
+            return assignment;
+        }
+
+        // ---------------------------------------------------------
+        // YARDIMCI METOTLAR
+        // ---------------------------------------------------------
+
+        private async Task<Puzzle?> GetDailyPuzzleAsync(
+            int? userId,
+            DateOnly today,
+            CancellationToken cancellationToken)
+        {
+            var audience = userId.HasValue
+                ? PuzzleAudience.Registered
+                : PuzzleAudience.Guest;
+
+            return await _context.DailyPuzzles
+                .Where(x =>
+                    x.PuzzleDate == today &&
+                    x.Audience == audience &&
+                    x.Puzzle.IsActive)
+                .Select(x => x.Puzzle)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        private static string? NormalizeClientId(string? clientId)
+        {
+            return string.IsNullOrWhiteSpace(clientId)
+                ? null
+                : clientId.Trim();
+        }
+
+        private static string? NormalizeCountryCode(string? countryCode)
+        {
+            return string.IsNullOrWhiteSpace(countryCode)
+                ? null
+                : countryCode.Trim().ToUpperInvariant();
+        }
+
+        private static string[] GetMoves(string moves)
+        {
+            return moves.Split(
+                ' ',
+                StringSplitOptions.RemoveEmptyEntries |
+                StringSplitOptions.TrimEntries);
+        }
+
+        private static bool IsUniqueViolation(DbUpdateException exception)
+        {
+            return exception.InnerException is PostgresException postgres &&
+                   postgres.SqlState == PostgresErrorCodes.UniqueViolation;
+        }
+
+        private PuzzleSessionResponse ToSessionResponse(
+            PuzzleGameSession session,
+            string? hintSquare = null,
+            int? score = null)
+        {
+            var moves = GetMoves(session.Puzzle.Moves);
+
+            var playedMoveCount = Math.Clamp(
+                session.CurrentMoveIndex,
+                0,
+                moves.Length);
+
+            return new PuzzleSessionResponse
+            {
+                SessionId = session.Id,
+                PuzzleId = session.PuzzleId,
+                Fen = session.Puzzle.Fen,
+                PlayedMoves = moves.Take(playedMoveCount).ToList(),
+                CurrentMoveIndex = session.CurrentMoveIndex,
+                WrongMoves = session.WrongMoves,
+                UsedHint = session.UsedHint,
+                IsSolved = session.IsCompleted,
+                IsCompleted = session.IsCompleted,
+                StartedAtUtc = session.StartedAtUtc,
+                HintSquare = hintSquare,
+                Score = score
+            };
+        }
+
+        private static PuzzleSessionResponse ToBonusSessionResponse(
+            BonusPuzzleAssignment assignment,
+            string? hintSquare = null)
+        {
+            var moves = GetMoves(assignment.Puzzle.Moves);
+
+            var playedMoveCount = Math.Clamp(
+                assignment.CurrentMoveIndex,
+                0,
+                moves.Length);
+
+            return new PuzzleSessionResponse
+            {
+                PuzzleId = assignment.PuzzleId,
+                PlayedMoves = moves.Take(playedMoveCount).ToList(),
+                CurrentMoveIndex = assignment.CurrentMoveIndex,
+                WrongMoves = assignment.WrongMoves,
+                UsedHint = assignment.UsedHint,
+                IsSolved = assignment.CompletedAtUtc.HasValue,
+                IsCompleted = assignment.IsCompleted,
+                StartedAtUtc = assignment.StartedAtUtc ?? DateTime.UtcNow,
+                HintSquare = hintSquare,
+                RemainingSeconds = GetBonusRemainingSeconds(assignment),
+                Score = assignment.PuzzleAttempt?.Score
+            };
+        }
+
+        private static bool IsBonusTimeExpired(
+            BonusPuzzleAssignment assignment,
+            DateTime? currentTimeUtc = null)
+        {
+            if (!assignment.StartedAtUtc.HasValue)
+                return false;
+
+            if (assignment.CompletedAtUtc.HasValue)
+            {
+                return (
+                    assignment.CompletedAtUtc.Value -
+                    assignment.StartedAtUtc.Value
+                ).TotalSeconds >= BonusDurationSeconds;
+            }
+
+            var now = currentTimeUtc ?? DateTime.UtcNow;
+
+            return (
+                now - assignment.StartedAtUtc.Value
+            ).TotalSeconds >= BonusDurationSeconds;
+        }
+
+        private static int GetBonusRemainingSeconds(
+            BonusPuzzleAssignment assignment)
+        {
+            if (!assignment.StartedAtUtc.HasValue)
+                return BonusDurationSeconds;
+
+            if (assignment.IsCompleted ||
+                assignment.CompletedAtUtc.HasValue)
+                return 0;
+
+            var elapsed = (
+                DateTime.UtcNow - assignment.StartedAtUtc.Value
+            ).TotalSeconds;
+
+            return Math.Clamp(
+                (int)Math.Ceiling(BonusDurationSeconds - elapsed),
+                0,
+                BonusDurationSeconds);
+        }
+
+        private static BonusPuzzleResponse CreateBonusResponse(
+            BonusPuzzleAssignment assignment)
+        {
+            var moves = GetMoves(assignment.Puzzle.Moves);
+
+            var playedMoveCount = Math.Clamp(
+                assignment.CurrentMoveIndex,
+                0,
+                moves.Length);
+
+            var isExpired = assignment.StartedAtUtc.HasValue &&
+                            assignment.PuzzleAttempt == null &&
+                            IsBonusTimeExpired(assignment);
+
+            return new BonusPuzzleResponse
+            {
+                IsEligible = true,
+                IsCompleted = assignment.IsCompleted,
+                IsExpired = isExpired,
+                PuzzleId = assignment.PuzzleId,
+                Fen = assignment.StartedAtUtc.HasValue
+                    ? assignment.Puzzle.Fen
+                    : null,
+                PlayedMoves = moves.Take(playedMoveCount).ToList(),
+                CurrentMoveIndex = assignment.CurrentMoveIndex,
+                WrongMoves = assignment.WrongMoves,
+                UsedHint = assignment.UsedHint,
+                StartedAtUtc = assignment.StartedAtUtc,
+                CompletedAtUtc = assignment.CompletedAtUtc,
+                RemainingSeconds = GetBonusRemainingSeconds(assignment),
+                Score = assignment.PuzzleAttempt?.Score
+            };
+        }
+
         private static string GetDifficulty(int rating)
         {
             if (rating <= 1000)
