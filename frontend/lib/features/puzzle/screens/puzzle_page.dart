@@ -33,6 +33,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   static const Color _primary = Color(0xFFB7D7A8);
   static const Color _secondary = Color(0xFFD6B46A);
   static const int _bonusDurationSeconds = 300;
+  static const _completionDuration = Duration(milliseconds: 1500);
   static const _opponentReplyDelay = Duration(milliseconds: 600);
   static const _opponentAnimationDelay = Duration(milliseconds: 300);
 
@@ -121,9 +122,9 @@ class PuzzlePageState extends State<PuzzlePage> {
   int get _liveScore {
     final score =
         1000 -
-            (_elapsedSeconds * 2) -
-            (_wrongMoves * 150) -
-            (_usedHint ? 250 : 0);
+        (_elapsedSeconds * 2) -
+        (_wrongMoves * 150) -
+        (_usedHint ? 250 : 0);
 
     return score < 0 ? 0 : score;
   }
@@ -249,12 +250,12 @@ class PuzzlePageState extends State<PuzzlePage> {
               if (RegExp(r'^[a-h][1-8]$').hasMatch(square))
                 Positioned(
                   left:
-                  squareSize *
+                      squareSize *
                       (orientation == Side.white
                           ? square.codeUnitAt(0) - 97
                           : 104 - square.codeUnitAt(0)),
                   top:
-                  squareSize *
+                      squareSize *
                       (orientation == Side.white
                           ? 8 - int.parse(square[1])
                           : int.parse(square[1]) - 1),
@@ -605,10 +606,10 @@ class PuzzlePageState extends State<PuzzlePage> {
       _dailyElapsedAtSync = startedAtUtc == null
           ? 0
           : responseTimeUtc
-          .difference(startedAtUtc)
-          .inSeconds
-          .clamp(0, 86400)
-          .toInt();
+                .difference(startedAtUtc)
+                .inSeconds
+                .clamp(0, 86400)
+                .toInt();
       _elapsedSeconds = _dailyElapsedAtSync;
 
       _wrongMoves = data.wrongMoves;
@@ -954,9 +955,9 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _finishPuzzle(
-      PuzzleActionResult data, {
-        required int generation,
-      }) async {
+    PuzzleActionResult data, {
+    required int generation,
+  }) async {
     if (!_isCurrentGeneration(generation) || _isSolved) return;
 
     _stopTimer();
@@ -966,7 +967,7 @@ class PuzzlePageState extends State<PuzzlePage> {
       _feedback = 'Bulmaca tamamlandı!';
     });
 
-    await Future.delayed(const Duration(milliseconds: 1500));
+    await Future.delayed(_completionDuration);
 
     if (!_isCurrentGeneration(generation)) return;
 
@@ -1379,6 +1380,12 @@ class PuzzlePageState extends State<PuzzlePage> {
         return;
       }
 
+      if (_isBonusSubmitting ||
+          _showBonusCompletionAnimation ||
+          _isBonusCompleted) {
+        return;
+      }
+
       final bonus = response.data!;
 
       setState(() {
@@ -1479,6 +1486,8 @@ class PuzzlePageState extends State<PuzzlePage> {
       final serverMoveIndex = data.currentMoveIndex ?? playedMoves.length;
       final serverCompleted = data.isCompleted || data.isSolved;
       final serverExpired = data.isExpired;
+
+      if (serverCompleted || serverExpired) _stopBonusTimer();
 
       final oldMoveCount = _bonusNextMoveIndex;
 
@@ -1621,7 +1630,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         _isBonusLoading = false;
         _bonusHintSquare = hintSquare;
         _bonusFeedback =
-        'İpucu: $_bonusHintSquare karesindeki taşı hareket ettir.';
+            'İpucu: $_bonusHintSquare karesindeki taşı hareket ettir.';
       });
     } catch (error, stackTrace) {
       _debugLog('Bonus ipucu hatası: $error');
@@ -1675,11 +1684,9 @@ class PuzzlePageState extends State<PuzzlePage> {
         _showBonusCompletionAnimation = true;
       });
 
-      await _refreshLeaderboardSafely(generation: generation);
+      unawaited(_refreshLeaderboardSafely(generation: generation));
 
-      if (!_isCurrentGeneration(generation)) return;
-
-      await Future.delayed(const Duration(milliseconds: 1800));
+      await Future.delayed(_completionDuration);
 
       if (!_isCurrentGeneration(generation)) return;
 
@@ -1700,6 +1707,7 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   void _returnToDailyPuzzle() {
+    if (_isBonusSubmitting || _showBonusCompletionAnimation) return;
     _clearWrongMoveHighlight();
     _stopBonusTimer();
 
@@ -1735,10 +1743,12 @@ class PuzzlePageState extends State<PuzzlePage> {
         ),
         leading: _isBonusMode
             ? IconButton(
-          onPressed: _returnToDailyPuzzle,
-          icon: const Icon(Icons.arrow_back),
-          tooltip: 'Günlük bulmacaya dön',
-        )
+                onPressed: _isBonusSubmitting || _showBonusCompletionAnimation
+                    ? null
+                    : _returnToDailyPuzzle,
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Günlük bulmacaya dön',
+              )
             : null,
         actions: [
           if (!_isBonusMode)
@@ -1764,7 +1774,7 @@ class PuzzlePageState extends State<PuzzlePage> {
     }
 
     if (_isBonusMode) {
-      if (_isBonusCompleted && _showBonusCompletionAnimation) {
+      if (_isBonusSubmitting || _showBonusCompletionAnimation) {
         return _buildBonusPuzzleBody();
       }
 
@@ -1797,6 +1807,57 @@ class PuzzlePageState extends State<PuzzlePage> {
   // ------------------------------------------------------------
   // GÜNLÜK BULMACA ARAYÜZÜ
   // ------------------------------------------------------------
+
+  Widget _buildCompletionOverlay({
+    required double boardSize,
+    required bool visible,
+    required String title,
+  }) {
+    return IgnorePointer(
+      child: AnimatedOpacity(
+        opacity: visible ? 1 : 0,
+        duration: const Duration(milliseconds: 300),
+        child: AnimatedScale(
+          scale: visible ? 1 : 0.8,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOutBack,
+          child: Container(
+            width: boardSize,
+            height: boardSize,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.check_circle_rounded,
+                  color: Color(0xFF69E09B),
+                  size: 76,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 23,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Harika hamle!',
+                  style: TextStyle(color: Colors.green.shade200, fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _buildPuzzleBody() {
     return LayoutBuilder(
@@ -1841,55 +1902,10 @@ class PuzzlePageState extends State<PuzzlePage> {
                               ),
                               _buildWrongMoveHighlight(boardSize, _playerSide),
                               _buildWrongMoveWarning(),
-                              IgnorePointer(
-                                child: AnimatedOpacity(
-                                  opacity: _showCompletionAnimation ? 1 : 0,
-                                  duration: const Duration(milliseconds: 300),
-                                  child: AnimatedScale(
-                                    scale: _showCompletionAnimation ? 1 : 0.8,
-                                    duration: const Duration(milliseconds: 400),
-                                    curve: Curves.easeOutBack,
-                                    child: Container(
-                                      width: boardSize,
-                                      height: boardSize,
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.5,
-                                        ),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Column(
-                                        mainAxisAlignment:
-                                        MainAxisAlignment.center,
-                                        children: [
-                                          const Icon(
-                                            Icons.check_circle_rounded,
-                                            color: Color(0xFF69E09B),
-                                            size: 76,
-                                          ),
-                                          const SizedBox(height: 16),
-                                          const Text(
-                                            'Bulmaca Tamamlandı!',
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 23,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Text(
-                                            'Harika hamle!',
-                                            style: TextStyle(
-                                              color: Colors.green.shade200,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                              _buildCompletionOverlay(
+                                boardSize: boardSize,
+                                visible: _showCompletionAnimation,
+                                title: 'Bulmaca Tamamlandı!',
                               ),
                             ],
                           ),
@@ -2018,7 +2034,11 @@ class PuzzlePageState extends State<PuzzlePage> {
                       child: Stack(
                         children: [
                           AbsorbPointer(
-                            absorbing: _isBonusLoading,
+                            absorbing:
+                                _isBonusLoading ||
+                                _isBonusSubmitting ||
+                                _isBonusCompleted ||
+                                _showBonusCompletionAnimation,
                             child: Chessboard(
                               key: ValueKey('bonus-puzzle-$_isBonusStarted'),
                               controller: controller,
@@ -2029,51 +2049,10 @@ class PuzzlePageState extends State<PuzzlePage> {
                           ),
                           _buildWrongMoveHighlight(boardSize, _bonusPlayerSide),
                           _buildWrongMoveWarning(),
-                          IgnorePointer(
-                            child: AnimatedOpacity(
-                              opacity: _showBonusCompletionAnimation ? 1 : 0,
-                              duration: const Duration(milliseconds: 300),
-                              child: AnimatedScale(
-                                scale: _showBonusCompletionAnimation ? 1 : 0.8,
-                                duration: const Duration(milliseconds: 400),
-                                curve: Curves.easeOutBack,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.5),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Center(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          Icons.check_circle_rounded,
-                                          color: Color(0xFF7ED6A5),
-                                          size: 76,
-                                        ),
-                                        SizedBox(height: 14),
-                                        Text(
-                                          'Bulmaca Tamamlandı!',
-                                          style: TextStyle(
-                                            fontSize: 21,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                        SizedBox(height: 6),
-                                        Text(
-                                          'Harika hamle!',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            color: Colors.white70,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                          _buildCompletionOverlay(
+                            boardSize: boardSize,
+                            visible: _showBonusCompletionAnimation,
+                            title: 'Bonus Bulmaca Tamamlandı!',
                           ),
                         ],
                       ),
@@ -2125,7 +2104,11 @@ class PuzzlePageState extends State<PuzzlePage> {
                                 children: [
                                   Expanded(
                                     child: OutlinedButton.icon(
-                                      onPressed: _returnToDailyPuzzle,
+                                      onPressed:
+                                          _isBonusSubmitting ||
+                                              _showBonusCompletionAnimation
+                                          ? null
+                                          : _returnToDailyPuzzle,
                                       icon: const Icon(Icons.arrow_back),
                                       label: const Text('Geri Dön'),
                                       style: OutlinedButton.styleFrom(
@@ -2221,8 +2204,8 @@ class PuzzlePageState extends State<PuzzlePage> {
             const SizedBox(height: 12),
             const Text(
               'Bonus bulmacayı çözerek ek puan kazanabilirsin. '
-                  '5 dakikalık süren yalnızca başla butonuna '
-                  'bastığında başlayacak.',
+              '5 dakikalık süren yalnızca başla butonuna '
+              'bastığında başlayacak.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white70,
@@ -2238,13 +2221,13 @@ class PuzzlePageState extends State<PuzzlePage> {
                 onPressed: _isBonusLoading ? null : _beginBonusPuzzle,
                 icon: _isBonusLoading
                     ? const SizedBox(
-                  width: 19,
-                  height: 19,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: _background,
-                  ),
-                )
+                        width: 19,
+                        height: 19,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _background,
+                        ),
+                      )
                     : const Icon(Icons.play_arrow_rounded, size: 27),
                 label: Text(
                   _isBonusLoading ? 'Başlatılıyor...' : 'Bonus Bulmacaya Başla',
@@ -2403,7 +2386,9 @@ class PuzzlePageState extends State<PuzzlePage> {
             width: double.infinity,
             height: 52,
             child: ElevatedButton.icon(
-              onPressed: _returnToDailyPuzzle,
+              onPressed: _isBonusSubmitting || _showBonusCompletionAnimation
+                  ? null
+                  : _returnToDailyPuzzle,
               icon: const Icon(Icons.arrow_back),
               label: const Text('Günlük Bulmacaya Dön'),
             ),
@@ -2943,7 +2928,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           Text(
             _isReplay
                 ? 'Bu oturumun puanı ayrıca hesaplandı. '
-                'İlk günlük puanın ve liderlik tablosundaki kaydın korunuyor.'
+                      'İlk günlük puanın ve liderlik tablosundaki kaydın korunuyor.'
                 : 'Günün bulmacasını başarıyla tamamladın.',
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 14, color: Colors.white70),
@@ -2993,11 +2978,11 @@ class PuzzlePageState extends State<PuzzlePage> {
       description = 'Bugünkü bonus bulmacanı tamamladın.';
     } else if (alreadyStarted) {
       description =
-      'Bonus denemen başlatıldı. Süre işlemeye devam ediyor. '
+          'Bonus denemen başlatıldı. Süre işlemeye devam ediyor. '
           'Başlatılmış bir deneme yeniden başlatılamaz.';
     } else {
       description =
-      'Hatasız çözümün sayesinde 5 dakikalık bonus bulmaca '
+          'Hatasız çözümün sayesinde 5 dakikalık bonus bulmaca '
           'hakkı kazandın. İstediğin zaman başlatabilirsin.';
     }
 
