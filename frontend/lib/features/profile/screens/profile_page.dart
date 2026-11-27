@@ -301,29 +301,36 @@ class ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _confirmDeleteAccount() async {
+    if (_isLoggingOut) return;
+    final auth = context.read<AuthProvider>();
+    final hasPassword = auth.hasPassword;
+    String password = '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Hesabı sil?'),
-        content: const Text(
-          'Hesabınız ve hesaba bağlı bulmaca ilerlemeniz kalıcı olarak silinecek. Bu işlem geri alınamaz.',
-        ),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Hesabınız ve ilerlemeniz kalıcı olarak silinecek.'),
+          if (hasPassword) TextField(
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'Mevcut şifre'),
+            onChanged: (value) => password = value,
+          ) else const Text('Google hesabınızı yeniden doğrulamanız gerekiyor.'),
+        ]),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Vazgeç'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Hesabı sil'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Vazgeç')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Hesabı sil')),
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
-
+    if (confirmed != true || !mounted || _isLoggingOut) return;
+    if (hasPassword && password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Mevcut şifrenizi girin.')));
+      return;
+    }
+    setState(() => _isLoggingOut = true);
     try {
-      final result = await context.read<AuthProvider>().deleteAccount();
+      final result = await auth.deleteAccount(currentPassword: hasPassword ? password : null);
       if (!mounted) return;
       if (result.success) {
         await _loadProfile();
@@ -338,6 +345,9 @@ class ProfilePageState extends State<ProfilePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Hesap silinemedi. Lütfen tekrar deneyin.')),
       );
+    } finally {
+      password = '';
+      if (mounted) setState(() => _isLoggingOut = false);
     }
   }
 

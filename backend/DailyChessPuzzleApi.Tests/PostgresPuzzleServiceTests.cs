@@ -457,23 +457,41 @@ public sealed class PostgresPuzzleServiceTests
 
         var userId = await SeedConcurrencyScenarioAsync(
             database,
-            "e2e4 e7e5 g1f3 b8c6");
+            dailyMoves: "e2e4 e7e5 g1f3 b8c6");
 
         var sessionId = await StartRegisteredSessionAsync(
             database,
             userId);
 
+        var hintAccepted = false;
+
         await RunConcurrentlyAsync(
             database,
-            service => service.UseHintAsync(
-                sessionId,
-                userId,
-                null),
+            async service =>
+            {
+                try
+                {
+                    var response = await service.UseHintAsync(
+                        sessionId,
+                        userId,
+                        null);
+
+                    hintAccepted = true;
+
+                    return response;
+                }
+                catch (AppException exception)
+                    when (exception.Message == "ANIMATION_IN_PROGRESS")
+                {
+                    return null!;
+                }
+            },
             service => service.SubmitMoveAsync(
                 new PuzzleMoveRequest
                 {
                     SessionId = sessionId,
-                    Uci = "e7e5"
+                    Uci = "e7e5",
+                    ExpectedMoveIndex = 1
                 },
                 userId));
 
@@ -483,7 +501,7 @@ public sealed class PostgresPuzzleServiceTests
             .AsNoTracking()
             .SingleAsync(x => x.Id == sessionId);
 
-        Assert.True(session.UsedHint);
+        Assert.Equal(hintAccepted, session.UsedHint);
         Assert.False(session.IsCompleted);
         Assert.Equal(3, session.CurrentMoveIndex);
         Assert.Equal(0, session.WrongMoves);

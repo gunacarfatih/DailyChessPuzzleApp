@@ -583,11 +583,11 @@ class AuthProvider extends ChangeNotifier {
     return operation;
   }
 
-  Future<ApiResponse<Map<String, dynamic>>> deleteAccount() {
+  Future<ApiResponse<Map<String, dynamic>>> deleteAccount({String? currentPassword}) {
     return _withLoading(() async {
       final generation = _authStorage.sessionGeneration;
       _ensureCurrentSession(generation);
-      final result = await _authApiService.deleteAccount();
+      final result = await _authApiService.deleteAccount(currentPassword: currentPassword);
       if (result.success) {
         _initializationFuture = null;
         _clearUserData();

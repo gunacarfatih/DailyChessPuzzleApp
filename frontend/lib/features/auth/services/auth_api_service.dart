@@ -554,11 +554,22 @@ class AuthApiService {
     // burada tekrar clearSession çağrılmaz.
   }
 
-  Future<ApiResponse<Map<String, dynamic>>> deleteAccount() async {
+  Future<ApiResponse<Map<String, dynamic>>> deleteAccount({String? currentPassword}) async {
     final generation = _authStorage.sessionGeneration;
     final options = await _getAuthenticatedOptions(generation);
+    String? googleIdToken;
+    if (currentPassword == null) {
+      await _initializeGoogleSignIn();
+      await _googleSignIn.signOut();
+      final account = await _googleSignIn.authenticate();
+      googleIdToken = account.authentication.idToken;
+      if (googleIdToken == null) throw Exception('Google doğrulaması başarısız.');
+    }
+    _authStorage.ensureCurrentGeneration(generation);
     final response = await _dio.delete(
       '/api/auth/account',
+      data: {'currentPassword': ?currentPassword,
+        'googleIdToken': ?googleIdToken},
       options: options,
     );
     _authStorage.ensureCurrentGeneration(generation);

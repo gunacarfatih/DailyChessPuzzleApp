@@ -50,7 +50,7 @@ namespace DailyChessPuzzleApi.Services.Interfaces
             ChangePasswordRequest request,
             CancellationToken cancellationToken);
 
-        Task DeleteAccountAsync(int userId, CancellationToken cancellationToken);
+        Task DeleteAccountAsync(int userId, DeleteAccountRequest request, CancellationToken cancellationToken);
 
         Task RequestPasswordResetAsync(PasswordResetCodeRequest request, CancellationToken cancellationToken);
 

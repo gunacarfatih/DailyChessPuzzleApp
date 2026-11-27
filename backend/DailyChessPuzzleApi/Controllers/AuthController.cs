@@ -222,12 +222,13 @@ namespace DailyChessPuzzleApi.Controllers
 
         [Authorize]
         [HttpDelete("account")]
-        [EnableRateLimiting("auth-sensitive")]
+        [EnableRateLimiting("auth-account-delete")]
         public async Task<IActionResult> DeleteAccount(
+            [FromBody] DeleteAccountRequest request,
             CancellationToken cancellationToken)
         {
             await _authService.DeleteAccountAsync(
-                GetAuthenticatedUserId(), cancellationToken);
+                GetAuthenticatedUserId(), request, cancellationToken);
             return Ok(ResponseFactory.Success(
                 HttpContext,
                 "Account deleted successfully.",

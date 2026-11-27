@@ -218,6 +218,15 @@ builder.Services.AddRateLimiter(options =>
         "auth-sensitive",
         permitLimit: 10,
         window: TimeSpan.FromMinutes(1));
+    options.AddPolicy("auth-account-delete", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5, Window = TimeSpan.FromMinutes(5),
+                QueueLimit = 0, AutoReplenishment = true
+            }));
     AddIpPolicy(options, "puzzle-write", permitLimit: 60, window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "puzzle-move", permitLimit: 30, window: TimeSpan.FromMinutes(1));
     AddIpPolicy(options, "puzzle-read", permitLimit: 60, window: TimeSpan.FromMinutes(1));

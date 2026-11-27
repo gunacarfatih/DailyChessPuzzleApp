@@ -1115,6 +1115,7 @@ namespace DailyChessPuzzleApi.Services
 
         public async Task DeleteAccountAsync(
             int userId,
+            DeleteAccountRequest request,
             CancellationToken cancellationToken)
         {
             await using var transaction = await _context.Database
@@ -1123,11 +1124,51 @@ namespace DailyChessPuzzleApi.Services
             if (user == null)
                 return;
 
+            if (!string.IsNullOrWhiteSpace(user.PasswordHash))
+            {
+                if (string.IsNullOrEmpty(request.CurrentPassword))
+                    throw new AppException(400, "CURRENT_PASSWORD_REQUIRED");
+                if (_passwordHasher.VerifyHashedPassword(user, user.PasswordHash,
+                    request.CurrentPassword) == PasswordVerificationResult.Failed)
+                    throw new AppException(403, "INVALID_CURRENT_PASSWORD");
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(request.GoogleIdToken) ||
+                    string.IsNullOrWhiteSpace(user.GoogleId))
+                    throw new AppException(400, "GOOGLE_REAUTH_REQUIRED");
+                GoogleJsonWebSignature.Payload proof;
+                try { proof = await _googleTokenValidator.ValidateAsync(request.GoogleIdToken, cancellationToken); }
+                catch (AppException) { throw new AppException(403, "INVALID_GOOGLE_TOKEN"); }
+                if (!string.Equals(proof.Subject, user.GoogleId, StringComparison.Ordinal))
+                    throw new AppException(403, "GOOGLE_ACCOUNT_MISMATCH");
+                // auth_time must be signed by Google; iat alone is not reauthentication.
+                var jwt = new JwtSecurityTokenHandler().ReadJwtToken(request.GoogleIdToken);
+                var authTime = jwt.Claims.FirstOrDefault(c => c.Type == "auth_time")?.Value;
+                var nowSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                if (!long.TryParse(authTime, out var seconds) ||
+                    seconds < nowSeconds - 120 || seconds > nowSeconds + 30)
+                    throw new AppException(403, "GOOGLE_REAUTH_REQUIRED");
+            }
+
             var attemptIds = await _context.PuzzleAttempts
                 .Where(attempt => attempt.UserId == userId)
                 .Select(attempt => attempt.Id)
                 .ToListAsync(cancellationToken);
 
+            var clientId = $"user:{userId}";
+            var targets = await _context.LeaderboardScores
+                .Where(x => x.UserId == userId || x.ClientId == clientId)
+                .Select(x => new { x.Period, x.PeriodKey, x.CountryCode })
+                .ToListAsync(cancellationToken);
+            var pendingTargets = await _context.LeaderboardCacheOutboxDeliveries
+                .Where(x => x.TargetUserId == userId || x.TargetClientId == clientId)
+                .Select(x => new { x.Period, x.PeriodKey, x.CountryCode })
+                .ToListAsync(cancellationToken);
+            targets.AddRange(pendingTargets);
+            await _context.LeaderboardCacheOutboxDeliveries
+                .Where(x => x.TargetUserId == userId || x.TargetClientId == clientId)
+                .ExecuteDeleteAsync(cancellationToken);
             await _context.LeaderboardCacheOutboxes
                 .Where(outbox => outbox.UserId == userId ||
                     (outbox.PuzzleAttemptId.HasValue &&
@@ -1146,6 +1187,58 @@ namespace DailyChessPuzzleApi.Services
                 .Where(attempt => attempt.UserId == userId)
                 .ExecuteDeleteAsync(cancellationToken);
 
+            // Archive tables are optional on installations
+            // without the scoring reset.
+            await _context.Database.ExecuteSqlAsync(
+                $"SELECT set_config('checkrix.deletion_user_id', {userId.ToString(System.Globalization.CultureInfo.InvariantCulture)}, true)",
+                cancellationToken);
+
+            await _context.Database.ExecuteSqlAsync($"""
+                DO $archive$
+                BEGIN
+                    IF to_regclass('scoring_archive."LeaderboardCacheOutboxDeliveries"') IS NOT NULL THEN
+                        DELETE FROM scoring_archive."LeaderboardCacheOutboxDeliveries"
+                        WHERE "TargetUserId" = current_setting('checkrix.deletion_user_id')::integer;
+                    END IF;
+
+                    IF to_regclass('scoring_archive."LeaderboardCacheOutboxes"') IS NOT NULL THEN
+                        DELETE FROM scoring_archive."LeaderboardCacheOutboxes"
+                        WHERE "UserId" = current_setting('checkrix.deletion_user_id')::integer;
+                    END IF;
+
+                    IF to_regclass('scoring_archive."BonusPuzzleAssignments"') IS NOT NULL THEN
+                        DELETE FROM scoring_archive."BonusPuzzleAssignments"
+                        WHERE "UserId" = current_setting('checkrix.deletion_user_id')::integer;
+                    END IF;
+
+                    IF to_regclass('scoring_archive."PuzzleGameSessions"') IS NOT NULL THEN
+                        DELETE FROM scoring_archive."PuzzleGameSessions"
+                        WHERE "UserId" = current_setting('checkrix.deletion_user_id')::integer;
+                    END IF;
+
+                    IF to_regclass('scoring_archive."LeaderboardScores"') IS NOT NULL THEN
+                        DELETE FROM scoring_archive."LeaderboardScores"
+                        WHERE "UserId" = current_setting('checkrix.deletion_user_id')::integer;
+                    END IF;
+
+                    IF to_regclass('scoring_archive."PuzzleAttempts"') IS NOT NULL THEN
+                        DELETE FROM scoring_archive."PuzzleAttempts"
+                        WHERE "UserId" = current_setting('checkrix.deletion_user_id')::integer;
+                    END IF;
+                END;
+                $archive$;
+                """, cancellationToken);
+            var removal = new LeaderboardCacheOutbox { ClientId = clientId };
+            foreach (var target in targets.Distinct())
+                removal.Deliveries.Add(new LeaderboardCacheOutboxDelivery
+                {
+                    TargetClientId = clientId, IsRemoval = true,
+                    Period = target.Period, PeriodKey = target.PeriodKey,
+                    CountryCode = target.CountryCode,
+                    CacheKey = $"DailyChessPuzzle_leaderboard:v3:{target.Period}:{target.PeriodKey}:{target.CountryCode ?? "global"}"
+                });
+            if (removal.Deliveries.Count > 0)
+                _context.LeaderboardCacheOutboxes.Add(removal);
             _context.Users.Remove(user);
             await _context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);

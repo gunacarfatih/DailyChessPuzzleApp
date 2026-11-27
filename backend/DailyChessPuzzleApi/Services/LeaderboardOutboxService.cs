@@ -1,4 +1,4 @@
-﻿
+
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Services.Interfaces;
@@ -140,6 +140,28 @@ namespace DailyChessPuzzleApi.Services
                         continue;
                     }
 
+                    int targetId = int.Parse(targetClientId[5..]);
+                    var targetUser = await _context.Users.FromSqlInterpolated(
+                        $"SELECT * FROM \"Users\" WHERE \"Id\" = {targetId} FOR UPDATE")
+                        .AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+                    if (targetUser == null)
+                    {
+                        if (delivery.IsRemoval)
+                        {
+                            if (delivery.Period == "daily")
+                                await _cacheService.RemoveDailyScoreAsync(delivery.CacheKey,
+                                    $"{delivery.CacheKey}:version", targetClientId, delivery.OutboxId);
+                            else
+                                await _cacheService.RemoveScoreAsync(delivery.CacheKey,
+                                    targetClientId, delivery.OutboxId);
+                            await _publisher.PublishAsync(delivery.Period, delivery.PeriodKey,
+                                delivery.CountryCode, cancellationToken);
+                        }
+                        await CompleteDeliveryAsync(deliveryId, lockId, cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+                        _context.ChangeTracker.Clear();
+                        continue;
+                    }
                     PuzzleAttempt? puzzleAttempt = null;
 
                     // PuzzleAttemptId null ise bu bir toplu işlem
