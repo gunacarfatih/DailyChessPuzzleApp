@@ -62,9 +62,6 @@ class ProfilePageState extends State<ProfilePage> {
   Future<void> refreshProfile({bool forceRefresh = false}) async {
     if (!mounted || _isLoggingOut) return;
     await _loadProfile(forceRefresh: forceRefresh);
-    if (mounted && context.read<AuthProvider>().isLoggedIn) {
-      await context.read<ProfileProvider>().refresh();
-    }
   }
 
   Future<void> _loadProfile({bool forceRefresh = false}) async {
@@ -89,6 +86,7 @@ class ProfilePageState extends State<ProfilePage> {
         _isLoading = false;
       });
       if (auth.isLoggedIn) {
+        context.read<ProfileProvider>().clear();
         await Future.wait([
           leaderboard.loadLeaderboard(
             period: 'alltime',
