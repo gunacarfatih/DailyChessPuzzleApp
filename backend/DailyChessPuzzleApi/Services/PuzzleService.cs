@@ -1,5 +1,4 @@
-﻿
-using System.Globalization;
+﻿using System.Globalization;
 using System.Diagnostics;
 using DailyChessPuzzleApi.Settings;
 using Microsoft.Extensions.Options;
@@ -139,14 +138,6 @@ namespace DailyChessPuzzleApi.Services
             if (!userId.HasValue && clientId == null)
                 throw new ArgumentException("CLIENT_ID_REQUIRED");
 
-            var existingSession = await FindActiveDailySessionAsync(
-                userId,
-                clientId,
-                today,
-                cancellationToken);
-            if (existingSession != null)
-                return ToSessionResponse(existingSession);
-
             var puzzle = await GetDailyPuzzleAsync(
                 userId,
                 today,
@@ -165,6 +156,20 @@ namespace DailyChessPuzzleApi.Services
 
             if (moves.Length < 2)
                 throw new AppException(500, "PUZZLE_MOVES_INVALID");
+
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+            await EnsureLockedUserAsync(userId, cancellationToken);
+
+            var existingSession = await FindActiveDailySessionAsync(
+                userId,
+                clientId,
+                today,
+                cancellationToken);
+            if (existingSession != null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return ToSessionResponse(existingSession);
+            }
 
             string? countryCode = null;
 
@@ -212,10 +217,14 @@ namespace DailyChessPuzzleApi.Services
                     today,
                     cancellationToken);
                 if (concurrentSession != null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
                     return ToSessionResponse(concurrentSession);
+                }
                 throw;
             }
 
+            await transaction.CommitAsync(cancellationToken);
             return ToSessionResponse(session);
         }
 
@@ -266,6 +275,7 @@ namespace DailyChessPuzzleApi.Services
                         CalculateDailySessionScore(session);
 
                     await transaction.CommitAsync(cancellationToken);
+                    await transaction.DisposeAsync();
                     await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
 
                     return ToSessionResponse(
@@ -296,6 +306,7 @@ namespace DailyChessPuzzleApi.Services
                     await transaction.CommitAsync(cancellationToken);
                     if (outboxCreated)
                         _outboxSignal?.Notify();
+                    await transaction.DisposeAsync();
                     await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
 
                     return ToSessionResponse(
@@ -375,7 +386,10 @@ namespace DailyChessPuzzleApi.Services
                     _outboxSignal?.Notify();
 
                 if (session.IsCompleted)
+                {
+                    await transaction.DisposeAsync();
                     await TryCreateBonusAfterDailyCommitAsync(session, cancellationToken);
+                }
 
                 return ToSessionResponse(
                     session,
@@ -383,7 +397,8 @@ namespace DailyChessPuzzleApi.Services
             }
             catch
             {
-                await transaction.RollbackAsync(cancellationToken);
+                if (_context.Database.CurrentTransaction != null)
+                    await transaction.RollbackAsync(cancellationToken);
                 throw;
             }
         }
@@ -489,18 +504,15 @@ namespace DailyChessPuzzleApi.Services
         {
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-            await TryCreateBonusAssignmentAsync(
-                userId,
-                null,
-                today,
-                cancellationToken);
-
             await using var transaction =
                 await _context.Database.BeginTransactionAsync(
                     cancellationToken);
 
             try
             {
+                await EnsureLockedUserAsync(userId, cancellationToken);
+                await TryCreateBonusAssignmentAsync(userId, null, today, cancellationToken);
+
                 var assignment = await GetLockedBonusAssignmentAsync(
                     userId,
                     today,
@@ -1029,11 +1041,18 @@ namespace DailyChessPuzzleApi.Services
 
             try
             {
+                await using var bonusTransaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+                await EnsureLockedUserAsync(session.UserId.Value, cancellationToken);
                 await TryCreateBonusAssignmentAsync(
                     session.UserId.Value,
                     session.PuzzleId,
                     session.PuzzleDate,
                     cancellationToken);
+                await bonusTransaction.CommitAsync(cancellationToken);
+            }
+            catch (AppException exception) when (exception.Message == "INVALID_ACCESS_TOKEN")
+            {
+                _context.ChangeTracker.Clear();
             }
             catch (Exception exception)
             {
@@ -1437,6 +1456,22 @@ namespace DailyChessPuzzleApi.Services
         // SATIR KİLİDİ YARDIMCILARI
         // ---------------------------------------------------------
 
+        private async Task EnsureLockedUserAsync(int? userId, CancellationToken cancellationToken)
+        {
+            if (!userId.HasValue)
+                return;
+
+            var user = await _context.Users
+                .FromSqlInterpolated($"""
+                    SELECT * FROM "Users" WHERE "Id" = {userId.Value} FOR UPDATE
+                    """)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (user == null)
+                throw new AppException(401, "INVALID_ACCESS_TOKEN");
+        }
+
         private Task<PuzzleGameSession?> FindActiveDailySessionAsync(
             int? userId,
             string? clientId,
@@ -1461,6 +1496,7 @@ namespace DailyChessPuzzleApi.Services
             string? clientId,
             CancellationToken cancellationToken)
         {
+            await EnsureLockedUserAsync(userId, cancellationToken);
             PuzzleGameSession? session;
 
             if (userId.HasValue)
@@ -1506,6 +1542,7 @@ namespace DailyChessPuzzleApi.Services
             DateOnly today,
             CancellationToken cancellationToken)
         {
+            await EnsureLockedUserAsync(userId, cancellationToken);
             var assignment = await _context.BonusPuzzleAssignments
                 .FromSqlInterpolated(
                     $"""

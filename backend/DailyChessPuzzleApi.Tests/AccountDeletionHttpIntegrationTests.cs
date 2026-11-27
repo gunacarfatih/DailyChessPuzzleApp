@@ -1,4 +1,6 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+﻿using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using DailyChessPuzzleApi.Services;
 using Google.Apis.Auth;
@@ -385,4 +387,249 @@ public sealed class AccountDeletionHttpIntegrationTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(code, json.RootElement.GetProperty("errorCode").GetString());
     }
+
+    [PostgresFact]
+    public async Task Concurrent_account_deletion_preserves_data_integrity()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        using var seedFactory = new TestWebApplicationFactory(database);
+        var login = await SeedLoginAsync(database, seedFactory);
+        var other = await SeedLoginAsync(database, seedFactory, suffix: "other");
+        var gate = new CountryUpdateRaceInterceptor();
+        using var factory = new TestWebApplicationFactory(database, gate);
+        using var client = factory.CreateClient();
+        var responses = await Task.WhenAll(
+            DeleteAsync(client, login.AccessToken, new { currentPassword = Password }),
+            DeleteAsync(client, login.AccessToken, new { currentPassword = Password }))
+            .WaitAsync(TimeSpan.FromSeconds(40));
+        try
+        {
+            Assert.Equal(2, gate.ArrivedCount);
+            Assert.All(responses, r => Assert.Equal(HttpStatusCode.OK, r.StatusCode));
+            await AssertDeletedRaceStateAsync(database, login.UserId, other.UserId);
+        }
+        finally
+        {
+            foreach (var response in responses) response.Dispose();
+        }
+    }
+
+    [PostgresFact]
+    public Task Account_deletion_DailyStart_DeletionFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.DailyStart, RaceOrder.DeletionFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_DailyStart_PuzzleFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.DailyStart, RaceOrder.PuzzleFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_DailyStart_Simultaneous() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.DailyStart, RaceOrder.Simultaneous);
+
+    [PostgresFact]
+    public Task Account_deletion_DailyCompletion_DeletionFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.DailyCompletion, RaceOrder.DeletionFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_DailyCompletion_PuzzleFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.DailyCompletion, RaceOrder.PuzzleFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_DailyCompletion_Simultaneous() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.DailyCompletion, RaceOrder.Simultaneous);
+
+    [PostgresFact]
+    public Task Account_deletion_BonusStart_DeletionFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.BonusStart, RaceOrder.DeletionFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_BonusStart_PuzzleFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.BonusStart, RaceOrder.PuzzleFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_BonusStart_Simultaneous() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.BonusStart, RaceOrder.Simultaneous);
+
+    [PostgresFact]
+    public Task Account_deletion_BonusCompletion_DeletionFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.BonusCompletion, RaceOrder.DeletionFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_BonusCompletion_PuzzleFirst() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.BonusCompletion, RaceOrder.PuzzleFirst);
+
+    [PostgresFact]
+    public Task Account_deletion_BonusCompletion_Simultaneous() =>
+        RunDeletionPuzzleRaceAsync(RaceOperation.BonusCompletion, RaceOrder.Simultaneous);
+
+    private enum RaceOperation { DailyStart, DailyCompletion, BonusStart, BonusCompletion }
+    private enum RaceOrder { DeletionFirst, PuzzleFirst, Simultaneous }
+
+    private static async Task RunDeletionPuzzleRaceAsync(RaceOperation operation, RaceOrder order)
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await database.SeedDailyPuzzleAsync(PuzzleAudience.Registered);
+        using var seedFactory = new TestWebApplicationFactory(database);
+        using var seedClient = seedFactory.CreateClient();
+        var login = await SeedLoginAsync(database, seedFactory);
+        var other = await SeedLoginAsync(database, seedFactory, suffix: "other");
+        await using (var context = database.CreateContext())
+        {
+            context.Puzzles.Add(new Puzzle
+            {
+                LichessPuzzleId = "deletion-race-bonus",
+                Fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                Moves = "e2e4 e7e5",
+                Rating = 2600,
+                Popularity = 100,
+                Themes = "opening",
+                IsActive = true
+            });
+            await context.SaveChangesAsync();
+        }
+        int sessionId = 0;
+        if (operation != RaceOperation.DailyStart)
+        {
+            using var started = await PuzzlePostAsync(seedClient, login.AccessToken, "session/start");
+            Assert.Equal(HttpStatusCode.OK, started.StatusCode);
+            await using (var context = database.CreateContext())
+                sessionId = await context.PuzzleGameSessions.Where(x => x.UserId == login.UserId).Select(x => x.Id).SingleAsync();
+            if (operation != RaceOperation.DailyCompletion)
+            {
+                using var completed = await PuzzlePostAsync(seedClient, login.AccessToken, "move",
+                    new { sessionId, uci = "e7e5", expectedMoveIndex = 1 });
+                Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+                await using (var context = database.CreateContext())
+                    Assert.True(await context.BonusPuzzleAssignments.AnyAsync(x => x.UserId == login.UserId));
+                if (operation == RaceOperation.BonusCompletion)
+                {
+                    using var bonus = await PuzzlePostAsync(seedClient, login.AccessToken, "bonus/start");
+                    Assert.Equal(HttpStatusCode.OK, bonus.StatusCode);
+                    using var move = await PuzzlePostAsync(seedClient, login.AccessToken, "bonus/move",
+                        new { uci = "e7e5", expectedMoveIndex = 1 });
+                    Assert.Equal(HttpStatusCode.OK, move.StatusCode);
+                    await using var context = database.CreateContext();
+                    Assert.True(await context.BonusPuzzleAssignments.AnyAsync(x => x.UserId == login.UserId && x.CurrentMoveIndex == 2));
+                }
+            }
+        }
+
+        var gate = new DeletionPuzzleGate(operation);
+        using var factory = new TestWebApplicationFactory(database, gate);
+        using var client = factory.CreateClient();
+        Task<HttpResponseMessage>? deletion = null;
+        Task<HttpResponseMessage>? puzzle = null;
+        try
+        {
+            deletion = DeleteAsync(client, login.AccessToken, new { currentPassword = Password });
+            await gate.DeletionArrived.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            puzzle = operation switch
+            {
+                RaceOperation.DailyStart => PuzzlePostAsync(client, login.AccessToken, "session/start"),
+                RaceOperation.DailyCompletion => PuzzlePostAsync(client, login.AccessToken, "move", new { sessionId, uci = "e7e5", expectedMoveIndex = 1 }),
+                RaceOperation.BonusStart => PuzzlePostAsync(client, login.AccessToken, "bonus/start"),
+                RaceOperation.BonusCompletion => PuzzlePostAsync(client, login.AccessToken, "bonus/submit"),
+                _ => throw new InvalidOperationException()
+            };
+            await gate.PuzzleArrived.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.NotSame(gate.DeletionArrived.Task.Result, gate.PuzzleArrived.Task.Result);
+            if (order == RaceOrder.DeletionFirst)
+            {
+                gate.ReleaseDeletion.TrySetResult(true);
+                await deletion.WaitAsync(TimeSpan.FromSeconds(20));
+            }
+            else if (order == RaceOrder.PuzzleFirst)
+            {
+                gate.ReleasePuzzle.TrySetResult(true);
+                await puzzle.WaitAsync(TimeSpan.FromSeconds(20));
+            }
+            gate.ReleaseDeletion.TrySetResult(true);
+            gate.ReleasePuzzle.TrySetResult(true);
+            await Task.WhenAll(deletion, puzzle).WaitAsync(TimeSpan.FromSeconds(30));
+            var deleted = await deletion;
+            var played = await puzzle;
+            Assert.True(deleted.StatusCode == HttpStatusCode.OK,
+                $"Deletion: {deleted.StatusCode}: {await deleted.Content.ReadAsStringAsync()}");
+            var accepted = order == RaceOrder.PuzzleFirst
+                ? played.StatusCode == HttpStatusCode.OK
+                : played.StatusCode is HttpStatusCode.OK or HttpStatusCode.Unauthorized or HttpStatusCode.NotFound or HttpStatusCode.Conflict or HttpStatusCode.Forbidden;
+            // A 500 (including FK violation/deadlock) is a regression, not an accepted race outcome.
+            Assert.True(accepted, $"Puzzle: {played.StatusCode}: {await played.Content.ReadAsStringAsync()}");
+            if (order == RaceOrder.DeletionFirst && operation == RaceOperation.DailyStart)
+                Assert.NotEqual(HttpStatusCode.OK, played.StatusCode);
+            await AssertDeletedRaceStateAsync(database, login.UserId, other.UserId);
+            using var stale = await PuzzlePostAsync(client, login.AccessToken, "session/start");
+            Assert.Equal(HttpStatusCode.Unauthorized, stale.StatusCode);
+        }
+        finally
+        {
+            gate.ReleaseDeletion.TrySetResult(true);
+            gate.ReleasePuzzle.TrySetResult(true);
+            // Drain requests before disposing the factory or test schema.
+            foreach (var task in new[] { deletion, puzzle })
+            {
+                if (task == null) continue;
+                try { (await task.WaitAsync(TimeSpan.FromSeconds(30))).Dispose(); }
+                catch { /* Preserve the original test failure. */ }
+            }
+        }
+    }
+
+    private static async Task<HttpResponseMessage> PuzzlePostAsync(HttpClient client, string token, string path, object? body = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/puzzle/{path}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body != null) request.Content = JsonContent.Create(body);
+        return await client.SendAsync(request);
+    }
+
+    private static async Task AssertDeletedRaceStateAsync(PostgresTestDatabase database, int userId, int otherId)
+    {
+        await using var context = database.CreateContext();
+        var identity = $"user:{userId}";
+        Assert.False(await context.Users.AnyAsync(x => x.Id == userId));
+        Assert.False(await context.RefreshTokens.AnyAsync(x => x.UserId == userId));
+        Assert.Empty(await context.PuzzleGameSessions.ToListAsync());
+        Assert.Empty(await context.BonusPuzzleAssignments.ToListAsync());
+        Assert.Empty(await context.PuzzleAttempts.ToListAsync());
+        Assert.False(await context.LeaderboardScores.AnyAsync(x => x.UserId == userId || x.ClientId == identity));
+        Assert.False(await context.LeaderboardCacheOutboxes.AnyAsync(x => x.UserId == userId || (x.ClientId == identity && x.PuzzleAttemptId != null)));
+        Assert.False(await context.LeaderboardCacheOutboxDeliveries.AnyAsync(x => x.TargetUserId == userId || (x.TargetClientId == identity && !x.IsRemoval)));
+        Assert.True(await context.Users.AnyAsync(x => x.Id == otherId));
+        Assert.True(await context.RefreshTokens.AnyAsync(x => x.UserId == otherId));
+    }
+
+    private sealed class DeletionPuzzleGate(RaceOperation operation) : DbCommandInterceptor
+    {
+        public TaskCompletionSource<DbContext> DeletionArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<DbContext> PuzzleArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ReleaseDeletion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ReleasePuzzle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context is not { } context) return result;
+            var sql = command.CommandText;
+            bool Has(string value) => sql.Contains(value, StringComparison.OrdinalIgnoreCase);
+            var userLock = Has("\"Users\"") && Has("FOR UPDATE");
+            if (userLock && DeletionArrived.TrySetResult(context))
+                await ReleaseDeletion.Task.WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
+            else if (!ReferenceEquals(context, DeletionArrived.Task.IsCompletedSuccessfully ? DeletionArrived.Task.Result : null))
+            {
+                var match = userLock || (operation switch
+                {
+                    RaceOperation.DailyStart => System.Text.RegularExpressions.Regex.IsMatch(sql,
+                        @"^\s*SELECT\s+\w+\.""CountryCode""\s+FROM\s+""Users""", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+                    RaceOperation.DailyCompletion => Has("\"PuzzleGameSessions\"") && Has("FOR UPDATE"),
+                    _ => Has("\"BonusPuzzleAssignments\"") && Has("FOR UPDATE")
+                });
+                if (match && PuzzleArrived.TrySetResult(context))
+                    await ReleasePuzzle.Task.WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
+            }
+            return result;
+        }
+    }
+
 }
