@@ -7,6 +7,7 @@ import 'core/constants/api_constants.dart';
 import 'features/splash/screens/splash_page.dart';
 import 'providers/auth_provider.dart';
 import 'providers/leaderboard_provider.dart';
+import 'providers/profile_provider.dart';
 
 void main() {
   if (kReleaseMode && !ApiConstants.baseUrl.startsWith('https://')) {
@@ -25,6 +26,7 @@ class DailyChessPuzzleApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => LeaderboardProvider()),
+        ChangeNotifierProvider(create: (_) => ProfileProvider()),
       ],
       child: MaterialApp(
         title: 'Checkrix',

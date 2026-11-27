@@ -31,10 +31,23 @@ namespace DailyChessPuzzleApi.Data
             => Set<LeaderboardScore>();
 
         public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+        public DbSet<ProfileProgress> ProfileProgress => Set<ProfileProgress>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<ProfileProgress>(entity =>
+            {
+                entity.HasKey(x => x.Id);
+                entity.Property(x => x.Kind).HasMaxLength(16).IsRequired();
+                entity.HasIndex(x => new { x.UserId, x.PuzzleAttemptId }).IsUnique();
+                entity.HasIndex(x => new { x.UserId, x.PlayedOn, x.Kind });
+                entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(x => x.PuzzleAttempt).WithMany().HasForeignKey(x => x.PuzzleAttemptId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
 
             // USER
             modelBuilder.Entity<User>(entity =>

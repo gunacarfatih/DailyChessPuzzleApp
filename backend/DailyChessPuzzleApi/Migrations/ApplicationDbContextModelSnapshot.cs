@@ -321,6 +321,55 @@ namespace DailyChessPuzzleApi.Migrations
                     b.ToTable("LeaderboardScores");
                 });
 
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.ProfileProgress", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DifficultyBonus")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateOnly>("PlayedOn")
+                        .HasColumnType("date");
+
+                    b.Property<int>("PuzzleAttemptId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("UsedHint")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("WrongMoves")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Xp")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PuzzleAttemptId");
+
+                    b.HasIndex("UserId", "PuzzleAttemptId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "PlayedOn", "Kind");
+
+                    b.ToTable("ProfileProgress");
+                });
+
             modelBuilder.Entity("DailyChessPuzzleApi.Models.Puzzle", b =>
                 {
                     b.Property<int>("Id")
@@ -731,6 +780,25 @@ namespace DailyChessPuzzleApi.Migrations
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("DailyChessPuzzleApi.Models.ProfileProgress", b =>
+                {
+                    b.HasOne("DailyChessPuzzleApi.Models.PuzzleAttempt", "PuzzleAttempt")
+                        .WithMany()
+                        .HasForeignKey("PuzzleAttemptId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DailyChessPuzzleApi.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("PuzzleAttempt");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("DailyChessPuzzleApi.Models.PuzzleAttempt", b =>

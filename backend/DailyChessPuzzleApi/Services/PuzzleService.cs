@@ -892,6 +892,15 @@ namespace DailyChessPuzzleApi.Services
 
                 await _context.SaveChangesAsync(cancellationToken);
 
+                var bonusRating = await _context.Puzzles.AsNoTracking()
+                    .Where(x => x.Id == assignment.PuzzleId)
+                    .Select(x => x.Rating)
+                    .FirstAsync(cancellationToken);
+                await ProfileProgression.AwardAsync(
+                    _context, userId, attempt, "bonus",
+                    ProfileProgression.DifficultyBonus(bonusRating),
+                    assignment.WrongMoves, assignment.UsedHint, cancellationToken);
+
                 assignment.PuzzleAttemptId = attempt.Id;
                 assignment.IsCompleted = true;
 
@@ -1011,6 +1020,14 @@ namespace DailyChessPuzzleApi.Services
             // Misafirlerin PuzzleAttempt kayıtları tutulur ancak Outbox oluşturulmaz.
             if (session.UserId.HasValue)
             {
+                var rating = await _context.Puzzles.AsNoTracking()
+                    .Where(x => x.Id == session.PuzzleId)
+                    .Select(x => x.Rating)
+                    .FirstAsync(cancellationToken);
+                await ProfileProgression.AwardAsync(
+                    _context, session.UserId.Value, attempt, "daily",
+                    ProfileProgression.DifficultyBonus(rating),
+                    session.WrongMoves, session.UsedHint, cancellationToken);
                 await CreateLeaderboardOutboxEntriesAsync(
                     attempt.Id,
                     session.UserId.Value,

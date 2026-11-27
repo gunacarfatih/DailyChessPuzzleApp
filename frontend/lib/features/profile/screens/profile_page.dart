@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../providers/auth_provider.dart';
+import '../../../providers/profile_provider.dart';
 import '../../../providers/leaderboard_provider.dart';
 
 import '../../../core/storage/client_id_storage.dart';
@@ -11,6 +12,8 @@ import '../../auth/screens/register_page.dart';
 import '../../leaderboard/models/leaderboard_entry.dart';
 import '../../auth/screens/email_verification_page.dart';
 import 'password_management_page.dart';
+import 'profile_achievements_page.dart';
+import 'profile_history_page.dart';
 
 class ProfilePage extends StatefulWidget {
   final Future<void> Function()? onAuthChanged;
@@ -43,8 +46,11 @@ class ProfilePageState extends State<ProfilePage> {
   LeaderboardEntry? get _profileData {
     final auth = context.read<AuthProvider>();
     if (!auth.isLoggedIn || auth.userId != _userId) return null;
-    return context.read<LeaderboardProvider>()
-        .leaderboardFor(null, period: 'alltime')?.allTime.currentUser;
+    return context
+        .read<LeaderboardProvider>()
+        .leaderboardFor(null, period: 'alltime')
+        ?.allTime
+        .currentUser;
   }
 
   @override
@@ -56,6 +62,9 @@ class ProfilePageState extends State<ProfilePage> {
   Future<void> refreshProfile({bool forceRefresh = false}) async {
     if (!mounted || _isLoggingOut) return;
     await _loadProfile(forceRefresh: forceRefresh);
+    if (mounted && context.read<AuthProvider>().isLoggedIn) {
+      await context.read<ProfileProvider>().refresh();
+    }
   }
 
   Future<void> _loadProfile({bool forceRefresh = false}) async {
@@ -80,7 +89,15 @@ class ProfilePageState extends State<ProfilePage> {
         _isLoading = false;
       });
       if (auth.isLoggedIn) {
-        await leaderboard.loadLeaderboard(period: 'alltime', forceRefresh: forceRefresh);
+        await Future.wait([
+          leaderboard.loadLeaderboard(
+            period: 'alltime',
+            forceRefresh: forceRefresh,
+          ),
+          context.read<ProfileProvider>().refresh(),
+        ]);
+      } else {
+        context.read<ProfileProvider>().clear();
       }
     } catch (error) {
       if (!mounted || generation != _profileGeneration) return;
@@ -210,7 +227,6 @@ class ProfilePageState extends State<ProfilePage> {
     }
   }
 
-
   Future<void> _openEmailVerificationPage() async {
     final authProvider = context.read<AuthProvider>();
     final email = authProvider.email?.trim();
@@ -224,14 +240,9 @@ class ProfilePageState extends State<ProfilePage> {
 
     await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => EmailVerificationPage(
-          email: email,
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => EmailVerificationPage(email: email)),
     );
   }
-
 
   // Şifre belirleme/değiştirme ekranını açar.
   Future<void> _openPasswordManagementPage() async {
@@ -273,7 +284,7 @@ class ProfilePageState extends State<ProfilePage> {
           title: const Text('Çıkış Yap'),
           content: const Text(
             'Hesabından çıkış yapmak istediğine emin misin? '
-                'Misafir kimliğin bu cihazda korunacak.',
+            'Misafir kimliğin bu cihazda korunacak.',
           ),
           actions: [
             TextButton(
@@ -309,28 +320,44 @@ class ProfilePageState extends State<ProfilePage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Hesabı sil?'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Hesabınız ve ilerlemeniz kalıcı olarak silinecek.'),
-          if (hasPassword) TextField(
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Mevcut şifre'),
-            onChanged: (value) => password = value,
-          ) else const Text('Google hesabınızı yeniden doğrulamanız gerekiyor.'),
-        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Hesabınız ve ilerlemeniz kalıcı olarak silinecek.'),
+            if (hasPassword)
+              TextField(
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Mevcut şifre'),
+                onChanged: (value) => password = value,
+              )
+            else
+              const Text('Google hesabınızı yeniden doğrulamanız gerekiyor.'),
+          ],
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Vazgeç')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Hesabı sil')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Hesabı sil'),
+          ),
         ],
       ),
     );
     if (confirmed != true || !mounted || _isLoggingOut) return;
     if (hasPassword && password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Mevcut şifrenizi girin.')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Mevcut şifrenizi girin.')));
       return;
     }
     setState(() => _isLoggingOut = true);
     try {
-      final result = await auth.deleteAccount(currentPassword: hasPassword ? password : null);
+      final result = await auth.deleteAccount(
+        currentPassword: hasPassword ? password : null,
+      );
       if (!mounted) return;
       if (result.success) {
         await _loadProfile();
@@ -343,7 +370,9 @@ class ProfilePageState extends State<ProfilePage> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Hesap silinemedi. Lütfen tekrar deneyin.')),
+        const SnackBar(
+          content: Text('Hesap silinemedi. Lütfen tekrar deneyin.'),
+        ),
       );
     } finally {
       password = '';
@@ -404,7 +433,8 @@ class ProfilePageState extends State<ProfilePage> {
   Widget build(BuildContext context) {
     context.watch<LeaderboardProvider>();
     final auth = context.watch<AuthProvider>();
-    if (!_isLoading && (auth.isLoggedIn != _isLoggedIn || auth.userId != _userId)) {
+    if (!_isLoading &&
+        (auth.isLoggedIn != _isLoggedIn || auth.userId != _userId)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadProfile();
       });
@@ -418,22 +448,25 @@ class ProfilePageState extends State<ProfilePage> {
         ),
         actions: [
           IconButton(
-            onPressed: _isLoading ? null : () => refreshProfile(forceRefresh: true),
+            onPressed: _isLoading
+                ? null
+                : () => refreshProfile(forceRefresh: true),
             icon: const Icon(Icons.refresh),
             tooltip: 'Yenile',
           ),
           const SizedBox(width: 8),
         ],
       ),
-      body: RefreshIndicator(onRefresh: () => refreshProfile(forceRefresh: true), child: _buildBody()),
+      body: RefreshIndicator(
+        onRefresh: () => refreshProfile(forceRefresh: true),
+        child: _buildBody(),
+      ),
     );
   }
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_errorMessage != null) {
@@ -446,6 +479,8 @@ class ProfilePageState extends State<ProfilePage> {
       children: [
         _buildProfileHeader(),
 
+        if (_isLoggedIn) ...[const SizedBox(height: 16), _buildProgressCard()],
+
         if (_isLoggedIn) ...[
           const SizedBox(height: 16),
           _buildEmailVerificationCard(),
@@ -453,10 +488,7 @@ class ProfilePageState extends State<ProfilePage> {
 
         const SizedBox(height: 20),
 
-        if (_isLoggedIn)
-          _buildLoggedInActions()
-        else
-          _buildGuestActions(),
+        if (_isLoggedIn) _buildLoggedInActions() else _buildGuestActions(),
 
         const SizedBox(height: 24),
         _buildSectionTitle('İstatistikler'),
@@ -483,6 +515,101 @@ class ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  Widget _buildProgressCard() {
+    final profile = context.watch<ProfileProvider>();
+    if (profile.summary == null && !profile.loading && profile.error == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => profile.refresh());
+    }
+    final data = profile.summary ?? const <String, dynamic>{};
+    final xp = (data['xp'] as num?)?.toInt() ?? 0;
+    final level = (data['level'] as num?)?.toInt() ?? 1;
+    final unlocked = ((data['achievements'] as List?) ?? const [])
+        .where((a) => (a as Map)['unlocked'] == true)
+        .length;
+    final total = (data['achievementCount'] as num?)?.toInt() ?? 30;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101010),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFD4AF37)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.workspace_premium, color: Color(0xFFD4AF37)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'SEVİYE $level · ${data['rank'] ?? 'Bronze'}',
+                  style: const TextStyle(
+                    color: Color(0xFFE8C85A),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Text(
+                '$xp XP',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Seri ${data['currentStreak'] ?? 0} gün · En iyi ${data['bestStreak'] ?? 0} gün',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Çözülen ${data['solved'] ?? 0} · Kusursuz ${data['perfect'] ?? 0} · Başarım $unlocked/$total',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          if (profile.loading)
+            const LinearProgressIndicator(
+              color: Color(0xFFD4AF37),
+              backgroundColor: Colors.white12,
+            ),
+          if (profile.error != null)
+            Text(
+              profile.error!,
+              style: const TextStyle(color: Colors.orangeAccent),
+            ),
+          Wrap(
+            spacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ProfileAchievementsPage(),
+                  ),
+                ),
+                icon: const Icon(Icons.military_tech),
+                label: const Text('Başarımlar'),
+              ),
+              TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ProfileHistoryPage()),
+                ),
+                icon: const Icon(Icons.history),
+                label: const Text('Geçmiş'),
+              ),
+              IconButton(
+                onPressed: profile.refresh,
+                icon: const Icon(Icons.refresh),
+                tooltip: 'İlerlemeyi yenile',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _profileGeneration++;
@@ -495,8 +622,8 @@ class ProfilePageState extends State<ProfilePage> {
     final subtitle = _isLoggedIn ? (_email ?? '') : _displayClientId;
 
     final emailVerified = context.select<AuthProvider, bool>(
-          (provider) =>
-      provider.isLoggedIn &&
+      (provider) =>
+          provider.isLoggedIn &&
           provider.userId == _userId &&
           provider.emailVerified,
     );
@@ -506,7 +633,7 @@ class ProfilePageState extends State<ProfilePage> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         gradient: const LinearGradient(
-          colors: [Color(0xFF304438), Color(0xFF1B2923)],
+          colors: [Color(0xFF161616), Color(0xFF050505)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -517,14 +644,14 @@ class ProfilePageState extends State<ProfilePage> {
             width: 92,
             height: 92,
             decoration: BoxDecoration(
-              color: const Color(0xFFB7D7A8).withValues(alpha: 0.15),
+              color: const Color(0xFFD4AF37).withValues(alpha: 0.15),
               shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFFB7D7A8), width: 2),
+              border: Border.all(color: const Color(0xFFD4AF37), width: 2),
             ),
             child: Icon(
               emailVerified ? Icons.verified_user : Icons.person,
               size: 52,
-              color: const Color(0xFFB7D7A8),
+              color: const Color(0xFFD4AF37),
             ),
           ),
           const SizedBox(height: 16),
@@ -599,7 +726,7 @@ class ProfilePageState extends State<ProfilePage> {
           const SizedBox(height: 10),
           const Text(
             'Hesap oluşturarak puanlarını kalıcı olarak '
-                'saklayabilir ve farklı cihazlardan erişebilirsin.',
+            'saklayabilir ve farklı cihazlardan erişebilirsin.',
             style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
           ),
           const SizedBox(height: 18),
@@ -625,12 +752,10 @@ class ProfilePageState extends State<ProfilePage> {
     );
   }
 
-
   Widget _buildEmailVerificationCard() {
     final authProvider = context.watch<AuthProvider>();
 
-    if (!authProvider.isLoggedIn ||
-        authProvider.userId != _userId) {
+    if (!authProvider.isLoggedIn || authProvider.userId != _userId) {
       return const SizedBox.shrink();
     }
 
@@ -645,9 +770,7 @@ class ProfilePageState extends State<ProfilePage> {
       decoration: BoxDecoration(
         color: const Color(0xFF1B2923),
         borderRadius: BorderRadius.circular(17),
-        border: Border.all(
-          color: statusColor.withValues(alpha: 0.25),
-        ),
+        border: Border.all(color: statusColor.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -665,19 +788,14 @@ class ProfilePageState extends State<ProfilePage> {
               const Expanded(
                 child: Text(
                   'E-posta doğrulaması',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 14),
           Text(
-            emailVerified
-                ? 'E-posta doğrulandı'
-                : 'E-posta doğrulanmadı',
+            emailVerified ? 'E-posta doğrulandı' : 'E-posta doğrulanmadı',
             style: TextStyle(
               color: statusColor,
               fontSize: 13,
@@ -689,7 +807,7 @@ class ProfilePageState extends State<ProfilePage> {
             emailVerified
                 ? 'E-posta adresin başarıyla doğrulandı.'
                 : 'Hesap güvenliğini artırmak için '
-                'e-posta adresini doğrulayabilirsin.',
+                      'e-posta adresini doğrulayabilirsin.',
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 12,
@@ -717,7 +835,6 @@ class ProfilePageState extends State<ProfilePage> {
       ),
     );
   }
-
 
   Widget _buildLoggedInActions() {
     return Container(
@@ -755,10 +872,10 @@ class ProfilePageState extends State<ProfilePage> {
               onPressed: _isLoggingOut ? null : _confirmLogout,
               icon: _isLoggingOut
                   ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : const Icon(Icons.logout),
               label: Text(_isLoggingOut ? 'Çıkış yapılıyor...' : 'Çıkış Yap'),
             ),
@@ -767,7 +884,10 @@ class ProfilePageState extends State<ProfilePage> {
           TextButton.icon(
             onPressed: _isLoggingOut ? null : _confirmDeleteAccount,
             icon: const Icon(Icons.delete_forever_outlined, color: Colors.red),
-            label: const Text('Hesabı Sil', style: TextStyle(color: Colors.red)),
+            label: const Text(
+              'Hesabı Sil',
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -783,7 +903,8 @@ class ProfilePageState extends State<ProfilePage> {
 
   Widget _buildStatistics() {
     final provider = context.read<LeaderboardProvider>();
-    if (_isLoggedIn && provider.leaderboardFor(null, period: 'alltime') == null) {
+    if (_isLoggedIn &&
+        provider.leaderboardFor(null, period: 'alltime') == null) {
       final error = provider.errorFor(null, period: 'alltime');
       if (error != null) {
         return TextButton(
@@ -885,7 +1006,7 @@ class ProfilePageState extends State<ProfilePage> {
 
   Widget _buildPlayerInformation() {
     final countryCode = context.select<AuthProvider, String?>(
-          (provider) => provider.countryCode,
+      (provider) => provider.countryCode,
     );
 
     return Container(
@@ -1000,7 +1121,7 @@ class ProfilePageState extends State<ProfilePage> {
           Expanded(
             child: Text(
               'Puan ve sıralama bilgilerin, çözdüğün bulmacalardan '
-                  'sonra sunucu üzerinden güncellenir.',
+              'sonra sunucu üzerinden güncellenir.',
               style: TextStyle(
                 color: Colors.white70,
                 fontSize: 12,
