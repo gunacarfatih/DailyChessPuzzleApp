@@ -87,10 +87,10 @@ class PuzzlePageState extends State<PuzzlePage> {
 
   // Her günlük çözüm oturumunun kendine ait ID ve puanı vardır.
   int? _sessionId;
-  int? _sessionScore;
+  double? _sessionScore;
 
   // İlk başarılı günlük çözümün liderlik tablosuna kaydedilen puanı.
-  int? _acceptedScore;
+  double? _acceptedScore;
 
   // Bonus bulmaca
   BonusPuzzle? _bonusPuzzle;
@@ -117,17 +117,9 @@ class PuzzlePageState extends State<PuzzlePage> {
   int _bonusRemainingSeconds = _bonusDurationSeconds;
   int _bonusWrongMoves = 0;
   int _bonusNextMoveIndex = 0;
-  int? _bonusScore;
+  double? _bonusScore;
 
-  int get _liveScore {
-    final score =
-        1000 -
-        (_elapsedSeconds * 2) -
-        (_wrongMoves * 150) -
-        (_usedHint ? 250 : 0);
 
-    return score < 0 ? 0 : score;
-  }
 
   Side get _playerSide => _startingPosition?.turn ?? Side.white;
 
@@ -250,12 +242,12 @@ class PuzzlePageState extends State<PuzzlePage> {
               if (RegExp(r'^[a-h][1-8]$').hasMatch(square))
                 Positioned(
                   left:
-                      squareSize *
+                  squareSize *
                       (orientation == Side.white
                           ? square.codeUnitAt(0) - 97
                           : 104 - square.codeUnitAt(0)),
                   top:
-                      squareSize *
+                  squareSize *
                       (orientation == Side.white
                           ? 8 - int.parse(square[1])
                           : int.parse(square[1]) - 1),
@@ -606,10 +598,10 @@ class PuzzlePageState extends State<PuzzlePage> {
       _dailyElapsedAtSync = startedAtUtc == null
           ? 0
           : responseTimeUtc
-                .difference(startedAtUtc)
-                .inSeconds
-                .clamp(0, 86400)
-                .toInt();
+          .difference(startedAtUtc)
+          .inSeconds
+          .clamp(0, 86400)
+          .toInt();
       _elapsedSeconds = _dailyElapsedAtSync;
 
       _wrongMoves = data.wrongMoves;
@@ -765,7 +757,9 @@ class PuzzlePageState extends State<PuzzlePage> {
         setState(() {
           _isSubmitting = false;
 
-          if (errorCode == 'PUZZLE_ALREADY_COMPLETED') {
+          if (errorCode == 'ANIMATION_IN_PROGRESS') {
+            _feedback = 'Rakip hamlesinin tamamlanmasını bekle.';
+          } else if (errorCode == 'PUZZLE_ALREADY_COMPLETED') {
             _isSolved = true;
             _hasSubmitted = true;
             _feedback = 'Bu oturum zaten tamamlanmış.';
@@ -955,9 +949,9 @@ class PuzzlePageState extends State<PuzzlePage> {
   }
 
   Future<void> _finishPuzzle(
-    PuzzleActionResult data, {
-    required int generation,
-  }) async {
+      PuzzleActionResult data, {
+        required int generation,
+      }) async {
     if (!_isCurrentGeneration(generation) || _isSolved) return;
 
     _stopTimer();
@@ -1455,7 +1449,9 @@ class PuzzlePageState extends State<PuzzlePage> {
         setState(() {
           _isBonusLoading = false;
 
-          if (errorCode == 'BONUS_TIME_EXPIRED') {
+          if (errorCode == 'ANIMATION_IN_PROGRESS') {
+            _bonusFeedback = 'Rakip hamlesinin tamamlanmasını bekle.';
+          } else if (errorCode == 'BONUS_TIME_EXPIRED') {
             _bonusRemainingSeconds = 0;
             _isBonusExpired = true;
             _bonusFeedback = 'Bonus süresi doldu.';
@@ -1630,7 +1626,7 @@ class PuzzlePageState extends State<PuzzlePage> {
         _isBonusLoading = false;
         _bonusHintSquare = hintSquare;
         _bonusFeedback =
-            'İpucu: $_bonusHintSquare karesindeki taşı hareket ettir.';
+        'İpucu: $_bonusHintSquare karesindeki taşı hareket ettir.';
       });
     } catch (error, stackTrace) {
       _debugLog('Bonus ipucu hatası: $error');
@@ -1743,12 +1739,12 @@ class PuzzlePageState extends State<PuzzlePage> {
         ),
         leading: _isBonusMode
             ? IconButton(
-                onPressed: _isBonusSubmitting || _showBonusCompletionAnimation
-                    ? null
-                    : _returnToDailyPuzzle,
-                icon: const Icon(Icons.arrow_back),
-                tooltip: 'Günlük bulmacaya dön',
-              )
+          onPressed: _isBonusSubmitting || _showBonusCompletionAnimation
+              ? null
+              : _returnToDailyPuzzle,
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Günlük bulmacaya dön',
+        )
             : null,
         actions: [
           if (!_isBonusMode)
@@ -2035,7 +2031,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                         children: [
                           AbsorbPointer(
                             absorbing:
-                                _isBonusLoading ||
+                            _isBonusLoading ||
                                 _isBonusSubmitting ||
                                 _isBonusCompleted ||
                                 _showBonusCompletionAnimation,
@@ -2105,8 +2101,8 @@ class PuzzlePageState extends State<PuzzlePage> {
                                   Expanded(
                                     child: OutlinedButton.icon(
                                       onPressed:
-                                          _isBonusSubmitting ||
-                                              _showBonusCompletionAnimation
+                                      _isBonusSubmitting ||
+                                          _showBonusCompletionAnimation
                                           ? null
                                           : _returnToDailyPuzzle,
                                       icon: const Icon(Icons.arrow_back),
@@ -2204,8 +2200,8 @@ class PuzzlePageState extends State<PuzzlePage> {
             const SizedBox(height: 12),
             const Text(
               'Bonus bulmacayı çözerek ek puan kazanabilirsin. '
-              '5 dakikalık süren yalnızca başla butonuna '
-              'bastığında başlayacak.',
+                  '5 dakikalık süren yalnızca başla butonuna '
+                  'bastığında başlayacak.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white70,
@@ -2221,13 +2217,13 @@ class PuzzlePageState extends State<PuzzlePage> {
                 onPressed: _isBonusLoading ? null : _beginBonusPuzzle,
                 icon: _isBonusLoading
                     ? const SizedBox(
-                        width: 19,
-                        height: 19,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: _background,
-                        ),
-                      )
+                  width: 19,
+                  height: 19,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _background,
+                  ),
+                )
                     : const Icon(Icons.play_arrow_rounded, size: 27),
                 label: Text(
                   _isBonusLoading ? 'Başlatılıyor...' : 'Bonus Bulmacaya Başla',
@@ -2364,7 +2360,7 @@ class PuzzlePageState extends State<PuzzlePage> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '${_bonusScore ?? 0}',
+                  '${(_bonusScore ?? 0).round()}',
                   style: const TextStyle(
                     color: _secondary,
                     fontSize: 42,
@@ -2713,19 +2709,19 @@ class PuzzlePageState extends State<PuzzlePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Canlı puanın',
+                  'Çözüm puanın',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Süre, yanlış hamle ve ipuçlarına göre güncellenir.',
+                  'Sunucu çözüm tamamlandığında puanı hesaplar.',
                   style: TextStyle(fontSize: 11, color: Colors.white60),
                 ),
               ],
             ),
           ),
           Text(
-            '$_liveScore',
+            '—',
             style: const TextStyle(
               fontSize: 27,
               fontWeight: FontWeight.bold,
@@ -2928,7 +2924,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           Text(
             _isReplay
                 ? 'Bu oturumun puanı ayrıca hesaplandı. '
-                      'İlk günlük puanın ve liderlik tablosundaki kaydın korunuyor.'
+                'İlk günlük puanın ve liderlik tablosundaki kaydın korunuyor.'
                 : 'Günün bulmacasını başarıyla tamamladın.',
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 14, color: Colors.white70),
@@ -2978,11 +2974,11 @@ class PuzzlePageState extends State<PuzzlePage> {
       description = 'Bugünkü bonus bulmacanı tamamladın.';
     } else if (alreadyStarted) {
       description =
-          'Bonus denemen başlatıldı. Süre işlemeye devam ediyor. '
+      'Bonus denemen başlatıldı. Süre işlemeye devam ediyor. '
           'Başlatılmış bir deneme yeniden başlatılamaz.';
     } else {
       description =
-          'Hatasız çözümün sayesinde 5 dakikalık bonus bulmaca '
+      'Hatasız çözümün sayesinde 5 dakikalık bonus bulmaca '
           'hakkı kazandın. İstediğin zaman başlatabilirsin.';
     }
 
@@ -3060,7 +3056,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           if (alreadyClosed && _bonusScore != null) ...[
             const SizedBox(height: 12),
             Text(
-              'Bonus puanı: $_bonusScore',
+              'Bonus puanı: ${_bonusScore?.round() ?? 0}',
               style: const TextStyle(
                 color: _primary,
                 fontWeight: FontWeight.bold,
@@ -3099,7 +3095,7 @@ class PuzzlePageState extends State<PuzzlePage> {
           ),
           const SizedBox(height: 8),
           Text(
-            '${_sessionScore ?? 0}',
+            '${(_sessionScore ?? 0).round()}',
             style: const TextStyle(
               fontSize: 42,
               fontWeight: FontWeight.bold,
@@ -3125,7 +3121,7 @@ class PuzzlePageState extends State<PuzzlePage> {
             const SizedBox(height: 8),
             if (_acceptedScore != null)
               Text(
-                '$_acceptedScore',
+                '${_acceptedScore?.round() ?? 0}',
                 style: const TextStyle(
                   fontSize: 34,
                   fontWeight: FontWeight.bold,

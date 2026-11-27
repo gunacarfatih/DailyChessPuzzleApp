@@ -1,8 +1,9 @@
-﻿namespace DailyChessPuzzleApi.DTOs
+﻿
+namespace DailyChessPuzzleApi.DTOs
 {
     public class PuzzleSubmitResponse
     {
-        public int Score { get; set; }
+        public decimal Score { get; set; }
 
         public int Seconds { get; set; }
 

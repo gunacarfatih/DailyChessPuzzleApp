@@ -795,7 +795,7 @@ class ProfilePageState extends State<ProfilePage> {
               child: _buildStatisticCard(
                 icon: Icons.stars_rounded,
                 title: 'Toplam Puan',
-                value: totalScore.toString(),
+                value: totalScore.round().toString(),
                 color: const Color(0xFFD6B46A),
               ),
             ),

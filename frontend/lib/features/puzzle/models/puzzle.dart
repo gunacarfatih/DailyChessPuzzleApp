@@ -2,7 +2,7 @@ class Puzzle {
   final int id;
   final String difficulty;
   final bool isSolved;
-  final int? previousScore;
+  final double? previousScore;
 
   const Puzzle({
     required this.id,
@@ -15,12 +15,12 @@ class Puzzle {
     final rawPreviousScore =
         json['previousScore'] ?? json['PreviousScore'];
 
-    int? previousScore;
+    double? previousScore;
 
     if (rawPreviousScore is num) {
-      previousScore = rawPreviousScore.toInt();
+      previousScore = rawPreviousScore.toDouble();
     } else if (rawPreviousScore != null) {
-      previousScore = int.tryParse(
+      previousScore = double.tryParse(
         rawPreviousScore.toString(),
       );
     }

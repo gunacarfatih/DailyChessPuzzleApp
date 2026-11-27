@@ -2,31 +2,29 @@
 using System.Runtime.InteropServices;
 using System.Security.Claims;
 using System.Text;
-
+using System.Threading.RateLimiting;
 using DailyChessPuzzleApi.Data;
+using DailyChessPuzzleApi.HealthChecks;
+using DailyChessPuzzleApi.Hubs;
 using DailyChessPuzzleApi.Middlewares;
 using DailyChessPuzzleApi.Models;
 using DailyChessPuzzleApi.Responses;
 using DailyChessPuzzleApi.Services;
 using DailyChessPuzzleApi.Services.Interfaces;
 using DailyChessPuzzleApi.Settings;
-using DailyChessPuzzleApi.Hubs;
-using DailyChessPuzzleApi.HealthChecks;
-
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
-
 using ReusableCaching.Extensions;
 using Serilog;
 using StackExchange.Redis;
-using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -446,6 +444,17 @@ builder.Services.AddSwaggerGen(options =>
             }
         });
 });
+
+builder.Services.AddSingleton<
+    IValidateOptions<ScoringSettings>,
+    ScoringSettingsValidator>();
+
+builder.Services.AddOptions<ScoringSettings>()
+    .Bind(builder.Configuration.GetRequiredSection(
+        ScoringSettings.SectionName))
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<IScoringService, ScoringService>();
 
 // --------------------------------------------------
 // APPLICATION PIPELINE

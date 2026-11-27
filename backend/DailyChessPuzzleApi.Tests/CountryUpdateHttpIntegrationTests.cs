@@ -727,7 +727,7 @@ public sealed class CountryUpdateHttpIntegrationTests
             DateTime.UtcNow.AddHours(-25));
 
         int firstSessionId;
-        int originalScore;
+        decimal originalScore;
 
         await using (var context = db.CreateContext())
         {
@@ -1439,7 +1439,7 @@ public sealed class CountryUpdateHttpIntegrationTests
             solved: true);
 
         const int expectedSeconds = 60;
-        const int expectedScore = 880;
+        const decimal expectedScore = 788.2353m;
 
         await using (var submitContext = db.CreateContext())
         {
@@ -1945,6 +1945,13 @@ public sealed class CountryUpdateHttpIntegrationTests
         assignment.CompletedAtUtc = solved
             ? startedAt.AddSeconds(60)
             : null;
+
+        assignment.TotalElapsedMilliseconds = solved ? 60_000L : null;
+        assignment.CompensatedOpponentMoves = 0;
+        assignment.ServerCompensationMilliseconds = 0;
+        assignment.AnimationCompensationMilliseconds = null;
+        assignment.AdjustedElapsedMilliseconds = null;
+        assignment.NextMoveAllowedAtUtc = null;
 
         await context.SaveChangesAsync();
     }

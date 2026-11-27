@@ -12,8 +12,8 @@ namespace DailyChessPuzzleApi.DTOs
         // Kayıtlı kullanıcının kullanıcı adı.
         public string Username { get; set; } = string.Empty;
 
-        // Toplam puan.
-        public int TotalScore { get; set; }
+        // Dört ondalık basamak hassasiyetindeki toplam puan.
+        public decimal TotalScore { get; set; }
 
         // Çözülen bulmaca sayısı.
         public int SolvedCount { get; set; }

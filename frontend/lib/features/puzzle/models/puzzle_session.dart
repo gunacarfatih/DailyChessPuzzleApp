@@ -10,7 +10,7 @@ class PuzzleSession {
   final bool isCompleted;
   final DateTime? startedAtUtc;
   final String? hintSquare;
-  final int? score;
+  final double? score;
 
   const PuzzleSession({
     required this.sessionId,
@@ -32,8 +32,8 @@ class PuzzleSession {
         json[key] ?? json['${key[0].toUpperCase()}${key.substring(1)}'];
     int asInt(String key, [int fallback = 0]) =>
         (read(key) as num?)?.toInt() ??
-        int.tryParse('${read(key)}') ??
-        fallback;
+            int.tryParse('${read(key)}') ??
+            fallback;
 
     final moves = read('playedMoves');
     final started = read('startedAtUtc');
@@ -53,7 +53,7 @@ class PuzzleSession {
           ? null
           : DateTime.tryParse('$started')?.toUtc(),
       hintSquare: read('hintSquare')?.toString(),
-      score: int.tryParse('${read('score')}'),
+      score: double.tryParse('${read('score')}'),
     );
   }
 }

@@ -217,6 +217,7 @@ namespace DailyChessPuzzleApi.Data
             // PUZZLE GAME SESSION
             modelBuilder.Entity<PuzzleGameSession>(entity =>
             {
+                entity.Property(x => x.CompletedScore).HasPrecision(18, 4);
                 entity.HasKey(x => x.Id);
 
                 entity.Property(x => x.CountryCode)
@@ -321,6 +322,9 @@ namespace DailyChessPuzzleApi.Data
                     x.CountryCode,
                     x.PlayedOn
                 });
+
+                entity.Property(x => x.Score)
+                    .HasPrecision(18, 4);
             });
 
             // LEADERBOARD CACHE OUTBOX
@@ -425,6 +429,9 @@ namespace DailyChessPuzzleApi.Data
                 })
                 .IsUnique()
                 .HasFilter("\"CountryCode\" IS NOT NULL");
+
+                entity.Property(x => x.TotalScore)
+                    .HasPrecision(18, 4);
             });
 
             // LEADERBOARD SCORE
@@ -493,6 +500,9 @@ namespace DailyChessPuzzleApi.Data
                     .WithMany()
                     .HasForeignKey(x => x.UserId)
                     .OnDelete(DeleteBehavior.SetNull);
+
+                entity.Property(x => x.TotalScore)
+                    .HasPrecision(18, 4);
             });
         }
     }

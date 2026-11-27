@@ -20,7 +20,7 @@ namespace DailyChessPuzzleApi.Models
         public string? CountryCode { get; set; }
 
         // Kullanıcının ilgili dönemdeki toplam puanı.
-        public int TotalScore { get; set; }
+        public decimal TotalScore { get; set; }
 
         // Kullanıcının ilgili dönemde çözdüğü bulmaca sayısı.
         public int SolvedCount { get; set; }

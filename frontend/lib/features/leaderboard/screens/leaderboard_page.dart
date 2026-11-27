@@ -527,7 +527,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
         ),
         const SizedBox(height: 3),
         Text(
-          '${entry.totalScore} puan',
+          '${entry.totalScore.round()} puan',
           style: TextStyle(
             fontSize: isFirst ? 13 : 11,
             fontWeight: FontWeight.bold,
@@ -731,7 +731,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
             ),
           ),
           Text(
-            '${entry.totalScore}',
+            '${entry.totalScore.round()}',
             style: TextStyle(
               fontSize: isCurrentUser ? 18 : 16,
               fontWeight: FontWeight.bold,
@@ -837,7 +837,7 @@ class LeaderboardPageState extends State<LeaderboardPage> {
                 ),
               ),
               Text(
-                '${entry.totalScore} puan',
+                '${entry.totalScore.round()} puan',
                 style: const TextStyle(
                   color: Color(0xFFB7D7A8),
                   fontWeight: FontWeight.bold,

@@ -27,7 +27,7 @@ namespace DailyChessPuzzleApi.DTOs
 
         public int? RemainingSeconds { get; set; }
 
-        public int? Score { get; set; }
+        public decimal? Score { get; set; }
 
         public string? HintSquare { get; set; }
     }

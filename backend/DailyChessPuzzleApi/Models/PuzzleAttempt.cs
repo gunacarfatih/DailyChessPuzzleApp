@@ -23,7 +23,7 @@ namespace DailyChessPuzzleApi.Models
 
         public bool UsedHint { get; set; }
 
-        public int Score { get; set; }
+        public decimal Score { get; set; }
 
         public string? CountryCode { get; set; }
 

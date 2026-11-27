@@ -1,5 +1,8 @@
 ﻿
 using System.Globalization;
+using System.Diagnostics;
+using DailyChessPuzzleApi.Settings;
+using Microsoft.Extensions.Options;
 using DailyChessPuzzleApi.Data;
 using DailyChessPuzzleApi.DTOs;
 using DailyChessPuzzleApi.Models;
@@ -12,24 +15,30 @@ namespace DailyChessPuzzleApi.Services
 {
     public class PuzzleService : IPuzzleService
     {
-        private const int BonusDurationSeconds = 300;
+        private int BonusDurationSeconds => _scoringSettings.BonusTimeLimitSeconds;
         private const int BonusMinimumRating = 2500;
 
         private readonly ApplicationDbContext _context;
         private readonly ILogger<PuzzleService> _logger;
         private readonly IDailyPuzzleService _dailyPuzzleService;
         private readonly LeaderboardOutboxSignal? _outboxSignal;
+        private readonly ScoringSettings _scoringSettings;
+        private readonly IScoringService _scoringService;
 
         public PuzzleService(
             ApplicationDbContext context,
             ILogger<PuzzleService> logger,
             IDailyPuzzleService dailyPuzzleService,
-            LeaderboardOutboxSignal? outboxSignal = null)
+            LeaderboardOutboxSignal? outboxSignal = null,
+            IOptions<ScoringSettings>? scoringOptions = null,
+            IScoringService? scoringService = null)
         {
             _context = context;
             _logger = logger;
             _dailyPuzzleService = dailyPuzzleService;
             _outboxSignal = outboxSignal;
+            _scoringSettings = scoringOptions?.Value ?? new ScoringSettings();
+            _scoringService = scoringService ?? new ScoringService(Options.Create(_scoringSettings));
         }
 
         // ---------------------------------------------------------
@@ -154,7 +163,7 @@ namespace DailyChessPuzzleApi.Services
 
             var moves = GetMoves(puzzle.Moves);
 
-            if (moves.Length == 0)
+            if (moves.Length < 2)
                 throw new AppException(500, "PUZZLE_MOVES_INVALID");
 
             string? countryCode = null;
@@ -219,6 +228,7 @@ namespace DailyChessPuzzleApi.Services
             int? userId,
             CancellationToken cancellationToken = default)
         {
+            var receivedAtUtc = DateTime.UtcNow;
             var clientId = NormalizeClientId(request.ClientId);
 
             if (!userId.HasValue && clientId == null)
@@ -265,7 +275,7 @@ namespace DailyChessPuzzleApi.Services
 
                 var moves = GetMoves(session.Puzzle.Moves);
 
-                if (moves.Length == 0)
+                if (moves.Length < 2)
                     throw new AppException(500, "PUZZLE_MOVES_INVALID");
 
                 if (session.CurrentMoveIndex == 0)
@@ -274,7 +284,7 @@ namespace DailyChessPuzzleApi.Services
                 if (session.CurrentMoveIndex >= moves.Length)
                 {
                     session.IsCompleted = true;
-                    session.CompletedAtUtc = DateTime.UtcNow;
+                    RecordDailyCompletionTime(session, receivedAtUtc);
 
                     await _context.SaveChangesAsync(cancellationToken);
 
@@ -310,6 +320,8 @@ namespace DailyChessPuzzleApi.Services
                     }
                 }
 
+                EnsureMoveAllowed(session.NextMoveAllowedAtUtc, receivedAtUtc);
+                var processingStarted = Stopwatch.GetTimestamp();
                 var expectedMove = moves[session.CurrentMoveIndex];
 
                 if (!string.Equals(
@@ -336,12 +348,18 @@ namespace DailyChessPuzzleApi.Services
                 {
                     session.CurrentMoveIndex = moves.Length;
                     session.IsCompleted = true;
-                    session.CompletedAtUtc = DateTime.UtcNow;
+                    RecordDailyCompletionTime(session, receivedAtUtc);
+                }
+                else
+                {
+                    session.ServerCompensationMilliseconds = AddServerCompensation(session.ServerCompensationMilliseconds, processingStarted);
+                    session.CompensatedOpponentMoves++;
+                    session.NextMoveAllowedAtUtc = DateTime.UtcNow.AddMilliseconds(_scoringSettings.OpponentAnimationCompensationMilliseconds);
                 }
 
                 await _context.SaveChangesAsync(cancellationToken);
 
-                int? score = null;
+                decimal? score = null;
                 bool outboxCreatedForMove = false;
 
                 if (session.IsCompleted)
@@ -407,6 +425,7 @@ namespace DailyChessPuzzleApi.Services
 
                 if (!session.IsCompleted)
                 {
+                    EnsureMoveAllowed(session.NextMoveAllowedAtUtc, DateTime.UtcNow);
                     var moves = GetMoves(session.Puzzle.Moves);
 
                     if (session.CurrentMoveIndex < moves.Length)
@@ -533,7 +552,10 @@ namespace DailyChessPuzzleApi.Services
             int userId,
             CancellationToken cancellationToken = default)
         {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var receivedAtUtc = DateTime.UtcNow;
+            var today = DateOnly.FromDateTime(receivedAtUtc);
+            if (string.IsNullOrWhiteSpace(request.Uci))
+                throw new ArgumentException("INVALID_MOVE");
 
             await using var transaction =
                 await _context.Database.BeginTransactionAsync(
@@ -558,11 +580,12 @@ namespace DailyChessPuzzleApi.Services
                 if (!assignment.StartedAtUtc.HasValue)
                     throw new AppException(409, "BONUS_NOT_STARTED");
 
-                var now = DateTime.UtcNow;
+                var now = receivedAtUtc;
 
                 if (IsBonusTimeExpired(assignment, now))
                 {
                     await transaction.RollbackAsync(cancellationToken);
+                    await transaction.DisposeAsync();
 
                     _context.ChangeTracker.Clear();
 
@@ -573,12 +596,12 @@ namespace DailyChessPuzzleApi.Services
 
                 var moves = GetMoves(assignment.Puzzle.Moves);
 
-                if (moves.Length == 0)
+                if (moves.Length < 2)
                     throw new AppException(500, "PUZZLE_MOVES_INVALID");
 
                 if (assignment.CurrentMoveIndex >= moves.Length)
                 {
-                    assignment.CompletedAtUtc = now;
+                    RecordBonusCompletionTime(assignment, now);
 
                     await _context.SaveChangesAsync(cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
@@ -603,6 +626,8 @@ namespace DailyChessPuzzleApi.Services
                     }
                 }
 
+                EnsureMoveAllowed(assignment.NextMoveAllowedAtUtc, receivedAtUtc);
+                var processingStarted = Stopwatch.GetTimestamp();
                 var expectedMove = moves[assignment.CurrentMoveIndex];
 
                 if (!string.Equals(
@@ -622,7 +647,13 @@ namespace DailyChessPuzzleApi.Services
                     if (assignment.CurrentMoveIndex >= moves.Length)
                     {
                         assignment.CurrentMoveIndex = moves.Length;
-                        assignment.CompletedAtUtc = now;
+                        RecordBonusCompletionTime(assignment, now);
+                    }
+                    else
+                    {
+                        assignment.ServerCompensationMilliseconds = AddServerCompensation(assignment.ServerCompensationMilliseconds, processingStarted);
+                        assignment.CompensatedOpponentMoves++;
+                        assignment.NextMoveAllowedAtUtc = DateTime.UtcNow.AddMilliseconds(_scoringSettings.OpponentAnimationCompensationMilliseconds);
                     }
                 }
 
@@ -674,6 +705,7 @@ namespace DailyChessPuzzleApi.Services
                 if (IsBonusTimeExpired(assignment))
                 {
                     await transaction.RollbackAsync(cancellationToken);
+                    await transaction.DisposeAsync();
 
                     _context.ChangeTracker.Clear();
 
@@ -682,6 +714,7 @@ namespace DailyChessPuzzleApi.Services
                     throw new AppException(409, "BONUS_TIME_EXPIRED");
                 }
 
+                EnsureMoveAllowed(assignment.NextMoveAllowedAtUtc, DateTime.UtcNow);
                 var moves = GetMoves(assignment.Puzzle.Moves);
 
                 string? hintSquare = null;
@@ -783,6 +816,7 @@ namespace DailyChessPuzzleApi.Services
                     if (!IsBonusTimeExpired(assignment, now))
                         throw new AppException(409, "BONUS_NOT_SOLVED");
 
+                    CalculateBonusScore(assignment, now, false);
                     assignment.IsCompleted = true;
 
                     await _context.SaveChangesAsync(cancellationToken);
@@ -797,36 +831,26 @@ namespace DailyChessPuzzleApi.Services
                     };
                 }
 
-                var elapsed = (
-                    assignment.CompletedAtUtc.Value -
-                    assignment.StartedAtUtc.Value
-                ).TotalSeconds;
+                var result = CalculateBonusScore(assignment, assignment.CompletedAtUtc.Value, true);
 
-                if (elapsed >= BonusDurationSeconds)
+                if (!result.IsSuccessful)
                 {
                     assignment.IsCompleted = true;
-
                     await _context.SaveChangesAsync(cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
 
                     return new BonusPuzzleSubmitResponse
                     {
-                        Score = 0,
+                        Score = 0m,
                         Seconds = BonusDurationSeconds,
                         IsCompleted = true,
                         Message = "Bonus süresi doldu."
                     };
                 }
 
-                var seconds = Math.Clamp(
-                    (int)Math.Ceiling(elapsed),
-                    0,
-                    BonusDurationSeconds);
-
-                int score = DailyPuzzleScoreCalculator.Calculate(
-                    seconds,
-                    assignment.WrongMoves,
-                    assignment.UsedHint);
+                var seconds = (int)Math.Min(BonusDurationSeconds,
+                    Math.Ceiling(result.TotalElapsedMilliseconds / 1000m));
+                decimal score = result.Score;
 
                 var userExists = await _context.Users
                     .AnyAsync(
@@ -896,7 +920,7 @@ namespace DailyChessPuzzleApi.Services
         // GÜNLÜK OTURUMU SONUÇLANDIRMA
         // ---------------------------------------------------------
 
-        private async Task<(int Score, bool OutboxCreated)> FinalizeDailySessionAsync(
+        private async Task<(decimal Score, bool OutboxCreated)> FinalizeDailySessionAsync(
             PuzzleGameSession session,
             DateOnly today,
             CancellationToken cancellationToken)
@@ -905,7 +929,8 @@ namespace DailyChessPuzzleApi.Services
                 throw new AppException(409, "SESSION_NOT_COMPLETED");
 
             // Her oturum kendi puanını alır.
-            int score = CalculateDailySessionScore(session);
+            decimal score = CalculateDailySessionScore(session);
+            await _context.SaveChangesAsync(cancellationToken);
 
             // Aynı bulmacayı tamamlayan oturumları sıraya al.
             // Kilit transaction tamamlanana kadar tutulur.
@@ -1024,31 +1049,113 @@ namespace DailyChessPuzzleApi.Services
         // GÜNLÜK PUAN HESAPLAMA
         // ---------------------------------------------------------
 
+        private static void EnsureMoveAllowed(DateTime? allowedAtUtc, DateTime receivedAtUtc)
+        {
+            if (allowedAtUtc.HasValue && receivedAtUtc < allowedAtUtc.Value)
+                throw new AppException(409, "ANIMATION_IN_PROGRESS");
+        }
+
+        private long AddServerCompensation(long accumulated, long started)
+        {
+            var elapsed = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            return Math.Min(_scoringSettings.MaximumServerCompensationPerSessionMilliseconds,
+                accumulated + Math.Min(elapsed, _scoringSettings.MaximumServerCompensationPerRequestMilliseconds));
+        }
+
+        private static void RecordBonusCompletionTime(BonusPuzzleAssignment assignment, DateTime receivedAtUtc)
+        {
+            var started = assignment.StartedAtUtc!.Value;
+            assignment.CompletedAtUtc ??= receivedAtUtc < started ? started : receivedAtUtc;
+            assignment.TotalElapsedMilliseconds ??= Math.Max(0L,
+                (assignment.CompletedAtUtc.Value - started).Ticks / TimeSpan.TicksPerMillisecond);
+        }
+
+        private static void RecordDailyCompletionTime(
+            PuzzleGameSession session,
+            DateTime receivedAtUtc)
+        {
+            session.CompletedAtUtc ??= receivedAtUtc < session.StartedAtUtc
+                ? session.StartedAtUtc
+                : receivedAtUtc;
+
+            session.TotalElapsedMilliseconds ??= Math.Max(
+                0L,
+                (session.CompletedAtUtc.Value - session.StartedAtUtc).Ticks
+                    / TimeSpan.TicksPerMillisecond);
+        }
+
         private static int CalculateDailySessionSeconds(
             PuzzleGameSession session)
         {
-            var completedAt =
-                session.CompletedAtUtc ?? DateTime.UtcNow;
+            long milliseconds = session.TotalElapsedMilliseconds ??
+                Math.Max(0L,
+                    ((session.CompletedAtUtc ?? DateTime.UtcNow) -
+                     session.StartedAtUtc).Ticks / TimeSpan.TicksPerMillisecond);
 
-            var elapsed = (
-                completedAt - session.StartedAtUtc
-            ).TotalSeconds;
-
-            return Math.Max(
-                0,
-                (int)Math.Min(
-                    int.MaxValue,
-                    Math.Ceiling(elapsed)));
+            return (int)Math.Min(
+                int.MaxValue,
+                Math.Ceiling(milliseconds / 1000m));
         }
 
-        private static int CalculateDailySessionScore(
-            PuzzleGameSession session)
+        private ScoringResult CalculateBonusScore(
+            BonusPuzzleAssignment assignment, DateTime endAtUtc, bool solved)
         {
-            var seconds = CalculateDailySessionSeconds(session);
-            return DailyPuzzleScoreCalculator.Calculate(
-                seconds,
-                session.WrongMoves,
-                session.UsedHint);
+            int requiredPlayerMoves = GetMoves(assignment.Puzzle.Moves).Length / 2;
+            if (requiredPlayerMoves <= 0)
+                throw new AppException(500, "PUZZLE_MOVES_INVALID");
+
+            long elapsed = assignment.TotalElapsedMilliseconds ?? Math.Max(0L,
+                (endAtUtc - assignment.StartedAtUtc!.Value).Ticks / TimeSpan.TicksPerMillisecond);
+
+            var result = _scoringService.Calculate(new ScoringInput
+            {
+                Rating = assignment.Puzzle.Rating,
+                RequiredPlayerMoves = requiredPlayerMoves,
+                WrongMoves = assignment.WrongMoves,
+                UsedHint = assignment.UsedHint,
+                TotalElapsedMilliseconds = elapsed,
+                CompensatedOpponentMoves = assignment.CompensatedOpponentMoves,
+                ServerCompensationMilliseconds = assignment.ServerCompensationMilliseconds,
+                IsCompleted = solved,
+                IsBonus = true
+            });
+
+            assignment.TotalElapsedMilliseconds = result.TotalElapsedMilliseconds;
+            assignment.AnimationCompensationMilliseconds = result.AnimationCompensationMilliseconds;
+            assignment.AdjustedElapsedMilliseconds = result.AdjustedElapsedMilliseconds;
+            return result;
+        }
+
+        private decimal CalculateDailySessionScore(PuzzleGameSession session)
+        {
+            if (session.CompletedScore.HasValue) return session.CompletedScore.Value;
+            var moves = GetMoves(session.Puzzle.Moves);
+            int requiredPlayerMoves = moves.Length / 2;
+            if (requiredPlayerMoves <= 0)
+                throw new AppException(500, "PUZZLE_MOVES_INVALID");
+
+            long elapsed = session.TotalElapsedMilliseconds ?? Math.Max(0L,
+                ((session.CompletedAtUtc ?? session.StartedAtUtc) -
+                 session.StartedAtUtc).Ticks / TimeSpan.TicksPerMillisecond);
+
+            var result = _scoringService.Calculate(new ScoringInput
+            {
+                Rating = session.Puzzle.Rating,
+                RequiredPlayerMoves = requiredPlayerMoves,
+                WrongMoves = session.WrongMoves,
+                UsedHint = session.UsedHint,
+                TotalElapsedMilliseconds = elapsed,
+                CompensatedOpponentMoves = session.CompensatedOpponentMoves,
+                ServerCompensationMilliseconds = session.ServerCompensationMilliseconds,
+                IsCompleted = session.IsCompleted,
+                IsBonus = false
+            });
+
+            session.TotalElapsedMilliseconds ??= result.TotalElapsedMilliseconds;
+            session.AnimationCompensationMilliseconds = result.AnimationCompensationMilliseconds;
+            session.AdjustedElapsedMilliseconds = result.AdjustedElapsedMilliseconds;
+            session.CompletedScore = result.Score;
+            return result.Score;
         }
 
         // ---------------------------------------------------------
@@ -1304,7 +1411,7 @@ namespace DailyChessPuzzleApi.Services
                 return;
 
             string cacheKey =
-                $"DailyChessPuzzle_leaderboard:v2:{period}:{periodKey}:{countryCode ?? "global"}";
+                $"DailyChessPuzzle_leaderboard:v3:{period}:{periodKey}:{countryCode ?? "global"}";
 
             var delivery = new LeaderboardCacheOutboxDelivery
             {
@@ -1477,7 +1584,7 @@ namespace DailyChessPuzzleApi.Services
         private PuzzleSessionResponse ToSessionResponse(
             PuzzleGameSession session,
             string? hintSquare = null,
-            int? score = null)
+            decimal? score = null)
         {
             var moves = GetMoves(session.Puzzle.Moves);
 
@@ -1503,7 +1610,7 @@ namespace DailyChessPuzzleApi.Services
             };
         }
 
-        private static PuzzleSessionResponse ToBonusSessionResponse(
+        private PuzzleSessionResponse ToBonusSessionResponse(
             BonusPuzzleAssignment assignment,
             string? hintSquare = null)
         {
@@ -1530,7 +1637,7 @@ namespace DailyChessPuzzleApi.Services
             };
         }
 
-        private static bool IsBonusTimeExpired(
+        private bool IsBonusTimeExpired(
             BonusPuzzleAssignment assignment,
             DateTime? currentTimeUtc = null)
         {
@@ -1552,7 +1659,7 @@ namespace DailyChessPuzzleApi.Services
             ).TotalSeconds >= BonusDurationSeconds;
         }
 
-        private static int GetBonusRemainingSeconds(
+        private int GetBonusRemainingSeconds(
             BonusPuzzleAssignment assignment)
         {
             if (!assignment.StartedAtUtc.HasValue)
@@ -1572,7 +1679,7 @@ namespace DailyChessPuzzleApi.Services
                 BonusDurationSeconds);
         }
 
-        private static BonusPuzzleResponse CreateBonusResponse(
+        private BonusPuzzleResponse CreateBonusResponse(
             BonusPuzzleAssignment assignment)
         {
             var moves = GetMoves(assignment.Puzzle.Moves);

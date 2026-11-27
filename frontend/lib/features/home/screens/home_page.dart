@@ -25,7 +25,7 @@ class HomePageState extends State<HomePage> {
 
   bool _isLoadingStats = true;
 
-  int _totalScore = 0;
+  double _totalScore = 0;
   int _solvedCount = 0;
   int? _rank;
 
@@ -353,7 +353,7 @@ class HomePageState extends State<HomePage> {
           child: _buildStatisticCard(
             icon: Icons.stars_rounded,
             title: 'Toplam Puan',
-            value: _isLoadingStats ? '...' : '$_totalScore',
+            value: _isLoadingStats ? '...' : '${_totalScore.round()}',
             color: const Color(0xFFD6B46A),
           ),
         ),

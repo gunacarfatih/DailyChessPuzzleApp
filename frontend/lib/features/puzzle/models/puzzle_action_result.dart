@@ -7,7 +7,7 @@ class PuzzleActionResult {
   final bool isCompleted;
   final bool isExpired;
   final String? hintSquare;
-  final int? score;
+  final double? score;
 
   const PuzzleActionResult({
     required this.playedMoves,
@@ -39,7 +39,7 @@ class PuzzleActionResult {
       isCompleted: read('isCompleted') == true,
       isExpired: read('isExpired') == true,
       hintSquare: read('hintSquare')?.toString(),
-      score: asInt(read('score')) ?? asInt(read('totalScore')),
+      score: double.tryParse('${read('score')}') ?? double.tryParse('${read('totalScore')}'),
     );
   }
 }

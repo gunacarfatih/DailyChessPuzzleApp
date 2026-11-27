@@ -23,11 +23,29 @@
 
         public bool UsedHint { get; set; }
 
-        // Bonus bulmaca ilk açıldığında sunucu tarafından atanır.
+        // Bonus bulmacanın sunucu tarafındaki başlangıç zamanı.
         public DateTime? StartedAtUtc { get; set; }
 
-        // Bonus tamamlandığında sunucu tarafından atanır.
+        // Son doğru hamlenin sunucu tarafındaki zamanı.
         public DateTime? CompletedAtUtc { get; set; }
+
+        // Telafi uygulanabilecek rakip hamlesi sayısı.
+        public int CompensatedOpponentMoves { get; set; }
+
+        // Birikmiş sunucu işlem süresi telafisi.
+        public long ServerCompensationMilliseconds { get; set; }
+
+        // Zorunlu animasyonun bitiş zamanı.
+        public DateTime? NextMoveAllowedAtUtc { get; set; }
+
+        // Oturumun toplam geçen süresi.
+        public long? TotalElapsedMilliseconds { get; set; }
+
+        // Puanlama sırasında uygulanan animasyon telafisi.
+        public long? AnimationCompensationMilliseconds { get; set; }
+
+        // Puanlamada kullanılan net çözüm süresi.
+        public long? AdjustedElapsedMilliseconds { get; set; }
 
         // Bonus sonucu kaydedildi mi?
         public bool IsCompleted { get; set; }

@@ -268,7 +268,7 @@ public sealed class LeaderboardCountryIntegrationTests
 
     private static void AssertPeriod(
         LeaderboardPeriodDto period,
-        int expectedScore,
+        decimal expectedScore,
         int expectedSolvedCount)
     {
         var ranking = Assert.Single(period.Rankings);
@@ -394,7 +394,7 @@ public sealed class LeaderboardCountryIntegrationTests
     private static LeaderboardScore CreateScore(
         int userId,
         string? countryCode,
-        int totalScore,
+        decimal totalScore,
         int solvedCount)
     {
         return new LeaderboardScore

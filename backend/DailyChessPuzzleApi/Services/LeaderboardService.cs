@@ -1,5 +1,4 @@
-﻿
-using System.Globalization;
+﻿using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -23,7 +22,7 @@ namespace DailyChessPuzzleApi.Services
         private readonly LeaderboardSettings _settings;
 
         private const string CachePrefix =
-            "DailyChessPuzzle_leaderboard:v2";
+            "DailyChessPuzzle_leaderboard:v3";
 
         private const int CachePageSize = 50;
 
@@ -234,7 +233,7 @@ namespace DailyChessPuzzleApi.Services
             string cacheKey =
                 $"{CachePrefix}:{period}:{periodKey}:{country ?? "global"}";
 
-            List<(string ClientId, int TotalScore, int SolvedCount)> topEntries;
+            List<(string ClientId, decimal TotalScore, int SolvedCount)> topEntries;
 
             try
             {
@@ -318,14 +317,14 @@ namespace DailyChessPuzzleApi.Services
         /// Users tablosunda bulunmayan kullanıcıları atlar.
         /// İstenen sayıda kayıtlı kullanıcı bulunana kadar okumaya devam eder.
         /// </summary>
-        private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
+        private async Task<List<(string ClientId, decimal TotalScore, int SolvedCount)>>
             GetTopFromCacheAsync(
                 string cacheKey,
                 int limit,
                 CancellationToken cancellationToken)
         {
             var result =
-                new List<(string ClientId, int TotalScore, int SolvedCount)>();
+                new List<(string ClientId, decimal TotalScore, int SolvedCount)>();
 
             var addedClientIds = new HashSet<string>(
                 StringComparer.Ordinal);
@@ -403,7 +402,7 @@ namespace DailyChessPuzzleApi.Services
             int limit,
             CancellationToken cancellationToken)
         {
-            List<(string ClientId, int TotalScore, int SolvedCount)> topEntries;
+            List<(string ClientId, decimal TotalScore, int SolvedCount)> topEntries;
 
             var dailyKeys = new List<string>();
             var versionKeys = new List<string>();
@@ -559,7 +558,7 @@ namespace DailyChessPuzzleApi.Services
                 cacheEntries.Count);
         }
 
-        private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
+        private async Task<List<(string ClientId, decimal TotalScore, int SolvedCount)>>
             GetCustomRangeTopFromDatabaseAsync(
                 DateOnly startDate,
                 DateOnly endDate,
@@ -597,8 +596,7 @@ namespace DailyChessPuzzleApi.Services
                     SolvedCount = group.Count()
                 })
                 .OrderByDescending(x => x.TotalScore)
-                .ThenByDescending(x => x.SolvedCount)
-                .ThenBy(x => x.UserId)
+                .ThenBy(x => "user:" + x.UserId)
                 .Take(limit)
                 .ToListAsync(cancellationToken);
 
@@ -681,12 +679,7 @@ namespace DailyChessPuzzleApi.Services
                 });
 
             int usersAhead = await groupedEntries.CountAsync(
-                x =>
-                    x.TotalScore > userEntry.TotalScore ||
-                    (
-                        x.TotalScore == userEntry.TotalScore &&
-                        x.SolvedCount > userEntry.SolvedCount
-                    ),
+                x => x.TotalScore > userEntry.TotalScore,
                 cancellationToken);
 
             return await CreateEntryAsync(
@@ -698,7 +691,7 @@ namespace DailyChessPuzzleApi.Services
         }
 
         private async Task<List<LeaderboardEntryDto>> CreateRankingsAsync(
-            List<(string ClientId, int TotalScore, int SolvedCount)> entries,
+            List<(string ClientId, decimal TotalScore, int SolvedCount)> entries,
             CancellationToken cancellationToken)
         {
             var userIds = entries
@@ -727,8 +720,7 @@ namespace DailyChessPuzzleApi.Services
             int currentRank = 0;
             int visiblePosition = 0;
 
-            int previousScore = -1;
-            int previousSolvedCount = -1;
+            decimal previousScore = -1;
 
             foreach (var entry in entries)
             {
@@ -743,10 +735,9 @@ namespace DailyChessPuzzleApi.Services
 
                 visiblePosition++;
 
-                // Eşit puan ve çözüm sayısına sahip kullanıcılar aynı sırayı alır.
+                // Eşit puana sahip kullanıcılar aynı sırayı alır.
                 if (visiblePosition == 1 ||
-                    entry.TotalScore != previousScore ||
-                    entry.SolvedCount != previousSolvedCount)
+                    entry.TotalScore != previousScore)
                 {
                     currentRank = visiblePosition;
                 }
@@ -761,7 +752,6 @@ namespace DailyChessPuzzleApi.Services
                 });
 
                 previousScore = entry.TotalScore;
-                previousSolvedCount = entry.SolvedCount;
             }
 
             return rankings;
@@ -769,7 +759,7 @@ namespace DailyChessPuzzleApi.Services
 
         private async Task<LeaderboardEntryDto?> CreateEntryAsync(
             int userId,
-            int totalScore,
+            decimal totalScore,
             int solvedCount,
             int rank,
             CancellationToken cancellationToken)
@@ -841,12 +831,7 @@ namespace DailyChessPuzzleApi.Services
             }
 
             int usersAhead = await query.CountAsync(
-                x =>
-                    x.TotalScore > userEntry.TotalScore ||
-                    (
-                        x.TotalScore == userEntry.TotalScore &&
-                        x.SolvedCount > userEntry.SolvedCount
-                    ),
+                x => x.TotalScore > userEntry.TotalScore,
                 cancellationToken);
 
             return await CreateEntryAsync(
@@ -857,7 +842,7 @@ namespace DailyChessPuzzleApi.Services
                 cancellationToken);
         }
 
-        private async Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
+        private async Task<List<(string ClientId, decimal TotalScore, int SolvedCount)>>
             GetTopFromDatabaseAsync(
                 string period,
                 string periodKey,
@@ -876,7 +861,6 @@ namespace DailyChessPuzzleApi.Services
                     score.CountryCode == country
                 orderby
                     score.TotalScore descending,
-                    score.SolvedCount descending,
                     score.ClientId
                 select new
                 {

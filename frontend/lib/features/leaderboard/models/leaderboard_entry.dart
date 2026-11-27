@@ -3,7 +3,7 @@ class LeaderboardEntry {
   final int rank;
   final String publicId;
   final String username;
-  final int totalScore;
+  final double totalScore;
   final int solvedCount;
 
   const LeaderboardEntry({
@@ -19,7 +19,7 @@ class LeaderboardEntry {
       rank: (json['rank'] as num?)?.toInt() ?? 0,
       publicId: json['publicId']?.toString() ?? '',
       username: json['username']?.toString() ?? '',
-      totalScore: (json['totalScore'] as num?)?.toInt() ?? 0,
+      totalScore: double.tryParse('${json['totalScore']}') ?? 0,
       solvedCount: (json['solvedCount'] as num?)?.toInt() ?? 0,
     );
   }

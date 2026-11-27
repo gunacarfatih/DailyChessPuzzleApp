@@ -16,7 +16,7 @@ class BonusPuzzle {
   final DateTime? startedAtUtc;
   final DateTime? completedAtUtc;
   final int? remainingSeconds;
-  final int? score;
+  final double? score;
 
   const BonusPuzzle({
     required this.isEligible,
@@ -85,7 +85,7 @@ class BonusPuzzle {
       remainingSeconds: parseInt(
         json['remainingSeconds'] ?? json['RemainingSeconds'],
       ),
-      score: parseInt(json['score'] ?? json['Score']),
+      score: double.tryParse('${json['score'] ?? json['Score']}'),
     );
   }
 }

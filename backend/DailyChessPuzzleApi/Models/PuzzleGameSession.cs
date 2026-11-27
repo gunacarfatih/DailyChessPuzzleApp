@@ -29,6 +29,26 @@
 
         public DateTime? CompletedAtUtc { get; set; }
 
+        // Telafi uygulanabilecek rakip hamlesi sayısı.
+        public int CompensatedOpponentMoves { get; set; }
+
+        // Birikmiş sunucu işlem süresi telafisi.
+        public long ServerCompensationMilliseconds { get; set; }
+
+        // Zorunlu animasyonun bitiş zamanı.
+        public DateTime? NextMoveAllowedAtUtc { get; set; }
+
+        // Oturumun toplam geçen süresi.
+        public long? TotalElapsedMilliseconds { get; set; }
+
+        // Puanlama sırasında uygulanan animasyon telafisi.
+        public long? AnimationCompensationMilliseconds { get; set; }
+
+        // Puanlamada kullanılan net çözüm süresi.
+        public long? AdjustedElapsedMilliseconds { get; set; }
+
+        public decimal? CompletedScore { get; set; }
+
         public bool IsCompleted { get; set; }
 
         public DateTime CreatedAtUtc { get; set; }

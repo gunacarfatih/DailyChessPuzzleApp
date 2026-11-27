@@ -1,4 +1,5 @@
-﻿using System.Globalization;
+﻿
+using System.Globalization;
 using DailyChessPuzzleApi.Services.Interfaces;
 using StackExchange.Redis;
 
@@ -7,6 +8,11 @@ namespace DailyChessPuzzleApi.Services
     public class LeaderboardCacheService : ILeaderboardCacheService
     {
         private readonly IDatabase _database;
+
+        private const decimal ScoreScale = 10000m;
+
+        private const decimal MaximumExactRedisInteger =
+            9007199254740991m;
 
         // Skor, üye Hash'i, revision Hash'i ve günlük versiyon
         // tek Lua Script çalıştırmasıyla güncellenir.
@@ -35,9 +41,9 @@ namespace DailyChessPuzzleApi.Services
             return 1
             """;
 
-        // Bir kullanıcıyı leaderboard'dan revision kontrolüyle atomik olarak siler.
-        // Revision kaydı tombstone olarak tutulur; böylece eski Outbox güncellemeleri
-        // aynı veya daha düşük revision ile kullanıcıyı tekrar ekleyemez.
+        // Bir kullanıcıyı leaderboard'dan revision kontrolüyle
+        // atomik olarak siler.
+        // Revision kaydı tombstone olarak tutulur.
         private const string RemoveScoreScript = """
             local currentRevision = redis.call('HGET', KEYS[3], ARGV[1])
             local incomingRevision = tonumber(ARGV[2])
@@ -62,8 +68,8 @@ namespace DailyChessPuzzleApi.Services
             return 1
             """;
 
-        // Cache değiştirilirken mevcut cache'teki daha yeni revision'ları
-        // korur. Böylece rebuild sırasında gelen güncellemeler kaybolmaz.
+        // Cache değiştirilirken mevcut cache'teki daha yeni
+        // revision'ları korur.
         private const string ReplaceCacheScript = """
             local liveRevisions = redis.call('HGETALL', KEYS[3])
 
@@ -91,8 +97,8 @@ namespace DailyChessPuzzleApi.Services
                             redis.call('HSET', KEYS[5], clientId, liveMember)
                         end
                     else
-                        -- Canlı revision var ancak üye yoksa bu bir tombstone'dur.
-                        -- Silme bilgisini rebuild cache'ine taşı ki eski üye geri gelmesin.
+                        -- Canlı revision var ancak üye yoksa
+                        -- bu bir tombstone'dur.
                         local oldTempMember = redis.call('HGET', KEYS[5], clientId)
 
                         if oldTempMember then
@@ -101,7 +107,7 @@ namespace DailyChessPuzzleApi.Services
                         end
                     end
 
-                    -- Üye bulunsun veya bulunmasın en yeni revision korunur.
+                    -- En yeni revision korunur.
                     redis.call('HSET', KEYS[6], clientId, liveRevision)
                 end
             end
@@ -143,7 +149,7 @@ namespace DailyChessPuzzleApi.Services
         public async Task UpdateScoreAsync(
             string key,
             string clientId,
-            int totalScore,
+            decimal totalScore,
             int solvedCount,
             long revision)
         {
@@ -160,7 +166,7 @@ namespace DailyChessPuzzleApi.Services
             string key,
             string versionKey,
             string clientId,
-            int totalScore,
+            decimal totalScore,
             int solvedCount,
             long revision)
         {
@@ -204,7 +210,7 @@ namespace DailyChessPuzzleApi.Services
             string clientId,
             long revision)
         {
-            if (string.IsNullOrWhiteSpace(clientId))
+            if (string.IsNullOrWhiteSpace(clientId) || clientId.Contains('\u001F'))
             {
                 throw new ArgumentException(
                     "ClientId cannot be empty.",
@@ -213,7 +219,8 @@ namespace DailyChessPuzzleApi.Services
 
             if (revision < 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(revision));
+                throw new ArgumentOutOfRangeException(
+                    nameof(revision));
             }
 
             string membersKey = GetMemberKey(key);
@@ -257,21 +264,25 @@ namespace DailyChessPuzzleApi.Services
             string key,
             string? versionKey,
             string clientId,
-            int totalScore,
+            decimal totalScore,
             int solvedCount,
             long revision)
         {
-            if (totalScore < 0)
+            if (totalScore < 0m)
             {
-                throw new ArgumentOutOfRangeException(nameof(totalScore));
+                throw new ArgumentOutOfRangeException(
+                    nameof(totalScore));
             }
 
             if (revision < 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(revision));
+                throw new ArgumentOutOfRangeException(
+                    nameof(revision));
             }
 
-            string member = CreateMember(clientId, solvedCount);
+            string member = CreateMember(
+                clientId,
+                solvedCount);
 
             string membersKey = GetMemberKey(key);
             string revisionsKey = GetRevisionKey(key);
@@ -302,7 +313,7 @@ namespace DailyChessPuzzleApi.Services
             [
                 clientId,
                 member,
-                -(double)totalScore,
+                EncodeScore(totalScore),
                 revision
             ];
 
@@ -312,7 +323,8 @@ namespace DailyChessPuzzleApi.Services
                 values);
         }
 
-        public async Task<bool> IsDailyCacheReadyAsync(string key)
+        public async Task<bool> IsDailyCacheReadyAsync(
+            string key)
         {
             return await _database.KeyExistsAsync(
                 GetDailyReadyKey(key));
@@ -320,7 +332,11 @@ namespace DailyChessPuzzleApi.Services
 
         public async Task RebuildDailyAsync(
             string key,
-            List<(string ClientId, int TotalScore, int SolvedCount, long Revision)> entries)
+            List<(
+                string ClientId,
+                decimal TotalScore,
+                int SolvedCount,
+                long Revision)> entries)
         {
             await ReplaceCacheAsync(
                 key,
@@ -328,9 +344,10 @@ namespace DailyChessPuzzleApi.Services
                 readyKey: GetDailyReadyKey(key));
         }
 
-        public async Task<(int TotalScore, int SolvedCount)?> GetUserScoreAsync(
-            string key,
-            string clientId)
+        public async Task<(decimal TotalScore, int SolvedCount)?>
+            GetUserScoreAsync(
+                string key,
+                string clientId)
         {
             string membersKey = GetMemberKey(key);
 
@@ -343,7 +360,7 @@ namespace DailyChessPuzzleApi.Services
                 return null;
             }
 
-            RedisValue score = await _database.SortedSetScoreAsync(
+            double? score = await _database.SortedSetScoreAsync(
                 key,
                 member.ToString());
 
@@ -352,18 +369,22 @@ namespace DailyChessPuzzleApi.Services
                 return null;
             }
 
-            var decoded = DecodeMember(member.ToString());
+            var decoded = DecodeMember(
+                member.ToString());
 
-            double numericScore = (double)score;
-            int totalScore = checked((int)(-numericScore));
+            decimal totalScore = DecodeScore(score.Value);
 
             return (
                 totalScore,
                 decoded.SolvedCount);
         }
 
-
-        public async Task<List<(string ClientId, int TotalScore, int SolvedCount)>> GetTopAsync(
+        public async Task<
+            List<(
+                string ClientId,
+                decimal TotalScore,
+                int SolvedCount)>>
+            GetTopAsync(
                 string key,
                 int count,
                 long offset = 0)
@@ -375,26 +396,31 @@ namespace DailyChessPuzzleApi.Services
 
             if (offset < 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(offset));
+                throw new ArgumentOutOfRangeException(
+                    nameof(offset));
             }
 
             long end = checked(offset + count - 1L);
 
-            var entries = await _database.SortedSetRangeByRankWithScoresAsync(
-                key,
-                offset,
-                end,
-                Order.Ascending);
+            var entries =
+                await _database.SortedSetRangeByRankWithScoresAsync(
+                    key,
+                    offset,
+                    end,
+                    Order.Ascending);
 
-            var result =
-                new List<(string ClientId, int TotalScore, int SolvedCount)>();
+            var result = new List<(
+                string ClientId,
+                decimal TotalScore,
+                int SolvedCount)>();
 
             foreach (var entry in entries)
             {
-                var decoded = DecodeMember(entry.Element.ToString());
+                var decoded = DecodeMember(
+                    entry.Element.ToString());
 
-                int totalScore = checked(
-                    (int)(-entry.Score));
+                decimal totalScore = DecodeScore(
+                    entry.Score);
 
                 result.Add((
                     decoded.ClientId,
@@ -405,30 +431,26 @@ namespace DailyChessPuzzleApi.Services
             return result;
         }
 
-
+        // Standart yarışma sıralaması: 1, 2, 2, 4.
+        // Eşit puanlı kullanıcılar aynı dereceyi alır.
         public async Task<long?> GetRankAsync(
             string key,
             string clientId)
         {
-            string membersKey = GetMemberKey(key);
+            const string rankScript = """
+                local member = redis.call('HGET', KEYS[2], ARGV[1])
+                if not member then return false end
+                local score = redis.call('ZSCORE', KEYS[1], member)
+                if not score then return false end
+                return redis.call('ZCOUNT', KEYS[1], '-inf', '(' .. score) + 1
+                """;
 
-            RedisValue member = await _database.HashGetAsync(
-                membersKey,
-                clientId);
+            RedisResult result = await _database.ScriptEvaluateAsync(
+                rankScript,
+                new RedisKey[] { key, GetMemberKey(key) },
+                new RedisValue[] { clientId });
 
-            if (!member.HasValue)
-            {
-                return null;
-            }
-
-            long? rank = await _database.SortedSetRankAsync(
-                key,
-                member.ToString(),
-                Order.Ascending);
-
-            return rank.HasValue
-                ? rank.Value + 1
-                : null;
+            return result.IsNull ? null : (long)result;
         }
 
         public async Task<bool> ExistsAsync(string key)
@@ -436,9 +458,11 @@ namespace DailyChessPuzzleApi.Services
             return await _database.KeyExistsAsync(key);
         }
 
-        public async Task<long> GetVersionAsync(string versionKey)
+        public async Task<long> GetVersionAsync(
+            string versionKey)
         {
-            RedisValue value = await _database.StringGetAsync(versionKey);
+            RedisValue value =
+                await _database.StringGetAsync(versionKey);
 
             if (!value.HasValue)
             {
@@ -454,13 +478,16 @@ namespace DailyChessPuzzleApi.Services
                     : 0;
         }
 
-        public Task<long> IncrementVersionAsync(string versionKey)
+        public Task<long> IncrementVersionAsync(
+            string versionKey)
         {
-            return _database.StringIncrementAsync(versionKey);
+            return _database.StringIncrementAsync(
+                versionKey);
         }
 
         // Birden fazla günlük leaderboard verisini birleştirir.
         // Her kullanıcı için en yüksek revision değeri korunur.
+        // Puanlar decimal olarak toplanır.
         public async Task RebuildRangeAsync(
             string rangeKey,
             IReadOnlyCollection<string> dailyKeys,
@@ -468,7 +495,10 @@ namespace DailyChessPuzzleApi.Services
         {
             var aggregated = new Dictionary<
                 string,
-                (int TotalScore, int SolvedCount, long Revision)>();
+                (
+                    decimal TotalScore,
+                    int SolvedCount,
+                    long Revision)>();
 
             foreach (string dailyKey in dailyKeys)
             {
@@ -479,19 +509,21 @@ namespace DailyChessPuzzleApi.Services
                         -1,
                         Order.Ascending);
 
-                string dailyRevisionsKey = GetRevisionKey(dailyKey);
+                string dailyRevisionsKey =
+                    GetRevisionKey(dailyKey);
 
                 foreach (var entry in dailyEntries)
                 {
                     var decoded = DecodeMember(
                         entry.Element.ToString());
 
-                    int totalScore = checked(
-                        (int)(-entry.Score));
+                    decimal totalScore = DecodeScore(
+                        entry.Score);
 
-                    RedisValue revisionValue = await _database.HashGetAsync(
-                        dailyRevisionsKey,
-                        decoded.ClientId);
+                    RedisValue revisionValue =
+                        await _database.HashGetAsync(
+                            dailyRevisionsKey,
+                            decoded.ClientId);
 
                     long revision = 0;
 
@@ -509,9 +541,16 @@ namespace DailyChessPuzzleApi.Services
                         out var existing))
                     {
                         aggregated[decoded.ClientId] = (
-                            checked(existing.TotalScore + totalScore),
-                            checked(existing.SolvedCount + decoded.SolvedCount),
-                            Math.Max(existing.Revision, revision));
+                            checked(
+                                existing.TotalScore + totalScore),
+
+                            checked(
+                                existing.SolvedCount +
+                                decoded.SolvedCount),
+
+                            Math.Max(
+                                existing.Revision,
+                                revision));
                     }
                     else
                     {
@@ -539,14 +578,24 @@ namespace DailyChessPuzzleApi.Services
 
         public async Task RebuildAsync(
             string key,
-            List<(string ClientId, int TotalScore, int SolvedCount, long Revision)> entries)
+            List<(
+                string ClientId,
+                decimal TotalScore,
+                int SolvedCount,
+                long Revision)> entries)
         {
-            await ReplaceCacheAsync(key, entries);
+            await ReplaceCacheAsync(
+                key,
+                entries);
         }
 
         private async Task ReplaceCacheAsync(
             string key,
-            List<(string ClientId, int TotalScore, int SolvedCount, long Revision)> entries,
+            List<(
+                string ClientId,
+                decimal TotalScore,
+                int SolvedCount,
+                long Revision)> entries,
             TimeSpan? cacheDuration = null,
             string? readyKey = null)
         {
@@ -555,9 +604,14 @@ namespace DailyChessPuzzleApi.Services
 
             string suffix = Guid.NewGuid().ToString("N");
 
-            string tempKey = $"{key}:rebuild:{suffix}";
-            string tempMembersKey = $"{membersKey}:rebuild:{suffix}";
-            string tempRevisionsKey = $"{revisionsKey}:rebuild:{suffix}";
+            string tempKey =
+                $"{key}:rebuild:{suffix}";
+
+            string tempMembersKey =
+                $"{membersKey}:rebuild:{suffix}";
+
+            string tempRevisionsKey =
+                $"{revisionsKey}:rebuild:{suffix}";
 
             try
             {
@@ -576,7 +630,7 @@ namespace DailyChessPuzzleApi.Services
                     {
                         var entry = entries[i];
 
-                        if (entry.TotalScore < 0)
+                        if (entry.TotalScore < 0m)
                         {
                             throw new ArgumentOutOfRangeException(
                                 nameof(entries),
@@ -594,17 +648,20 @@ namespace DailyChessPuzzleApi.Services
                             entry.ClientId,
                             entry.SolvedCount);
 
-                        sortedSetEntries[i] = new SortedSetEntry(
-                            member,
-                            -(double)entry.TotalScore);
+                        sortedSetEntries[i] =
+                            new SortedSetEntry(
+                                member,
+                                EncodeScore(entry.TotalScore));
 
-                        hashEntries[i] = new HashEntry(
-                            entry.ClientId,
-                            member);
+                        hashEntries[i] =
+                            new HashEntry(
+                                entry.ClientId,
+                                member);
 
-                        revisionEntries[i] = new HashEntry(
-                            entry.ClientId,
-                            entry.Revision);
+                        revisionEntries[i] =
+                            new HashEntry(
+                                entry.ClientId,
+                                entry.Revision);
                     }
 
                     await _database.SortedSetAddAsync(
@@ -673,18 +730,81 @@ namespace DailyChessPuzzleApi.Services
             catch
             {
                 await _database.KeyDeleteAsync(tempKey);
-                await _database.KeyDeleteAsync(tempMembersKey);
-                await _database.KeyDeleteAsync(tempRevisionsKey);
+
+                await _database.KeyDeleteAsync(
+                    tempMembersKey);
+
+                await _database.KeyDeleteAsync(
+                    tempRevisionsKey);
 
                 throw;
             }
+        }
+
+        // Decimal puanı Redis'in güvenli tam sayı aralığına
+        // ölçeklendirir.
+        //
+        // Örnek:
+        // 835.0385 -> -8350385
+        private static double EncodeScore(decimal totalScore)
+        {
+            if (totalScore < 0m)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(totalScore));
+            }
+
+            if (totalScore >
+                MaximumExactRedisInteger / ScoreScale)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(totalScore),
+                    "Score exceeds Redis exact integer capacity.");
+            }
+
+            decimal scaledScore =
+                totalScore * ScoreScale;
+
+            if (scaledScore != decimal.Truncate(scaledScore))
+            {
+                throw new ArgumentException(
+                    "Score cannot contain more than four decimal places.",
+                    nameof(totalScore));
+            }
+
+            long exactScore = checked(
+                (long)scaledScore);
+
+            return -(double)exactScore;
+        }
+
+        // Redis'teki ölçeklendirilmiş puanı gerçek
+        // decimal puana dönüştürür.
+        //
+        // Örnek:
+        // -8350385 -> 835.0385
+        private static decimal DecodeScore(double redisScore)
+        {
+            if (!double.IsFinite(redisScore) ||
+                redisScore > 0d ||
+                redisScore < -(double)MaximumExactRedisInteger ||
+                redisScore != Math.Truncate(redisScore))
+            {
+                throw new FormatException(
+                    "Invalid scaled leaderboard Redis score.");
+            }
+
+            long scaledScore = checked(
+                (long)(-redisScore));
+
+            return scaledScore / ScoreScale;
         }
 
         private static string CreateMember(
             string clientId,
             int solvedCount)
         {
-            if (string.IsNullOrWhiteSpace(clientId))
+            if (string.IsNullOrWhiteSpace(clientId) || clientId.Contains('\u001F'))
             {
                 throw new ArgumentException(
                     "ClientId cannot be empty.",
@@ -697,48 +817,20 @@ namespace DailyChessPuzzleApi.Services
                     nameof(solvedCount));
             }
 
-            int invertedSolvedCount = int.MaxValue - solvedCount;
-
-            return $"{invertedSolvedCount:D10}:{clientId}";
+            return $"{clientId}\u001F{solvedCount.ToString(CultureInfo.InvariantCulture)}";
         }
 
-        private static (
-            string ClientId,
-            int SolvedCount) DecodeMember(string member)
+        private static (string ClientId, int SolvedCount) DecodeMember(string member)
         {
-            int separatorIndex = member.IndexOf(':');
-
-            if (separatorIndex < 0)
+            int separatorIndex = member.LastIndexOf('\u001F');
+            if (separatorIndex <= 0 ||
+                !int.TryParse(member[(separatorIndex + 1)..],
+                    NumberStyles.None, CultureInfo.InvariantCulture, out int solvedCount))
             {
-                throw new FormatException(
-                    "Invalid leaderboard Redis member format.");
+                throw new FormatException("Invalid leaderboard Redis member format.");
             }
 
-            string invertedSolvedCountText =
-                member[..separatorIndex];
-
-            string clientId =
-                member[(separatorIndex + 1)..];
-
-            if (!int.TryParse(
-                invertedSolvedCountText,
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out int invertedSolvedCount))
-            {
-                throw new FormatException(
-                    "Invalid solved count in leaderboard Redis member.");
-            }
-
-            if (string.IsNullOrWhiteSpace(clientId))
-            {
-                throw new FormatException(
-                    "ClientId cannot be empty in leaderboard Redis member.");
-            }
-
-            int solvedCount = int.MaxValue - invertedSolvedCount;
-
-            return (clientId, solvedCount);
+            return (member[..separatorIndex], solvedCount);
         }
 
         private static string GetMemberKey(string key)

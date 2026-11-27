@@ -100,7 +100,7 @@ public sealed class LeaderboardOutboxIntegrationTests
         Assert.False(hasMore);
         Assert.Equal(userId, score.UserId);
         Assert.Equal("user:" + userId, score.ClientId);
-        Assert.Equal(976, score.TotalScore);
+        Assert.Equal(976m, score.TotalScore);
         Assert.Equal(1, score.SolvedCount);
         Assert.Equal(LeaderboardCacheOutboxDeliveryStatus.Completed, deliveryAfterProcessing.Status);
         Assert.Equal("leaderboard:test:weekly", cache.LastUpdatedKey);
@@ -188,7 +188,7 @@ public sealed class LeaderboardOutboxIntegrationTests
                 .OrderBy(x => x.Id)
                 .ToListAsync();
 
-            var globalTotal = 0;
+            decimal globalTotal = 0m;
 
             for (int i = 0; i < attempts.Count; i++)
             {
@@ -282,13 +282,13 @@ public sealed class LeaderboardOutboxIntegrationTests
                 scores,
                 x => x.CountryCode == "DE");
 
-            Assert.Equal(1950, global.TotalScore);
+            Assert.Equal(1950m, global.TotalScore);
             Assert.Equal(3, global.SolvedCount);
 
-            Assert.Equal(800, turkey.TotalScore);
+            Assert.Equal(800m, turkey.TotalScore);
             Assert.Equal(1, turkey.SolvedCount);
 
-            Assert.Equal(650, germany.TotalScore);
+            Assert.Equal(650m, germany.TotalScore);
             Assert.Equal(1, germany.SolvedCount);
 
             Assert.All(scores, score =>
@@ -346,19 +346,19 @@ public sealed class LeaderboardOutboxIntegrationTests
         Assert.Equal(3, finalScores.Count);
 
         Assert.Equal(
-            1950,
+            1950m,
             Assert.Single(
                 finalScores,
                 x => x.CountryCode == null).TotalScore);
 
         Assert.Equal(
-            800,
+            800m,
             Assert.Single(
                 finalScores,
                 x => x.CountryCode == "TR").TotalScore);
 
         Assert.Equal(
-            650,
+            650m,
             Assert.Single(
                 finalScores,
                 x => x.CountryCode == "DE").TotalScore);
@@ -399,24 +399,24 @@ public sealed class LeaderboardOutboxIntegrationTests
     {
         public string? LastUpdatedKey { get; private set; }
 
-        public Task UpdateScoreAsync(string key, string clientId, int totalScore, int solvedCount, long revision)
+        public Task UpdateScoreAsync(string key, string clientId, decimal totalScore, int solvedCount, long revision)
         {
             LastUpdatedKey = key;
             return Task.CompletedTask;
         }
 
-        public Task UpdateDailyScoreAsync(string key, string versionKey, string clientId, int totalScore, int solvedCount, long revision) => Task.CompletedTask;
+        public Task UpdateDailyScoreAsync(string key, string versionKey, string clientId, decimal totalScore, int solvedCount, long revision) => Task.CompletedTask;
         public Task RemoveScoreAsync(string key, string clientId, long revision) => Task.CompletedTask;
         public Task RemoveDailyScoreAsync(string key, string versionKey, string clientId, long revision) => Task.CompletedTask;
         public Task<bool> IsDailyCacheReadyAsync(string key) => Task.FromResult(false);
-        public Task RebuildDailyAsync(string key, List<(string ClientId, int TotalScore, int SolvedCount, long Revision)> entries) => Task.CompletedTask;
-        public Task<(int TotalScore, int SolvedCount)?> GetUserScoreAsync(string key, string clientId) => Task.FromResult<(int, int)?>(null);
-        public Task<List<(string ClientId, int TotalScore, int SolvedCount)>> GetTopAsync(string key, int count, long offset = 0) => Task.FromResult(new List<(string, int, int)>());
+        public Task RebuildDailyAsync(string key, List<(string ClientId, decimal TotalScore, int SolvedCount, long Revision)> entries) => Task.CompletedTask;
+        public Task<(decimal TotalScore, int SolvedCount)?> GetUserScoreAsync(string key, string clientId) => Task.FromResult<(decimal, int)?>(null);
+        public Task<List<(string ClientId, decimal TotalScore, int SolvedCount)>> GetTopAsync(string key, int count, long offset = 0) => Task.FromResult(new List<(string, decimal, int)>());
         public Task<long?> GetRankAsync(string key, string clientId) => Task.FromResult<long?>(null);
         public Task<bool> ExistsAsync(string key) => Task.FromResult(true);
         public Task<long> GetVersionAsync(string versionKey) => Task.FromResult(0L);
         public Task<long> IncrementVersionAsync(string versionKey) => Task.FromResult(1L);
         public Task RebuildRangeAsync(string rangeKey, IReadOnlyCollection<string> dailyKeys, TimeSpan cacheDuration) => Task.CompletedTask;
-        public Task RebuildAsync(string key, List<(string ClientId, int TotalScore, int SolvedCount, long Revision)> entries) => Task.CompletedTask;
+        public Task RebuildAsync(string key, List<(string ClientId, decimal TotalScore, int SolvedCount, long Revision)> entries) => Task.CompletedTask;
     }
 }

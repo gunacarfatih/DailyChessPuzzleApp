@@ -9,6 +9,6 @@ namespace DailyChessPuzzleApi.DTOs
 
         public bool IsSolved { get; set; }
 
-        public int? PreviousScore { get; set; }
+        public decimal? PreviousScore { get; set; }
     }
 }

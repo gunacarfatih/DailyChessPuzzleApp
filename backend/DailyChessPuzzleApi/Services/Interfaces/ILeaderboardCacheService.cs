@@ -6,7 +6,7 @@ namespace DailyChessPuzzleApi.Services.Interfaces
         Task UpdateScoreAsync(
             string key,
             string clientId,
-            int totalScore,
+            decimal totalScore,
             int solvedCount,
             long revision);
 
@@ -14,7 +14,7 @@ namespace DailyChessPuzzleApi.Services.Interfaces
             string key,
             string versionKey,
             string clientId,
-            int totalScore,
+            decimal totalScore,
             int solvedCount,
             long revision);
 
@@ -33,13 +33,13 @@ namespace DailyChessPuzzleApi.Services.Interfaces
 
         Task RebuildDailyAsync(
             string key,
-            List<(string ClientId, int TotalScore, int SolvedCount, long Revision)> entries);
+            List<(string ClientId, decimal TotalScore, int SolvedCount, long Revision)> entries);
 
-        Task<(int TotalScore, int SolvedCount)?> GetUserScoreAsync(
+        Task<(decimal TotalScore, int SolvedCount)?> GetUserScoreAsync(
             string key,
             string clientId);
 
-        Task<List<(string ClientId, int TotalScore, int SolvedCount)>>
+        Task<List<(string ClientId, decimal TotalScore, int SolvedCount)>>
             GetTopAsync(
                 string key,
                 int count,
@@ -62,6 +62,6 @@ namespace DailyChessPuzzleApi.Services.Interfaces
 
         Task RebuildAsync(
             string key,
-            List<(string ClientId, int TotalScore, int SolvedCount, long Revision)> entries);
+            List<(string ClientId, decimal TotalScore, int SolvedCount, long Revision)> entries);
     }
 }

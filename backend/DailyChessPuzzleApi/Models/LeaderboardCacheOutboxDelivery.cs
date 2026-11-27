@@ -25,7 +25,7 @@ namespace DailyChessPuzzleApi.Models
 
         public string CacheKey { get; set; } = string.Empty;
 
-        public int TotalScore { get; set; }
+        public decimal TotalScore { get; set; }
 
         public int SolvedCount { get; set; }
 

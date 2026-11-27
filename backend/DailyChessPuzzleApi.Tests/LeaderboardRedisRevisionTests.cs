@@ -32,7 +32,7 @@ public sealed class LeaderboardRedisRevisionTests
             key, ClientId);
 
         Assert.NotNull(score);
-        Assert.Equal((1500, 3), score.Value);
+        Assert.Equal((1500m, 3), score.Value);
 
         Assert.Equal(
             2L,
@@ -74,7 +74,7 @@ public sealed class LeaderboardRedisRevisionTests
             key, ClientId);
 
         Assert.NotNull(score);
-        Assert.Equal((800, 1), score.Value);
+        Assert.Equal((800m, 1), score.Value);
 
         Assert.Equal(
             1L,
@@ -135,9 +135,9 @@ public sealed class LeaderboardRedisRevisionTests
         Assert.NotNull(turkey);
         Assert.NotNull(germany);
 
-        Assert.Equal((1450, 2), global.Value);
-        Assert.Equal((800, 1), turkey.Value);
-        Assert.Equal((650, 1), germany.Value);
+        Assert.Equal((1450m, 2), global.Value);
+        Assert.Equal((800m, 1), turkey.Value);
+        Assert.Equal((650m, 1), germany.Value);
 
         Assert.Equal(
             "10",
@@ -193,7 +193,7 @@ public sealed class LeaderboardRedisRevisionTests
             turkeyKey,
             new List<(
                 string ClientId,
-                int TotalScore,
+                decimal TotalScore,
                 int SolvedCount,
                 long Revision)>
             {
@@ -215,9 +215,9 @@ public sealed class LeaderboardRedisRevisionTests
         Assert.NotNull(germany);
         Assert.NotNull(secondUser);
 
-        Assert.Equal((1500, 2), turkey.Value);
-        Assert.Equal((650, 1), germany.Value);
-        Assert.Equal((700, 1), secondUser.Value);
+        Assert.Equal((1500m, 2), turkey.Value);
+        Assert.Equal((650m, 1), germany.Value);
+        Assert.Equal((700m, 1), secondUser.Value);
 
         Assert.Equal(
             "10",
@@ -312,7 +312,7 @@ public sealed class LeaderboardRedisRevisionTests
             key, ClientId);
 
         Assert.NotNull(restored);
-        Assert.Equal((700, 1), restored.Value);
+        Assert.Equal((700m, 1), restored.Value);
 
         Assert.Equal(
             3L,
@@ -342,7 +342,7 @@ public sealed class LeaderboardRedisRevisionTests
             key,
             new List<(
                 string ClientId,
-                int TotalScore,
+                decimal TotalScore,
                 int SolvedCount,
                 long Revision)>
             {
@@ -369,7 +369,7 @@ public sealed class LeaderboardRedisRevisionTests
             await cache.GetTopAsync(key, 10));
 
         Assert.Equal(
-            ("user:2", 650, 1),
+            ("user:2", 650m, 1),
             remainingUser);
 
         // Rebuild sonrasinda gecikmis guncelleme.
@@ -509,9 +509,9 @@ public sealed class LeaderboardRedisRevisionTests
         Assert.NotNull(turkey);
         Assert.NotNull(germany);
 
-        Assert.Equal((1950, 3), global.Value);
-        Assert.Equal((800, 1), turkey.Value);
-        Assert.Equal((650, 1), germany.Value);
+        Assert.Equal((1950m, 3), global.Value);
+        Assert.Equal((800m, 1), turkey.Value);
+        Assert.Equal((650m, 1), germany.Value);
 
         Assert.Equal(
             "3",

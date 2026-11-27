@@ -438,7 +438,7 @@ public sealed class LeaderboardEndToEndIntegrationTests
         return user.Id;
     }
 
-    private static async Task<int> CompleteDailyAsync(
+    private static async Task<decimal> CompleteDailyAsync(
         PostgresTestDatabase database,
         int userId)
     {
@@ -469,7 +469,7 @@ public sealed class LeaderboardEndToEndIntegrationTests
         return result.Score.Value;
     }
 
-    private static async Task<int> CompleteBonusAsync(
+    private static async Task<decimal> CompleteBonusAsync(
         PostgresTestDatabase database,
         int userId)
     {
@@ -613,7 +613,7 @@ public sealed class LeaderboardEndToEndIntegrationTests
         ILeaderboardCacheService cache,
         int userId,
         string? countryCode,
-        int expectedScore,
+        decimal expectedScore,
         int expectedSolvedCount)
     {
         await using var context =

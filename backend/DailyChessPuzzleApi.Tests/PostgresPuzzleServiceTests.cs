@@ -67,7 +67,7 @@ public sealed class PostgresPuzzleServiceTests
             userId: null);
 
         Assert.True(completed.IsCompleted);
-        Assert.InRange(completed.Score!.Value, 0, 600);
+        Assert.InRange(completed.Score!.Value, 100m, 1000m);
 
         var replayedCompletion = await service.SubmitMoveAsync(
             new PuzzleMoveRequest
@@ -792,7 +792,7 @@ public sealed class PostgresPuzzleServiceTests
         await using var database = await PostgresTestDatabase.CreateAsync();
         var userId = await SeedConcurrencyScenarioAsync(database);
         await CompleteRegisteredDailyPuzzleAsync(database, userId);
-        int originalScore;
+        decimal originalScore;
         int originalSeconds;
         await using (var context = database.CreateContext())
         {
@@ -1175,7 +1175,7 @@ public sealed class PostgresPuzzleServiceTests
                 assignment.StartedAtUtc);
         }
 
-        int bonusScore;
+        decimal bonusScore;
 
         await using (var context = database.CreateContext())
         {
@@ -1361,7 +1361,7 @@ public sealed class PostgresPuzzleServiceTests
 
         await SetTestCountryAsync(database, userId, "DE");
 
-        int originalBonusScore;
+        decimal originalBonusScore;
 
         await using (var context = database.CreateContext())
         {
